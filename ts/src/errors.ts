@@ -22,3 +22,12 @@ export class ToolNotFoundError extends AdditionError {
     );
   }
 }
+
+export class OAuthError extends AdditionError {
+  constructor(
+    public readonly code: string,
+    public readonly description?: string,
+  ) {
+    super(description ? `OAuth error '${code}': ${description}` : `OAuth error '${code}'`);
+  }
+}

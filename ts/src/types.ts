@@ -48,6 +48,30 @@ export interface ProviderConfig {
 
 export type ProviderRegistry = Record<string, ProviderConfig>;
 
+// ---------- Adapters (Layer 2) ----------
+
+/**
+ * An outgoing token-exchange request, as seen by adapters before it leaves
+ * the OAuth engine. Adapters may rewrite headers/body (e.g. GitHub adds
+ * `Accept: application/json`) by returning a new object. Treat as immutable.
+ */
+export interface TokenExchangeRequest {
+  url: string;
+  method: 'POST';
+  headers: Record<string, string>;
+  body: Record<string, string>;
+}
+
+/**
+ * Error shape extracted from an API response that `isErrorResponse` flagged.
+ * `code` is the machine-readable error identifier (OAuth2 `error` value,
+ * Slack `error` string, etc.). `description` is an optional human message.
+ */
+export interface AdapterErrorDetail {
+  code: string;
+  description?: string;
+}
+
 // ---------- Toolkits (Layer 3) ----------
 
 export type ToolParamType =
