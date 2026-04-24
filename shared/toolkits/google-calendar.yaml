@@ -138,6 +138,10 @@ tools:
         type: string
         required: false
         description: "New end time (RFC 3339)"
+      - name: timeZone
+        type: string
+        required: false
+        description: "Time zone for start/end (IANA name, e.g., 'America/New_York'). Only forwarded when a new start/end is also provided."
       - name: location
         type: string
         required: false

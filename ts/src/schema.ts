@@ -6,6 +6,13 @@ import { SchemaError } from './errors.js';
 /** Migration filenames must match `NNN_name.sql` where NNN is a 3-digit id. */
 const MIGRATION_RE = /^(\d{3})_.+\.sql$/;
 
+/**
+ * Stable 64-bit advisory lock key. Every pod racing to bootstrap the schema
+ * acquires this lock; only one runs migrations at a time. Key is arbitrary but
+ * must never change — changing it would split-brain the lock across versions.
+ */
+const BOOTSTRAP_LOCK_KEY = '6731415926535897';
+
 interface Migration {
   version: string; // "001", "002", ...
   filename: string;
@@ -73,25 +80,50 @@ export async function bootstrap(databaseUrl: string, schemaDir: string): Promise
 
   const pool = new Pool({ connectionString: databaseUrl });
   try {
-    const current = await currentVersion(pool);
-    const pending = migrations.filter((m) => current === null || m.version > current);
-    if (pending.length === 0) return; // already up to date
-
-    for (const m of pending) {
-      const client = await pool.connect();
+    // Serialize bootstrap across concurrently-starting app replicas. Without
+    // this lock, two pods racing against an empty DB will both see `null` in
+    // `currentVersion()` and both run migration 001. Harmless today because
+    // 001 uses IF NOT EXISTS everywhere; the first ALTER TABLE / DROP / data
+    // backfill in a later migration would corrupt state.
+    const lockClient = await pool.connect();
+    try {
+      await lockClient.query('SELECT pg_advisory_lock($1::bigint)', [BOOTSTRAP_LOCK_KEY]);
       try {
-        await client.query('BEGIN');
-        await client.query(m.sql);
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw new SchemaError(
-          `migration ${m.filename} failed: ${(err as Error).message}`,
-          err,
-        );
+        // Re-check inside the lock — another pod may have completed already.
+        const current = await currentVersion(pool);
+        const pending = migrations.filter((m) => current === null || m.version > current);
+        if (pending.length === 0) return; // already up to date
+
+        for (const m of pending) {
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query(m.sql);
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw new SchemaError(
+              `migration ${m.filename} failed: ${(err as Error).message}`,
+              err,
+            );
+          } finally {
+            client.release();
+          }
+          // Enforce that the migration actually bumped schema_version — if it
+          // didn't (author forgot the closing INSERT), bootstrap would loop on
+          // every restart and destructive statements would re-destroy.
+          const after = await currentVersion(pool);
+          if (after !== m.version) {
+            throw new SchemaError(
+              `migration ${m.filename} completed but did not bump _addition.meta.schema_version to '${m.version}' (got '${after ?? 'null'}')`,
+            );
+          }
+        }
       } finally {
-        client.release();
+        await lockClient.query('SELECT pg_advisory_unlock($1::bigint)', [BOOTSTRAP_LOCK_KEY]);
       }
+    } finally {
+      lockClient.release();
     }
   } finally {
     await pool.end();
