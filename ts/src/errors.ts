@@ -6,3 +6,9 @@ export class AdditionError extends Error {
 }
 
 export class EncryptionError extends AdditionError {}
+
+export class ProviderNotFoundError extends AdditionError {
+  constructor(public readonly providerId: string) {
+    super(`Provider '${providerId}' is not defined`);
+  }
+}
