@@ -1,0 +1,197 @@
+provider: "github"
+name: "GitHub"
+description: "Manage repositories, issues, and pull requests"
+
+tools:
+
+  - id: list_repos
+    name: "List repositories"
+    description: "List repositories for the authenticated user"
+    operation: "GET /user/repos"
+    params:
+      - name: type
+        type: string
+        required: false
+        default: "owner"
+        enum: ["all", "owner", "public", "private", "member"]
+        description: "Type of repositories to list"
+      - name: sort
+        type: string
+        required: false
+        default: "updated"
+        enum: ["created", "updated", "pushed", "full_name"]
+        description: "Sort field"
+      - name: per_page
+        type: integer
+        required: false
+        default: 30
+        description: "Results per page (max 100)"
+    pagination:
+      type: page
+      cursor_param: page
+      cursor_response_field: null
+    response:
+      type: array
+      fields:
+        id: "Repository ID"
+        name: "Repository name"
+        full_name: "Full name (owner/repo)"
+        description: "Repository description"
+        html_url: "URL to view on GitHub"
+        private: "Whether the repo is private"
+
+  - id: list_issues
+    name: "List issues"
+    description: "List issues in a repository"
+    operation: "GET /repos/{owner}/{repo}/issues"
+    params:
+      - name: owner
+        type: string
+        required: true
+        description: "Repository owner (username or org)"
+      - name: repo
+        type: string
+        required: true
+        description: "Repository name"
+      - name: state
+        type: string
+        required: false
+        default: "open"
+        enum: ["open", "closed", "all"]
+        description: "Filter by state"
+      - name: labels
+        type: string
+        required: false
+        description: "Comma-separated label names"
+      - name: per_page
+        type: integer
+        required: false
+        default: 30
+        description: "Results per page"
+    response:
+      type: array
+      fields:
+        id: "Issue ID"
+        number: "Issue number"
+        title: "Issue title"
+        state: "open or closed"
+        body: "Issue body (markdown)"
+        user: "Author information"
+        labels: "Applied labels"
+        created_at: "Creation timestamp"
+
+  - id: create_issue
+    name: "Create issue"
+    description: "Create a new issue in a repository"
+    operation: "POST /repos/{owner}/{repo}/issues"
+    params:
+      - name: owner
+        type: string
+        required: true
+        description: "Repository owner"
+      - name: repo
+        type: string
+        required: true
+        description: "Repository name"
+      - name: title
+        type: string
+        required: true
+        description: "Issue title"
+      - name: body
+        type: string
+        required: false
+        description: "Issue body (supports markdown)"
+      - name: labels
+        type: string[]
+        required: false
+        description: "Labels to apply"
+      - name: assignees
+        type: string[]
+        required: false
+        description: "GitHub usernames to assign"
+    response:
+      type: object
+      fields:
+        id: "Issue ID"
+        number: "Issue number"
+        html_url: "URL to view the issue"
+        title: "Issue title"
+
+  - id: list_pull_requests
+    name: "List pull requests"
+    description: "List pull requests in a repository"
+    operation: "GET /repos/{owner}/{repo}/pulls"
+    params:
+      - name: owner
+        type: string
+        required: true
+        description: "Repository owner"
+      - name: repo
+        type: string
+        required: true
+        description: "Repository name"
+      - name: state
+        type: string
+        required: false
+        default: "open"
+        enum: ["open", "closed", "all"]
+        description: "Filter by state"
+      - name: per_page
+        type: integer
+        required: false
+        default: 30
+        description: "Results per page"
+    response:
+      type: array
+      fields:
+        id: "PR ID"
+        number: "PR number"
+        title: "PR title"
+        state: "open or closed"
+        html_url: "URL to view"
+        user: "Author information"
+        created_at: "Creation timestamp"
+        head: "Source branch info"
+        base: "Target branch info"
+
+  - id: create_pull_request
+    name: "Create pull request"
+    description: "Create a new pull request"
+    operation: "POST /repos/{owner}/{repo}/pulls"
+    params:
+      - name: owner
+        type: string
+        required: true
+        description: "Repository owner"
+      - name: repo
+        type: string
+        required: true
+        description: "Repository name"
+      - name: title
+        type: string
+        required: true
+        description: "PR title"
+      - name: body
+        type: string
+        required: false
+        description: "PR description (supports markdown)"
+      - name: head
+        type: string
+        required: true
+        description: "Branch containing changes (e.g., 'feature-branch')"
+      - name: base
+        type: string
+        required: true
+        description: "Branch to merge into (e.g., 'main')"
+      - name: draft
+        type: boolean
+        required: false
+        default: false
+        description: "Create as draft PR"
+    response:
+      type: object
+      fields:
+        id: "PR ID"
+        number: "PR number"
+        html_url: "URL to view"
+        title: "PR title"

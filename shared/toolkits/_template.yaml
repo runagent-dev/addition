@@ -1,0 +1,36 @@
+# Toolkit template. Copy to <provider-id>.yaml and define curated tools.
+# See docs/spec.md §8 for the full field reference.
+
+provider: ""                        # Must match a provider ID from shared/providers/
+name: ""                            # Human-readable toolkit name
+description: ""                     # What this toolkit does (1-2 sentences)
+
+tools:
+  - id: ""                          # Unique within this toolkit (snake_case)
+    name: ""                        # Human-readable
+    description: ""                 # Used by LLMs for tool selection
+    operation: ""                   # "METHOD /path", e.g. "GET /users/me/messages"
+
+    params:
+      - name: ""
+        type: ""                    # string | integer | boolean | string[] | object
+        required: true
+        # default: null             # Optional
+        # enum: []                  # Optional allowed values
+        description: ""
+
+    # Optional. Format: "{provider}:{transform_name}"
+    # If set, the named transform rewrites friendly params into the API request
+    # body/params/headers before calling the proxy.
+    transform: null
+
+    # Optional response field documentation for callers/LLMs.
+    response:
+      type: "object"                # object | array
+      fields: {}                    # key -> human description
+
+    # Optional pagination hint (cursor | offset | page).
+    # pagination:
+    #   type: cursor
+    #   cursor_param: pageToken
+    #   cursor_response_field: nextPageToken

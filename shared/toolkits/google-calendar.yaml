@@ -1,0 +1,163 @@
+provider: "google-calendar"
+name: "Google Calendar"
+description: "Create, read, and manage calendar events"
+
+tools:
+
+  - id: list_events
+    name: "List events"
+    description: "List upcoming events from the user's primary calendar"
+    operation: "GET /calendars/primary/events"
+    params:
+      - name: timeMin
+        type: string
+        required: false
+        description: "Start of time range (RFC 3339, e.g., '2024-01-01T00:00:00Z'). Defaults to now."
+      - name: timeMax
+        type: string
+        required: false
+        description: "End of time range (RFC 3339)"
+      - name: maxResults
+        type: integer
+        required: false
+        default: 10
+        description: "Maximum number of events"
+      - name: query
+        type: string
+        required: false
+        description: "Free text search terms to find events"
+      - name: singleEvents
+        type: boolean
+        required: false
+        default: true
+        description: "Whether to expand recurring events into individual instances"
+      - name: orderBy
+        type: string
+        required: false
+        default: "startTime"
+        enum: ["startTime", "updated"]
+        description: "Sort order (startTime requires singleEvents=true)"
+    pagination:
+      type: cursor
+      cursor_param: pageToken
+      cursor_response_field: nextPageToken
+    response:
+      type: object
+      fields:
+        items: "Array of event objects"
+        nextPageToken: "Token for next page"
+        summary: "Calendar title"
+
+  - id: get_event
+    name: "Get event"
+    description: "Get details of a specific calendar event"
+    operation: "GET /calendars/primary/events/{eventId}"
+    params:
+      - name: eventId
+        type: string
+        required: true
+        description: "The event ID"
+    response:
+      type: object
+      fields:
+        id: "Event ID"
+        summary: "Event title"
+        description: "Event description"
+        start: "Start time object"
+        end: "End time object"
+        attendees: "List of attendees"
+        location: "Event location"
+
+  - id: create_event
+    name: "Create event"
+    description: "Create a new calendar event"
+    operation: "POST /calendars/primary/events"
+    transform: "google-calendar:create_event_body"
+    params:
+      - name: summary
+        type: string
+        required: true
+        description: "Event title"
+      - name: description
+        type: string
+        required: false
+        description: "Event description"
+      - name: startDateTime
+        type: string
+        required: true
+        description: "Start time (RFC 3339, e.g., '2024-06-15T09:00:00-07:00')"
+      - name: endDateTime
+        type: string
+        required: true
+        description: "End time (RFC 3339)"
+      - name: timeZone
+        type: string
+        required: false
+        default: "UTC"
+        description: "Time zone (e.g., 'America/New_York')"
+      - name: location
+        type: string
+        required: false
+        description: "Event location"
+      - name: attendees
+        type: string[]
+        required: false
+        description: "Email addresses of attendees"
+    response:
+      type: object
+      fields:
+        id: "Created event ID"
+        htmlLink: "URL to view the event in Google Calendar"
+        summary: "Event title"
+        start: "Start time"
+        end: "End time"
+
+  - id: update_event
+    name: "Update event"
+    description: "Update an existing calendar event"
+    operation: "PATCH /calendars/primary/events/{eventId}"
+    transform: "google-calendar:update_event_body"
+    params:
+      - name: eventId
+        type: string
+        required: true
+        description: "The event ID to update"
+      - name: summary
+        type: string
+        required: false
+        description: "New event title"
+      - name: description
+        type: string
+        required: false
+        description: "New event description"
+      - name: startDateTime
+        type: string
+        required: false
+        description: "New start time (RFC 3339)"
+      - name: endDateTime
+        type: string
+        required: false
+        description: "New end time (RFC 3339)"
+      - name: location
+        type: string
+        required: false
+        description: "New event location"
+    response:
+      type: object
+      fields:
+        id: "Event ID"
+        summary: "Updated title"
+        updated: "Last modification time"
+
+  - id: delete_event
+    name: "Delete event"
+    description: "Delete a calendar event"
+    operation: "DELETE /calendars/primary/events/{eventId}"
+    params:
+      - name: eventId
+        type: string
+        required: true
+        description: "The event ID to delete"
+    response:
+      type: object
+      fields: {}
