@@ -1,5 +1,11 @@
 # Toolkit template. Copy to <provider-id>.yaml and define curated tools.
 # See docs/spec.md §8 for the full field reference.
+#
+# Canonical field order for each tool in this project:
+#     id → name → description → operation → transform → params → response → pagination
+# YAML parsing is order-independent, but keeping the order stable makes diffs
+# and side-by-side tool comparisons easy. Keep `transform` next to `operation`
+# because together they describe the request; `params` describe the inputs.
 
 provider: ""                        # Must match a provider ID from shared/providers/
 name: ""                            # Human-readable toolkit name
@@ -11,6 +17,11 @@ tools:
     description: ""                 # Used by LLMs for tool selection
     operation: ""                   # "METHOD /path", e.g. "GET /users/me/messages"
 
+    # Optional. Format: "{provider}:{transform_name}". When set, the named
+    # transform rewrites friendly params into the API request body/params/
+    # headers before the proxy call.
+    transform: null
+
     params:
       - name: ""
         type: ""                    # string | integer | boolean | string[] | object
@@ -19,18 +30,15 @@ tools:
         # enum: []                  # Optional allowed values
         description: ""
 
-    # Optional. Format: "{provider}:{transform_name}"
-    # If set, the named transform rewrites friendly params into the API request
-    # body/params/headers before calling the proxy.
-    transform: null
-
     # Optional response field documentation for callers/LLMs.
     response:
       type: "object"                # object | array
       fields: {}                    # key -> human description
 
-    # Optional pagination hint (cursor | offset | page).
+    # Optional pagination hint. `cursor_response_field` supports dot-paths
+    # into nested response objects (e.g. "response_metadata.next_cursor"),
+    # matching the same convention as provider token_response_mapping.
     # pagination:
-    #   type: cursor
+    #   type: cursor                # cursor | offset | page
     #   cursor_param: pageToken
     #   cursor_response_field: nextPageToken
