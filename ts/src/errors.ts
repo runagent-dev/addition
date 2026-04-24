@@ -31,3 +31,5 @@ export class OAuthError extends AdditionError {
     super(description ? `OAuth error '${code}': ${description}` : `OAuth error '${code}'`);
   }
 }
+
+export class SchemaError extends AdditionError {}
