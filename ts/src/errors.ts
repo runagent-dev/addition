@@ -33,3 +33,18 @@ export class OAuthError extends AdditionError {
 }
 
 export class SchemaError extends AdditionError {}
+
+export class ToolValidationError extends AdditionError {
+  constructor(
+    public readonly toolId: string,
+    public readonly missing: string[],
+    public readonly invalid: Array<{ name: string; reason: string }>,
+  ) {
+    const parts: string[] = [];
+    if (missing.length) parts.push(`missing required: ${missing.join(', ')}`);
+    if (invalid.length) {
+      parts.push(`invalid: ${invalid.map((i) => `${i.name} (${i.reason})`).join('; ')}`);
+    }
+    super(`tool '${toolId}': ${parts.join('; ') || 'validation failed'}`);
+  }
+}
