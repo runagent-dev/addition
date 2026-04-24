@@ -1,0 +1,18 @@
+id: "google-calendar"
+name: "Google Calendar"
+auth_type: "oauth2"
+extends: "google"
+
+oauth2:
+  default_scopes:
+    - "openid"
+    - "https://www.googleapis.com/auth/userinfo.email"
+    - "https://www.googleapis.com/auth/calendar"
+    - "https://www.googleapis.com/auth/calendar.events"
+
+api:
+  base_url: "https://www.googleapis.com/calendar/v3"
+
+quirks:
+  - "Inherits Google OAuth; see google.yaml"
+  - "Per-user rate limit: 500 requests per 100 seconds per user"

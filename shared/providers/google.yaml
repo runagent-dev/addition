@@ -1,0 +1,35 @@
+id: "google"
+name: "Google"
+auth_type: "oauth2"
+
+oauth2:
+  authorize_url: "https://accounts.google.com/o/oauth2/v2/auth"
+  token_url: "https://oauth2.googleapis.com/token"
+  revoke_url: "https://oauth2.googleapis.com/revoke"
+  refresh_supported: true
+  pkce_supported: true
+  pkce_required: false
+  default_scopes:
+    - "openid"
+    - "https://www.googleapis.com/auth/userinfo.email"
+    - "https://www.googleapis.com/auth/userinfo.profile"
+  scopes_delimiter: "space"
+  authorize_params:
+    access_type: "offline"
+    prompt: "consent"
+  token_params: {}
+  token_response_format: "json"
+  client_auth_method: "body"
+
+api:
+  base_url: "https://www.googleapis.com"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+  rate_limit:
+    requests_per_second: 10
+    retry_after_header: "Retry-After"
+
+quirks:
+  - "Requires access_type=offline for refresh tokens"
+  - "Requires prompt=consent to guarantee refresh token on first auth"
+  - "Scopes are full URLs, not short names"

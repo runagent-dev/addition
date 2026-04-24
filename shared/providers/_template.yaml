@@ -1,0 +1,39 @@
+# Provider config template. Copy this file to <provider-id>.yaml and fill in.
+# See docs/spec.md §6 for the full field reference.
+
+id: ""                              # Unique ID (lowercase, hyphenated)
+name: ""                            # Human-readable display name
+auth_type: "oauth2"                 # "oauth2" | "api_key" | "basic"
+
+# Uncomment to inherit from a base provider (e.g. "google").
+# extends: ""
+
+oauth2:
+  authorize_url: ""
+  token_url: ""
+  revoke_url: null                  # Optional
+  refresh_supported: true
+  pkce_supported: true
+  pkce_required: false
+  default_scopes: []
+  scopes_delimiter: "space"         # "space" (standard) or "comma" (Slack)
+  authorize_params: {}              # Extra params on authorize URL
+  token_params: {}                  # Extra params on token exchange
+  token_response_format: "json"     # "json" or "form"
+  client_auth_method: "body"        # "body" or "header" (Basic auth)
+
+  # For non-standard token response structures (like Slack). Dot-paths.
+  token_response_mapping:
+    access_token: "access_token"
+    refresh_token: "refresh_token"
+    expires_in: "expires_in"
+
+api:
+  base_url: ""
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+  rate_limit:
+    requests_per_second: 10
+    retry_after_header: "Retry-After"
+
+quirks: []                          # Human-readable notes

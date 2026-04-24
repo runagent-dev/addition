@@ -145,6 +145,7 @@ These are the things to check first when something feels off, and the things tha
 7. **Scopes delimiter:** space for most providers, **comma for Slack**. Read from the YAML, never hardcode.
 8. **Audit log:** every OAuth / token / connection / tool event writes a row to `_addition.audit_log`. Tokens never appear in logs in plaintext.
 9. **Spec version:** `shared/spec.yaml` version, `ts/package.json` version, `python/pyproject.toml` version are always equal. Bump together.
+10. **Token extraction is data, not code.** `provider.oauth2.token_response_mapping` (dot-paths in the provider YAML) is the single source of truth for where tokens live in a token-exchange response. When absent, the OAuth engine uses the standard OAuth2 layout (top-level `access_token`, `refresh_token`, `expires_in`). **Adapters MUST NOT override `parseTokenResponse` to extract tokens** — they may only override it to reject non-standard error shapes (e.g. Slack `ok: false`) before the default extraction runs. Adapter responsibilities: request-shaping (headers, params) and error detection. Never token extraction.
 
 ---
 

@@ -95,13 +95,16 @@ Each milestone: **write the listed tests first → watch them fail → implement
 **Impl:** `src/transforms/{gmail,google-calendar,index}.ts`.
 
 ### M5 — Adapters
+> **Scope rule (from CLAUDE.md §6 invariant 10):** adapters own request-shaping
+> and error detection. Token extraction is owned by YAML `token_response_mapping`
+> and executed by the OAuth engine — adapters MUST NOT re-implement it.
+
 **Tests (`test/unit/adapters.test.ts`)**
-- `DefaultAdapter.parseTokenResponse` with `{access_token, refresh_token, expires_in}` returns standard shape; with status 400 throws `OAuthError`.
+- `DefaultAdapter.parseTokenResponse` with `{access_token, refresh_token, expires_in}` reads the standard top-level fields via the engine's extraction helper; with status 400 throws `OAuthError`.
 - `DefaultAdapter.isErrorResponse` is true for status 500, false for 200.
 - `GitHubAdapter.beforeTokenExchange` adds `Accept: application/json`.
-- `GitHubAdapter.parseTokenResponse` with `{error, error_description}` throws; with success returns `refreshToken: null, expiresIn: null`.
-- `SlackAdapter.parseTokenResponse` with `{ok:false, error:"invalid_auth"}` throws; with nested `authed_user.access_token` extracts it.
-- `SlackAdapter.isErrorResponse` is true for `{ok: false}` even on HTTP 200.
+- `GitHubAdapter.parseTokenResponse` with `{error, error_description}` throws (this is error-detection on a 200 response, not token extraction — extraction still goes through the default path when the body is healthy).
+- `SlackAdapter.isErrorResponse` is true for `{ok: false}` even on HTTP 200 (preserves the error-detection role). The nested `authed_user.access_token` path is handled by `slack.yaml`'s `token_response_mapping`, **not** by the adapter.
 - `getAdapter('google')` returns a `DefaultAdapter`; `getAdapter('github')` returns `GitHubAdapter`.
 
 **Impl:** `src/adapters/{base,github,slack,index}.ts`.

@@ -1,0 +1,19 @@
+id: "gmail"
+name: "Gmail"
+auth_type: "oauth2"
+extends: "google"
+
+oauth2:
+  default_scopes:
+    - "openid"
+    - "https://www.googleapis.com/auth/userinfo.email"
+    - "https://www.googleapis.com/auth/gmail.readonly"
+    - "https://www.googleapis.com/auth/gmail.send"
+    - "https://www.googleapis.com/auth/gmail.modify"
+
+api:
+  base_url: "https://gmail.googleapis.com"
+
+quirks:
+  - "Inherits Google OAuth; see google.yaml"
+  - "Per-user rate limit: 250 quota units per user per second"
