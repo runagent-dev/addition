@@ -141,8 +141,14 @@ oauth2:
   authorize_url: "https://zzz.example.com/auth"
   token_url: "https://zzz.example.com/token"
   refresh_supported: true
+  pkce_supported: false
+  pkce_required: false
   default_scopes: []
   scopes_delimiter: "space"
+  authorize_params: {}
+  token_params: {}
+  token_response_format: "json"
+  client_auth_method: "body"
 api:
   base_url: "https://zzz.example.com"
   auth_header: "Authorization"
@@ -217,8 +223,14 @@ oauth2:
   authorize_url: "https://base.example.com/auth"
   token_url: "https://base.example.com/token"
   refresh_supported: true
+  pkce_supported: false
+  pkce_required: false
   default_scopes: []
   scopes_delimiter: "space"
+  authorize_params: {}
+  token_params: {}
+  token_response_format: "json"
+  client_auth_method: "body"
 api:
   base_url: "https://base.example.com"
   auth_header: "Authorization"
@@ -264,6 +276,25 @@ api:
       return mkdtempSync(join(tmpdir(), 'addition-providers-val-'));
     }
 
+    // A fully-specified oauth2 block used as a base in these fixtures.
+    // Keeping it in one place so adding new required fields only touches here.
+    const OAUTH2_BLOCK = `oauth2:
+  authorize_url: "https://example.com/auth"
+  token_url: "https://example.com/token"
+  refresh_supported: true
+  pkce_supported: false
+  pkce_required: false
+  default_scopes: []
+  scopes_delimiter: "space"
+  authorize_params: {}
+  token_params: {}
+  token_response_format: "json"
+  client_auth_method: "body"`;
+    const API_BLOCK = `api:
+  base_url: "https://example.com"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"`;
+
     it('throws when authorize_url is missing after merge (catches YAML typos)', () => {
       tmp = makeTmp();
       try {
@@ -277,12 +308,15 @@ oauth2:
   authorize_ur: "https://typo.example.com/auth"  # typo: missing 'l'
   token_url: "https://broken.example.com/token"
   refresh_supported: true
+  pkce_supported: false
+  pkce_required: false
   default_scopes: []
   scopes_delimiter: "space"
-api:
-  base_url: "https://broken.example.com"
-  auth_header: "Authorization"
-  auth_prefix: "Bearer"
+  authorize_params: {}
+  token_params: {}
+  token_response_format: "json"
+  client_auth_method: "body"
+${API_BLOCK}
 `,
         );
         // Must throw at load, not silently produce undefined downstream.
@@ -301,12 +335,7 @@ api:
           `id: "nourl"
 name: "No URL"
 auth_type: "oauth2"
-oauth2:
-  authorize_url: "https://nourl.example.com/auth"
-  token_url: "https://nourl.example.com/token"
-  refresh_supported: true
-  default_scopes: []
-  scopes_delimiter: "space"
+${OAUTH2_BLOCK}
 api:
   auth_header: "Authorization"
   auth_prefix: "Bearer"
@@ -327,20 +356,111 @@ api:
           `id: "ok"
 name: "OK"
 auth_type: "oauth2"
-oauth2:
-  authorize_url: "https://ok.example.com/auth"
-  token_url: "https://ok.example.com/token"
-  refresh_supported: true
-  default_scopes: []
-  scopes_delimiter: "space"
-api:
-  base_url: "https://ok.example.com"
-  auth_header: "Authorization"
-  auth_prefix: "Bearer"
+${OAUTH2_BLOCK}
+${API_BLOCK}
 `,
         );
         const reg = loadProviders(tmp);
         expect(reg['ok'].id).toBe('ok');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    // Issue #11 fix #3: full OAuth2 block validation catches YAML typos at
+    // load time rather than as `undefined` derefs deep in the OAuth engine.
+    it.each([
+      ['refresh_supported', 'refresh_supported: true'],
+      ['pkce_supported', 'pkce_supported: false'],
+      ['pkce_required', 'pkce_required: false'],
+      ['scopes_delimiter', 'scopes_delimiter: "space"'],
+      ['default_scopes', 'default_scopes: []'],
+      ['authorize_params', 'authorize_params: {}'],
+      ['token_params', 'token_params: {}'],
+      ['token_response_format', 'token_response_format: "json"'],
+      ['client_auth_method', 'client_auth_method: "body"'],
+    ])('throws when oauth2.%s is missing', (field, lineToRemove) => {
+      tmp = makeTmp();
+      try {
+        const oauthBlock = OAUTH2_BLOCK.split('\n').filter((l) => !l.includes(lineToRemove)).join('\n');
+        writeYaml(
+          tmp,
+          'missing.yaml',
+          `id: "missing"
+name: "Missing"
+auth_type: "oauth2"
+${oauthBlock}
+${API_BLOCK}
+`,
+        );
+        expect(() => loadProviders(tmp)).toThrow(new RegExp(field));
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when scopes_delimiter is a non-enum value', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'bad-delim.yaml',
+          `id: "bad"
+name: "Bad"
+auth_type: "oauth2"
+${OAUTH2_BLOCK.replace('scopes_delimiter: "space"', 'scopes_delimiter: "semicolon"')}
+${API_BLOCK}
+`,
+        );
+        expect(() => loadProviders(tmp)).toThrow(/scopes_delimiter/);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when pkce_supported is a string, not a boolean', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'wrong-type.yaml',
+          `id: "wrong"
+name: "Wrong"
+auth_type: "oauth2"
+${OAUTH2_BLOCK.replace('pkce_supported: false', 'pkce_supported: "false"')}
+${API_BLOCK}
+`,
+        );
+        expect(() => loadProviders(tmp)).toThrow(/pkce_supported/);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    // Issue #11 fix #4: invariant #3 — child with `extends` must declare
+    // its own name. Silently inheriting the base's name is a foot-gun.
+    it('throws when a child with `extends` omits `name`', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'base.yaml',
+          `id: "the-base"
+name: "The Base"
+auth_type: "oauth2"
+${OAUTH2_BLOCK}
+${API_BLOCK}
+`,
+        );
+        writeYaml(
+          tmp,
+          'nameless-child.yaml',
+          `id: "nameless"
+auth_type: "oauth2"
+extends: "the-base"
+`,
+        );
+        expect(() => loadProviders(tmp)).toThrow(/nameless.*name/);
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }

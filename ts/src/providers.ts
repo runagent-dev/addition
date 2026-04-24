@@ -97,13 +97,21 @@ function deepMerge(
 }
 
 function mergeConfigs(base: RawProvider, child: RawProvider): RawProvider {
+  // Invariant (CLAUDE.md §6 #3): a child with `extends` must declare its own
+  // name. Silently inheriting the base's name would make a `gmail-v2.yaml`
+  // extending `google.yaml` without its own `name` present as "Google".
+  if (typeof child.name !== 'string' || child.name === '') {
+    throw new AdditionError(
+      `provider '${child.id}' uses 'extends: ${child.extends}' but does not declare its own 'name'; child configs must provide their own name`,
+    );
+  }
   const merged = deepMerge(
     base as unknown as Record<string, unknown>,
     child as unknown as Record<string, unknown>,
   );
   // id and name always come from child
   merged.id = child.id;
-  if (child.name !== undefined) merged.name = child.name;
+  merged.name = child.name;
   return merged as unknown as RawProvider;
 }
 
@@ -114,25 +122,65 @@ function mergeConfigs(base: RawProvider, child: RawProvider): RawProvider {
  */
 function validateResolved(cfg: ProviderConfig): void {
   const id = cfg.id;
+  const err = (msg: string): never => {
+    throw new AdditionError(`provider '${id}': ${msg}`);
+  };
   const requireNonEmptyString = (path: string, value: unknown) => {
     if (typeof value !== 'string' || value === '') {
-      throw new AdditionError(
-        `provider '${id}' is missing required string field '${path}' after extends resolution`,
-      );
+      err(`missing required string field '${path}' after extends resolution`);
     }
   };
-  requireNonEmptyString('name', cfg.name);
-  requireNonEmptyString('auth_type', cfg.auth_type);
-  if (cfg.auth_type === 'oauth2') {
-    if (!cfg.oauth2) {
-      throw new AdditionError(`provider '${id}' has auth_type=oauth2 but no 'oauth2' block`);
+  const requireBoolean = (path: string, value: unknown) => {
+    if (typeof value !== 'boolean') err(`field '${path}' must be a boolean, got ${typeof value}`);
+  };
+  const requireStringArray = (path: string, value: unknown) => {
+    if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
+      err(`field '${path}' must be a string[]`);
     }
-    requireNonEmptyString('oauth2.authorize_url', cfg.oauth2.authorize_url);
-    requireNonEmptyString('oauth2.token_url', cfg.oauth2.token_url);
+  };
+  const requirePlainObject = (path: string, value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      err(`field '${path}' must be a plain object`);
+    }
+  };
+  const requireOneOf = (path: string, value: unknown, allowed: readonly string[]) => {
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      err(`field '${path}' must be one of ${allowed.join(', ')}, got ${JSON.stringify(value)}`);
+    }
+  };
+
+  requireNonEmptyString('name', cfg.name);
+  requireOneOf('auth_type', cfg.auth_type, ['oauth2', 'api_key', 'basic']);
+
+  if (cfg.auth_type === 'oauth2') {
+    if (!cfg.oauth2) err(`auth_type=oauth2 but no 'oauth2' block`);
+    const o = cfg.oauth2 as unknown as Record<string, unknown>;
+    requireNonEmptyString('oauth2.authorize_url', o.authorize_url);
+    requireNonEmptyString('oauth2.token_url', o.token_url);
+    // revoke_url is optional — null or absent both mean "no revoke endpoint".
+    if (o.revoke_url != null && (typeof o.revoke_url !== 'string' || o.revoke_url === '')) {
+      err(`field 'oauth2.revoke_url' must be a non-empty string, null, or absent`);
+    }
+    requireBoolean('oauth2.refresh_supported', o.refresh_supported);
+    requireBoolean('oauth2.pkce_supported', o.pkce_supported);
+    requireBoolean('oauth2.pkce_required', o.pkce_required);
+    requireStringArray('oauth2.default_scopes', o.default_scopes);
+    requireOneOf('oauth2.scopes_delimiter', o.scopes_delimiter, ['space', 'comma']);
+    requirePlainObject('oauth2.authorize_params', o.authorize_params);
+    requirePlainObject('oauth2.token_params', o.token_params);
+    requireOneOf('oauth2.token_response_format', o.token_response_format, ['json', 'form']);
+    requireOneOf('oauth2.client_auth_method', o.client_auth_method, ['body', 'header']);
+    // token_response_mapping is optional; if present, all three paths are required strings.
+    if (o.token_response_mapping !== undefined && o.token_response_mapping !== null) {
+      requirePlainObject('oauth2.token_response_mapping', o.token_response_mapping);
+      const m = o.token_response_mapping as Record<string, unknown>;
+      requireNonEmptyString('oauth2.token_response_mapping.access_token', m.access_token);
+      requireNonEmptyString('oauth2.token_response_mapping.refresh_token', m.refresh_token);
+      requireNonEmptyString('oauth2.token_response_mapping.expires_in', m.expires_in);
+    }
   }
-  if (!cfg.api) {
-    throw new AdditionError(`provider '${id}' has no 'api' block`);
-  }
+
+  if (!cfg.api) err(`no 'api' block`);
   requireNonEmptyString('api.base_url', cfg.api.base_url);
   requireNonEmptyString('api.auth_header', cfg.api.auth_header);
   requireNonEmptyString('api.auth_prefix', cfg.api.auth_prefix);

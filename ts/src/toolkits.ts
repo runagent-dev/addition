@@ -90,6 +90,26 @@ function parseParam(raw: RawParam, context: string): ToolParamDefinition {
     if (!Array.isArray(raw.enum)) {
       throw new AdditionError(`${context} param '${name}': 'enum' must be an array`);
     }
+    // enum values must be assignable to the declared type — otherwise every
+    // call is doomed to fail validation and the author never finds out until
+    // someone invokes the tool.
+    const expected = out.type;
+    const okEnumType: Record<string, (v: unknown) => boolean> = {
+      string: (v) => typeof v === 'string',
+      integer: (v) => typeof v === 'number' && Number.isInteger(v),
+    };
+    const check = okEnumType[expected];
+    if (!check) {
+      throw new AdditionError(
+        `${context} param '${name}': 'enum' is only allowed on 'string' or 'integer' params, not '${expected}'`,
+      );
+    }
+    const bad = raw.enum.find((v) => !check(v));
+    if (bad !== undefined) {
+      throw new AdditionError(
+        `${context} param '${name}': enum value ${JSON.stringify(bad)} is not a ${expected}`,
+      );
+    }
     out.enum = raw.enum as (string | number)[];
   }
   return out;

@@ -294,5 +294,90 @@ tools:
         rmSync(tmp, { recursive: true, force: true });
       }
     });
+
+    // Issue #11 fix #7: enum values must match the declared param type.
+    // A YAML with `type: integer, enum: ["a"]` would load silently and then
+    // reject every valid call at runtime.
+    it('rejects enum values that are not the declared type (integer param with string enum)', () => {
+      makeTmp();
+      try {
+        write(
+          'bad.yaml',
+          `provider: "gmail"
+name: "Bad"
+description: "enum/type mismatch"
+tools:
+  - id: foo
+    name: "Foo"
+    description: "x"
+    operation: "GET /foo"
+    params:
+      - name: n
+        type: integer
+        required: true
+        enum: ["one", "two"]
+        description: "should be integers"
+`,
+        );
+        expect(() => loadToolkits(tmp, providers)).toThrow(/enum|integer/i);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects enum on a type that does not allow enums (boolean)', () => {
+      makeTmp();
+      try {
+        write(
+          'bad.yaml',
+          `provider: "gmail"
+name: "Bad"
+description: "enum on boolean"
+tools:
+  - id: foo
+    name: "Foo"
+    description: "x"
+    operation: "GET /foo"
+    params:
+      - name: on
+        type: boolean
+        required: true
+        enum: [true, false]
+        description: "nonsensical"
+`,
+        );
+        expect(() => loadToolkits(tmp, providers)).toThrow(/enum/i);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('accepts integer enum values on an integer param', () => {
+      makeTmp();
+      try {
+        write(
+          'good.yaml',
+          `provider: "gmail"
+name: "Good"
+description: "valid integer enum"
+tools:
+  - id: foo
+    name: "Foo"
+    description: "x"
+    operation: "GET /foo"
+    params:
+      - name: n
+        type: integer
+        required: true
+        enum: [1, 2, 3]
+        description: "valid"
+`,
+        );
+        const reg = loadToolkits(tmp, providers);
+        expect(reg['gmail'].tools[0].params[0].enum).toEqual([1, 2, 3]);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   });
 });

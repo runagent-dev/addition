@@ -204,4 +204,46 @@ describe('transforms — google-calendar:update_event_body', () => {
     expect(withNone.body.description).toBeUndefined();
     expect(withNone.body.location).toBeUndefined();
   });
+
+  // Issue #11 fix #6: without timeZone, Google interprets the new dateTime
+  // against the event's stored tz, which silently breaks cross-tz reschedules.
+  it('forwards timeZone onto each updated start/end', () => {
+    const result = transform({
+      eventId: 'evt1',
+      startDateTime: '2024-06-15T09:00:00',
+      endDateTime: '2024-06-15T10:00:00',
+      timeZone: 'America/New_York',
+    });
+    expect(result.body.start).toEqual({
+      dateTime: '2024-06-15T09:00:00',
+      timeZone: 'America/New_York',
+    });
+    expect(result.body.end).toEqual({
+      dateTime: '2024-06-15T10:00:00',
+      timeZone: 'America/New_York',
+    });
+  });
+
+  it('timeZone without a start/end update is a no-op (does not fabricate start/end)', () => {
+    const result = transform({
+      eventId: 'evt1',
+      summary: 'renamed',
+      timeZone: 'America/Los_Angeles',
+    });
+    expect(result.body.start).toBeUndefined();
+    expect(result.body.end).toBeUndefined();
+  });
+
+  it('timeZone forwards onto only the side being updated', () => {
+    const result = transform({
+      eventId: 'evt1',
+      startDateTime: '2024-06-15T09:00:00',
+      timeZone: 'Europe/London',
+    });
+    expect(result.body.start).toEqual({
+      dateTime: '2024-06-15T09:00:00',
+      timeZone: 'Europe/London',
+    });
+    expect(result.body.end).toBeUndefined();
+  });
 });

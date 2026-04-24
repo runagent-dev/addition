@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Pool } from 'pg';
 import { bootstrap } from '../../src/schema.js';
+import { SchemaError } from '../../src/errors.js';
 
 const SHARED_SCHEMA = join(__dirname, '..', '..', '..', 'shared', 'schema');
 
@@ -224,6 +225,56 @@ describe('schema bootstrap', () => {
         } finally {
           await pool.end();
         }
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // Issue #11 fix #1: two pods racing against an empty DB both see null in
+  // currentVersion() and both run migration 001. Harmless today (001 is all
+  // CREATE...IF NOT EXISTS); the first destructive migration would corrupt
+  // state without the advisory lock.
+  it('concurrent bootstrap calls race-safely produce a single consistent result', async () => {
+    await withFreshDb(async (url) => {
+      // Kick off N bootstraps in parallel against an empty DB.
+      await Promise.all(
+        Array.from({ length: 5 }, () => bootstrap(url, SHARED_SCHEMA)),
+      );
+      const pool = new Pool({ connectionString: url });
+      try {
+        const { rows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM _addition.meta WHERE key = 'schema_version'`,
+        );
+        expect(rows[0].n).toBe(1);
+        const { rows: tables } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM information_schema.tables WHERE table_schema = '_addition'`,
+        );
+        expect(tables[0].n).toBe(5);
+      } finally {
+        await pool.end();
+      }
+    });
+  });
+
+  // Issue #11 fix #5: a migration that doesn't update meta.schema_version
+  // would make bootstrap rerun it on every restart. Enforce at runtime.
+  it('throws SchemaError when a migration finishes without bumping schema_version', async () => {
+    await withFreshDb(async (url) => {
+      const tmp = mkdtempSync(join(tmpdir(), 'addition-schema-badmig-'));
+      try {
+        // 001 copied from shared (properly bumps version).
+        for (const f of readdirSync(SHARED_SCHEMA)) {
+          if (f.endsWith('.sql')) copyFileSync(join(SHARED_SCHEMA, f), join(tmp, f));
+        }
+        // 002 missing the meta.schema_version bump.
+        writeFileSync(
+          join(tmp, '002_forgot_bump.sql'),
+          `ALTER TABLE _addition.provider_configs ADD COLUMN IF NOT EXISTS forgot TEXT;`,
+          'utf8',
+        );
+        await expect(bootstrap(url, tmp)).rejects.toThrow(SchemaError);
+        await expect(bootstrap(url, tmp)).rejects.toThrow(/002/);
       } finally {
         rmSync(tmp, { recursive: true, force: true });
       }
