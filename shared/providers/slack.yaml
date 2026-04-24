@@ -1,0 +1,39 @@
+id: "slack"
+name: "Slack"
+auth_type: "oauth2"
+
+oauth2:
+  authorize_url: "https://slack.com/oauth/v2/authorize"
+  token_url: "https://slack.com/api/oauth.v2.access"
+  revoke_url: "https://slack.com/api/auth.revoke"
+  refresh_supported: true
+  pkce_supported: false
+  pkce_required: false
+  default_scopes:
+    - "channels:read"
+    - "chat:write"
+    - "users:read"
+    - "users:read.email"
+  scopes_delimiter: "comma"
+  authorize_params: {}
+  token_params: {}
+  token_response_format: "json"
+  client_auth_method: "body"
+  token_response_mapping:
+    access_token: "authed_user.access_token"
+    refresh_token: "authed_user.refresh_token"
+    expires_in: "authed_user.expires_in"
+
+api:
+  base_url: "https://slack.com/api"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+  rate_limit:
+    requests_per_second: 1
+    retry_after_header: "Retry-After"
+
+quirks:
+  - "Uses comma-separated scopes"
+  - "Token response nests user tokens under authed_user object"
+  - "API returns 200 for errors with ok: false in body"
+  - "Rate limits vary by method tier; use Retry-After header"
