@@ -1,0 +1,91 @@
+provider: "slack"
+name: "Slack"
+description: "Send messages and interact with Slack workspaces"
+
+tools:
+
+  - id: send_message
+    name: "Send message"
+    description: "Send a message to a Slack channel"
+    operation: "POST /chat.postMessage"
+    params:
+      - name: channel
+        type: string
+        required: true
+        description: "Channel ID or name (e.g., '#general' or 'C1234567890')"
+      - name: text
+        type: string
+        required: true
+        description: "Message text (supports Slack markdown/mrkdwn)"
+      - name: thread_ts
+        type: string
+        required: false
+        description: "Timestamp of parent message to reply in a thread"
+    response:
+      type: object
+      fields:
+        ok: "Whether the message was sent successfully"
+        ts: "Timestamp of the sent message (use as message ID)"
+        channel: "Channel ID where message was posted"
+
+  - id: list_channels
+    name: "List channels"
+    description: "List public channels in the workspace"
+    operation: "GET /conversations.list"
+    params:
+      - name: types
+        type: string
+        required: false
+        default: "public_channel"
+        description: "Comma-separated channel types (public_channel, private_channel, mpim, im)"
+      - name: limit
+        type: integer
+        required: false
+        default: 100
+        description: "Maximum results (max 1000)"
+      - name: exclude_archived
+        type: boolean
+        required: false
+        default: true
+        description: "Exclude archived channels"
+    pagination:
+      type: cursor
+      cursor_param: cursor
+      cursor_response_field: response_metadata.next_cursor
+    response:
+      type: object
+      fields:
+        channels: "Array of channel objects with id, name, purpose, num_members"
+        response_metadata: "Contains next_cursor for pagination"
+
+  - id: list_messages
+    name: "List messages"
+    description: "List recent messages in a channel"
+    operation: "GET /conversations.history"
+    params:
+      - name: channel
+        type: string
+        required: true
+        description: "Channel ID"
+      - name: limit
+        type: integer
+        required: false
+        default: 20
+        description: "Number of messages to return (max 1000)"
+      - name: oldest
+        type: string
+        required: false
+        description: "Only messages after this timestamp"
+      - name: latest
+        type: string
+        required: false
+        description: "Only messages before this timestamp"
+    pagination:
+      type: cursor
+      cursor_param: cursor
+      cursor_response_field: response_metadata.next_cursor
+    response:
+      type: object
+      fields:
+        messages: "Array of message objects with text, user, ts, type"
+        has_more: "Whether more messages exist"

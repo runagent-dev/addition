@@ -1,0 +1,140 @@
+provider: "gmail"
+name: "Gmail"
+description: "Read, send, and manage emails in Gmail"
+
+tools:
+
+  - id: list_messages
+    name: "List messages"
+    description: "List email messages in the user's mailbox. Returns message IDs and thread IDs. Use get_message to fetch full content."
+    operation: "GET /gmail/v1/users/me/messages"
+    params:
+      - name: query
+        type: string
+        required: false
+        description: "Gmail search query (e.g., 'is:unread', 'from:alice@example.com', 'subject:meeting')"
+      - name: maxResults
+        type: integer
+        required: false
+        default: 10
+        description: "Maximum number of messages to return (1-500)"
+      - name: labelIds
+        type: string[]
+        required: false
+        description: "Only return messages with these label IDs (e.g., ['INBOX', 'UNREAD'])"
+    pagination:
+      type: cursor
+      cursor_param: pageToken
+      cursor_response_field: nextPageToken
+    response:
+      type: object
+      fields:
+        messages: "Array of {id, threadId} objects"
+        nextPageToken: "Token for next page, null if no more results"
+        resultSizeEstimate: "Estimated total number of results"
+
+  - id: get_message
+    name: "Get message"
+    description: "Get the full content of a specific email message, including headers, body, and attachments metadata"
+    operation: "GET /gmail/v1/users/me/messages/{messageId}"
+    params:
+      - name: messageId
+        type: string
+        required: true
+        description: "The ID of the message to retrieve"
+      - name: format
+        type: string
+        required: false
+        default: "full"
+        enum: ["minimal", "full", "raw", "metadata"]
+        description: "The format to return the message in"
+    response:
+      type: object
+      fields:
+        id: "Message ID"
+        threadId: "Thread ID"
+        snippet: "Short preview text of the email"
+        labelIds: "Labels applied to this message"
+        payload: "Message content including headers, parts, and body"
+        internalDate: "Timestamp when the message was received"
+
+  - id: send_message
+    name: "Send email"
+    description: "Send a new email message. The library handles MIME formatting automatically."
+    operation: "POST /gmail/v1/users/me/messages/send"
+    transform: "gmail:rfc2822"
+    params:
+      - name: to
+        type: string
+        required: true
+        description: "Recipient email address (e.g., 'alice@example.com')"
+      - name: subject
+        type: string
+        required: true
+        description: "Email subject line"
+      - name: body
+        type: string
+        required: true
+        description: "Email body (plain text)"
+      - name: cc
+        type: string
+        required: false
+        description: "CC recipient email address"
+      - name: bcc
+        type: string
+        required: false
+        description: "BCC recipient email address"
+    response:
+      type: object
+      fields:
+        id: "ID of the sent message"
+        threadId: "Thread ID of the sent message"
+        labelIds: "Labels applied (typically ['SENT'])"
+
+  - id: search_messages
+    name: "Search emails"
+    description: "Search emails using Gmail's powerful search syntax. Returns matching message IDs."
+    operation: "GET /gmail/v1/users/me/messages"
+    params:
+      - name: query
+        type: string
+        required: true
+        description: "Gmail search query (e.g., 'from:alice subject:meeting after:2024/01/01 has:attachment')"
+      - name: maxResults
+        type: integer
+        required: false
+        default: 20
+        description: "Maximum number of results"
+    pagination:
+      type: cursor
+      cursor_param: pageToken
+      cursor_response_field: nextPageToken
+    response:
+      type: object
+      fields:
+        messages: "Array of matching {id, threadId} objects"
+        resultSizeEstimate: "Estimated total results"
+
+  - id: modify_message
+    name: "Modify message labels"
+    description: "Add or remove labels from a message (e.g., mark as read, archive, star)"
+    operation: "POST /gmail/v1/users/me/messages/{messageId}/modify"
+    params:
+      - name: messageId
+        type: string
+        required: true
+        description: "The ID of the message to modify"
+      - name: addLabelIds
+        type: string[]
+        required: false
+        description: "Label IDs to add (e.g., ['STARRED', 'IMPORTANT'])"
+      - name: removeLabelIds
+        type: string[]
+        required: false
+        description: "Label IDs to remove (e.g., ['UNREAD', 'INBOX'] to mark read and archive)"
+    response:
+      type: object
+      fields:
+        id: "Message ID"
+        threadId: "Thread ID"
+        labelIds: "Updated label list"

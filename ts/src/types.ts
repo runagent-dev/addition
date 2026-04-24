@@ -47,3 +47,65 @@ export interface ProviderConfig {
 }
 
 export type ProviderRegistry = Record<string, ProviderConfig>;
+
+// ---------- Toolkits (Layer 3) ----------
+
+export type ToolParamType =
+  | 'string'
+  | 'integer'
+  | 'boolean'
+  | 'string[]'
+  | 'object';
+
+export interface ToolParamDefinition {
+  name: string;
+  type: ToolParamType;
+  required: boolean;
+  default?: unknown;
+  enum?: (string | number)[];
+  description: string;
+}
+
+export interface ToolPaginationConfig {
+  type: 'cursor' | 'offset' | 'page';
+  /** Query-string param name to send the cursor/page in. Always a simple key. */
+  cursor_param: string;
+  /**
+   * Location of the next cursor in the API response. Supports **dot-paths**
+   * into nested objects — same convention as `token_response_mapping` in
+   * provider configs. Examples:
+   *   - `"nextPageToken"` → `response.nextPageToken` (top-level)
+   *   - `"response_metadata.next_cursor"` → `response.response_metadata.next_cursor` (Slack)
+   * `null` means the provider uses a different paging signal (e.g. GitHub's
+   * `page` offsets or Link header) and the tool engine should not auto-extract.
+   */
+  cursor_response_field: string | null;
+}
+
+export interface ToolResponseConfig {
+  type: 'object' | 'array';
+  fields: Record<string, string>;
+}
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  description: string;
+  provider: string;
+  operation: string;
+  params: ToolParamDefinition[];
+  /** Named transform id in "{provider}:{transform_name}" form, or null. */
+  transform: string | null;
+  pagination: ToolPaginationConfig | null;
+  response: ToolResponseConfig | null;
+}
+
+export interface ToolkitConfig {
+  provider: string;
+  name: string;
+  description: string;
+  tools: ToolDefinition[];
+}
+
+/** Map from provider id → toolkit. */
+export type ToolkitRegistry = Record<string, ToolkitConfig>;
