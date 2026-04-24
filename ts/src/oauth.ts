@@ -4,6 +4,7 @@ import { encrypt, decrypt } from './crypto.js';
 import { getProvider } from './providers.js';
 import { getAdapter } from './adapters/index.js';
 import { ProviderNotFoundError, ProviderDisabledError, OAuthError } from './errors.js';
+import { getByPath } from './utils.js';
 import type {
   ProviderConfig,
   ProviderRegistry,
@@ -54,18 +55,6 @@ function codeChallenge(verifier: string): string {
 
 function joinScopes(scopes: string[], delimiter: 'space' | 'comma'): string {
   return scopes.join(delimiter === 'comma' ? ',' : ' ');
-}
-
-// ---------- Dot-path extraction (CLAUDE.md §6 invariant #10) ----------
-
-function getByPath(obj: unknown, path: string): unknown {
-  if (obj == null || typeof obj !== 'object') return undefined;
-  let cur: any = obj;
-  for (const seg of path.split('.')) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = cur[seg];
-  }
-  return cur;
 }
 
 // ---------- DB helpers ----------

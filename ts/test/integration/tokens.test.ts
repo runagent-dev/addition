@@ -7,13 +7,14 @@ import { Pool } from 'pg';
 import { bootstrap } from '../../src/schema.js';
 import { loadProviders } from '../../src/providers.js';
 import { encrypt, decrypt } from '../../src/crypto.js';
-import { TokenRefreshError } from '../../src/errors.js';
+import { TokenRefreshError, ConnectionNotFoundError } from '../../src/errors.js';
 import {
   storeConnection,
-  getConnection,
+  getConnectionById,
+  findActiveConnection,
   refreshConnection,
   listConnections,
-  disconnect,
+  revokeConnection,
 } from '../../src/tokens.js';
 import type { ProviderRegistry } from '../../src/types.js';
 import type { TokenDeps, StoredTokens } from '../../src/tokens.js';
@@ -165,37 +166,79 @@ describe('token manager — storeConnection', () => {
       expect(id).toMatch(/^[0-9a-f-]{36}$/);
     });
   });
-});
 
-describe('token manager — getConnection', () => {
-  it('returns decrypted accessToken and refreshToken in memory', async () => {
+  it('writes connection.created audit row', async () => {
     await withFreshDb(async (pool) => {
       await seedProviderConfig(pool, 'google');
-      await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
-      const conn = await getConnection(pool, 'u1', 'google', TEST_KEY);
+      const id = await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      const { rows } = await pool.query(
+        `SELECT event_type FROM _addition.audit_log WHERE connection_id = $1`, [id],
+      );
+      expect(rows.some((r) => r.event_type === 'connection.created')).toBe(true);
+    });
+  });
+});
+
+describe('token manager — getConnectionById', () => {
+  it('returns decrypted tokens by connectionId', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'google');
+      const id = await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      const conn = await getConnectionById(pool, id, TEST_KEY);
       expect(conn).not.toBeNull();
       expect(conn!.accessToken).toBe('plaintext-access');
       expect(conn!.refreshToken).toBe('plaintext-refresh');
     });
   });
 
-  it('returns null when userId/providerId has no connection', async () => {
+  it('returns null for an unknown connectionId', async () => {
+    await withFreshDb(async (pool) => {
+      const conn = await getConnectionById(pool, '00000000-0000-0000-0000-000000000000', TEST_KEY);
+      expect(conn).toBeNull();
+    });
+  });
+});
+
+describe('token manager — findActiveConnection', () => {
+  it('returns decrypted tokens for userId+providerId', async () => {
     await withFreshDb(async (pool) => {
       await seedProviderConfig(pool, 'google');
-      const conn = await getConnection(pool, 'nobody', 'google', TEST_KEY);
+      await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      const conn = await findActiveConnection(pool, 'u1', 'google', TEST_KEY);
+      expect(conn).not.toBeNull();
+      expect(conn!.accessToken).toBe('plaintext-access');
+      expect(conn!.refreshToken).toBe('plaintext-refresh');
+    });
+  });
+
+  it('returns null when userId/providerId has no active connection', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'google');
+      const conn = await findActiveConnection(pool, 'nobody', 'google', TEST_KEY);
       expect(conn).toBeNull();
     });
   });
 
-  it('returns the most recently created connection when multiple exist', async () => {
+  it('returns the most recently created active connection when multiple exist', async () => {
     await withFreshDb(async (pool) => {
       await seedProviderConfig(pool, 'google');
       await storeConnection(pool, 'u1', 'google',
         { accessToken: 'old-token', refreshToken: null, expiresIn: null, scopesGranted: [] }, TEST_KEY);
       await storeConnection(pool, 'u1', 'google',
         { accessToken: 'new-token', refreshToken: null, expiresIn: null, scopesGranted: [] }, TEST_KEY);
-      const conn = await getConnection(pool, 'u1', 'google', TEST_KEY);
+      const conn = await findActiveConnection(pool, 'u1', 'google', TEST_KEY);
       expect(conn!.accessToken).toBe('new-token');
+    });
+  });
+
+  it('does not return a refresh_failed connection', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'google');
+      const id = await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      // Force status to refresh_failed.
+      await pool.query(`UPDATE _addition.connections SET status = 'refresh_failed' WHERE id = $1`, [id]);
+      const conn = await findActiveConnection(pool, 'u1', 'google', TEST_KEY);
+      expect(conn).toBeNull();
     });
   });
 
@@ -205,7 +248,7 @@ describe('token manager — getConnection', () => {
       const before = Date.now();
       await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
       const after = Date.now();
-      const conn = await getConnection(pool, 'u1', 'google', TEST_KEY);
+      const conn = await findActiveConnection(pool, 'u1', 'google', TEST_KEY);
       expect(conn!.tokenExpiresAt).not.toBeNull();
       const ms = conn!.tokenExpiresAt!.getTime();
       expect(ms).toBeGreaterThanOrEqual(before + 3599_000);
@@ -297,6 +340,33 @@ describe('token manager — refreshConnection', () => {
       expect(result.accessToken).toBe('access');
     });
   });
+
+  it('throws ConnectionNotFoundError for an unknown connectionId', async () => {
+    await withFreshDb(async (pool) => {
+      await expect(
+        refreshConnection('00000000-0000-0000-0000-000000000000', deps(pool)),
+      ).rejects.toThrow(ConnectionNotFoundError);
+    });
+  });
+
+  it('preserves token_expires_at when provider omits expires_in on refresh', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'google');
+      const id = await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      // Record the original expiry.
+      const { rows: before } = await pool.query(
+        `SELECT token_expires_at FROM _addition.connections WHERE id = $1`, [id],
+      );
+      const originalExpiry = before[0].token_expires_at;
+      // Refresh response has no expires_in.
+      const fetchImpl = mkFetch([{ status: 200, body: { access_token: 'refreshed' } }]);
+      await refreshConnection(id, deps(pool, fetchImpl));
+      const { rows: after } = await pool.query(
+        `SELECT token_expires_at FROM _addition.connections WHERE id = $1`, [id],
+      );
+      expect(after[0].token_expires_at?.getTime()).toBe(originalExpiry?.getTime());
+    });
+  });
 });
 
 describe('token manager — refresh failure', () => {
@@ -386,23 +456,34 @@ describe('token manager — listConnections', () => {
   });
 });
 
-describe('token manager — disconnect', () => {
-  it('removes the connection row', async () => {
+describe('token manager — revokeConnection', () => {
+  it('removes the connection row by connectionId', async () => {
     await withFreshDb(async (pool) => {
       await seedProviderConfig(pool, 'google');
-      await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
-      const removed = await disconnect(pool, 'u1', 'google');
-      expect(removed).toBe(true);
-      const conn = await getConnection(pool, 'u1', 'google', TEST_KEY);
+      const id = await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      await revokeConnection(pool, id);
+      const conn = await getConnectionById(pool, id, TEST_KEY);
       expect(conn).toBeNull();
     });
   });
 
-  it('returns false when no connection exists for userId/providerId', async () => {
+  it('is a no-op (does not throw) when connectionId does not exist', async () => {
+    await withFreshDb(async (pool) => {
+      await expect(
+        revokeConnection(pool, '00000000-0000-0000-0000-000000000000'),
+      ).resolves.toBeUndefined();
+    });
+  });
+
+  it('writes connection.revoked audit row', async () => {
     await withFreshDb(async (pool) => {
       await seedProviderConfig(pool, 'google');
-      const removed = await disconnect(pool, 'nobody', 'google');
-      expect(removed).toBe(false);
+      const id = await storeConnection(pool, 'u1', 'google', SAMPLE_TOKENS, TEST_KEY);
+      await revokeConnection(pool, id);
+      const { rows } = await pool.query(
+        `SELECT event_type FROM _addition.audit_log WHERE connection_id = $1`, [id],
+      );
+      expect(rows.some((r) => r.event_type === 'connection.revoked')).toBe(true);
     });
   });
 });
@@ -455,8 +536,11 @@ describe('token manager — conformance (token_refresh.yaml)', () => {
             expect(decrypt(rows[0].refresh_token_encrypted, TEST_KEY)).toBe(scenario.expected.refresh_token);
           }
         } else {
-          // Tokens must not have been overwritten.
+          // Both tokens must not have been overwritten.
           expect(decrypt(rows[0].access_token_encrypted, TEST_KEY)).toBe(scenario.initial.access_token);
+          if (scenario.initial.refresh_token !== undefined) {
+            expect(decrypt(rows[0].refresh_token_encrypted, TEST_KEY)).toBe(scenario.initial.refresh_token);
+          }
         }
       });
     });

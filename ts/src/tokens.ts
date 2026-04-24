@@ -1,7 +1,8 @@
 import { Pool } from 'pg';
 import { encrypt, decrypt } from './crypto.js';
 import { getAdapter } from './adapters/index.js';
-import { TokenRefreshError } from './errors.js';
+import { ConnectionNotFoundError, ProviderNotFoundError, TokenRefreshError } from './errors.js';
+import { getByPath } from './utils.js';
 import type { ProviderRegistry } from './types.js';
 
 // ---------- Public types ----------
@@ -31,10 +32,10 @@ export interface TokenDeps {
   fetch: typeof fetch;
 }
 
-// ---------- Helpers ----------
+// ---------- Internal helpers ----------
 
-function expiresAtFromIn(expiresIn: number | null): Date | null {
-  return expiresIn != null ? new Date(Date.now() + expiresIn * 1000) : null;
+function expiresAtFromIn(expiresIn: number): Date {
+  return new Date(Date.now() + expiresIn * 1000);
 }
 
 function decryptRow(row: Record<string, unknown>, encryptionKey: string): ConnectionRecord {
@@ -61,6 +62,7 @@ async function loadClientSecret(
     `SELECT client_id, client_secret_encrypted FROM _addition.provider_configs WHERE provider_id = $1`,
     [providerId],
   );
+  if (rows.length === 0) throw new ProviderNotFoundError(providerId);
   return {
     clientId: rows[0].client_id as string,
     clientSecret: decrypt(rows[0].client_secret_encrypted as string, encryptionKey),
@@ -70,9 +72,9 @@ async function loadClientSecret(
 async function writeAudit(
   pool: Pool,
   eventType: string,
-  userId: string,
-  providerId: string,
-  connectionId: string,
+  userId: string | null,
+  providerId: string | null,
+  connectionId: string | null,
   detail: Record<string, unknown>,
 ): Promise<void> {
   await pool.query(
@@ -93,7 +95,7 @@ export async function storeConnection(
 ): Promise<string> {
   const accessEnc = encrypt(tokens.accessToken, encryptionKey);
   const refreshEnc = tokens.refreshToken ? encrypt(tokens.refreshToken, encryptionKey) : null;
-  const expiresAt = expiresAtFromIn(tokens.expiresIn);
+  const expiresAt = tokens.expiresIn != null ? expiresAtFromIn(tokens.expiresIn) : null;
   const { rows } = await pool.query(
     `INSERT INTO _addition.connections
        (user_id, provider_id, access_token_encrypted, refresh_token_encrypted,
@@ -102,10 +104,39 @@ export async function storeConnection(
      RETURNING id`,
     [userId, providerId, accessEnc, refreshEnc, expiresAt, tokens.scopesGranted],
   );
-  return rows[0].id as string;
+  const connectionId = rows[0].id as string;
+  await writeAudit(pool, 'connection.created', userId, providerId, connectionId, {
+    has_refresh_token: refreshEnc !== null,
+    scopes: tokens.scopesGranted,
+  });
+  return connectionId;
 }
 
-export async function getConnection(
+/**
+ * Looks up a connection by its UUID. Spec-compliant signature for the M12
+ * public `getConnection` method.
+ */
+export async function getConnectionById(
+  pool: Pool,
+  connectionId: string,
+  encryptionKey: string,
+): Promise<ConnectionRecord | null> {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, provider_id, access_token_encrypted, refresh_token_encrypted,
+            token_expires_at, scopes_granted, status
+     FROM _addition.connections WHERE id = $1`,
+    [connectionId],
+  );
+  if (rows.length === 0) return null;
+  return decryptRow(rows[0], encryptionKey);
+}
+
+/**
+ * Finds the most recently created active connection for a user+provider pair.
+ * Used internally by the proxy and executeTool when no explicit connectionId
+ * is provided. Returns null when no active connection exists.
+ */
+export async function findActiveConnection(
   pool: Pool,
   userId: string,
   providerId: string,
@@ -115,7 +146,7 @@ export async function getConnection(
     `SELECT id, user_id, provider_id, access_token_encrypted, refresh_token_encrypted,
             token_expires_at, scopes_granted, status
      FROM _addition.connections
-     WHERE user_id = $1 AND provider_id = $2
+     WHERE user_id = $1 AND provider_id = $2 AND status = 'active'
      ORDER BY created_at DESC LIMIT 1`,
     [userId, providerId],
   );
@@ -129,19 +160,20 @@ export async function refreshConnection(
 ): Promise<ConnectionRecord> {
   const { pool, providers, encryptionKey, fetch: fetchFn } = deps;
 
-  // Load full connection row.
   const { rows: connRows } = await pool.query(
     `SELECT id, user_id, provider_id, access_token_encrypted, refresh_token_encrypted,
             token_expires_at, scopes_granted, status
      FROM _addition.connections WHERE id = $1`,
     [connectionId],
   );
+  if (connRows.length === 0) throw new ConnectionNotFoundError(connectionId);
+
   const row = connRows[0];
-  const providerId: string = row.provider_id;
-  const userId: string = row.user_id;
+  const providerId: string = row.provider_id as string;
+  const userId: string = row.user_id as string;
   const provider = providers[providerId];
 
-  // No-op when provider does not support refresh or there is no refresh token.
+  // No-op: provider doesn't support refresh or there is no refresh token stored.
   if (!provider.oauth2.refresh_supported || !row.refresh_token_encrypted) {
     return decryptRow(row, encryptionKey);
   }
@@ -150,7 +182,6 @@ export async function refreshConnection(
   const creds = await loadClientSecret(pool, providerId, encryptionKey);
   const adapter = getAdapter(providerId);
 
-  // Build the refresh request body.
   const body: Record<string, string> = {
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
@@ -168,7 +199,6 @@ export async function refreshConnection(
     headers.Authorization = `Basic ${basic}`;
   }
 
-  // Apply adapter request-shaping (e.g. GitHub's Accept header).
   const shaped = adapter.beforeTokenExchange({
     url: provider.oauth2.token_url,
     method: 'POST',
@@ -182,7 +212,6 @@ export async function refreshConnection(
     body: new URLSearchParams(shaped.body).toString(),
   });
 
-  // Parse response using the provider's declared format.
   let parsed: unknown;
   const text = await response.text();
   if (provider.oauth2.token_response_format === 'json') {
@@ -209,25 +238,12 @@ export async function refreshConnection(
     throw new TokenRefreshError(detail.code, detail.description);
   }
 
-  // Extract new tokens from the response.
-  const getByPath = (obj: unknown, path: string): unknown => {
-    if (obj == null || typeof obj !== 'object') return undefined;
-    let cur: any = obj;
-    for (const seg of path.split('.')) {
-      if (cur == null || typeof cur !== 'object') return undefined;
-      cur = cur[seg];
-    }
-    return cur;
-  };
   const mapping = provider.oauth2.token_response_mapping;
   const accessPath = mapping?.access_token ?? 'access_token';
   const refreshPath = mapping?.refresh_token ?? 'refresh_token';
   const expiresPath = mapping?.expires_in ?? 'expires_in';
 
   const newAccess = getByPath(parsed, accessPath);
-  const newRefresh = getByPath(parsed, refreshPath);
-  const newExpiresIn = getByPath(parsed, expiresPath);
-
   if (typeof newAccess !== 'string' || newAccess.length === 0) {
     await pool.query(
       `UPDATE _addition.connections
@@ -241,18 +257,23 @@ export async function refreshConnection(
     throw new TokenRefreshError('malformed_token_response');
   }
 
+  const newRefresh = getByPath(parsed, refreshPath);
+  const newExpiresIn = getByPath(parsed, expiresPath);
+
   const newAccessEnc = encrypt(newAccess, encryptionKey);
-  // Keep existing refresh token when provider does not return a new one.
+  // Keep the existing refresh token when the provider does not issue a new one.
   const newRefreshEnc = (typeof newRefresh === 'string' && newRefresh.length > 0)
     ? encrypt(newRefresh, encryptionKey)
     : (row.refresh_token_encrypted as string | null);
+  // Use COALESCE: only update expires_at when the provider supplies a new value;
+  // never write null over an existing expiry.
   const newExpiresAt = typeof newExpiresIn === 'number' ? expiresAtFromIn(newExpiresIn) : null;
 
   const { rows: updated } = await pool.query(
     `UPDATE _addition.connections
        SET access_token_encrypted = $2,
            refresh_token_encrypted = $3,
-           token_expires_at = $4,
+           token_expires_at = COALESCE($4, token_expires_at),
            status = 'active',
            status_detail = NULL,
            updated_at = NOW()
@@ -289,14 +310,21 @@ export async function listConnections(
   }));
 }
 
-export async function disconnect(
+/**
+ * Revokes a connection by its UUID. Spec-compliant (returns void, idempotent
+ * on a non-existent ID). Writes a `connection.revoked` audit row when a row
+ * is actually deleted.
+ */
+export async function revokeConnection(
   pool: Pool,
-  userId: string,
-  providerId: string,
-): Promise<boolean> {
-  const { rowCount } = await pool.query(
-    `DELETE FROM _addition.connections WHERE user_id = $1 AND provider_id = $2`,
-    [userId, providerId],
+  connectionId: string,
+): Promise<void> {
+  const { rows } = await pool.query(
+    `DELETE FROM _addition.connections WHERE id = $1
+     RETURNING user_id, provider_id`,
+    [connectionId],
   );
-  return (rowCount ?? 0) > 0;
+  if (rows.length > 0) {
+    await writeAudit(pool, 'connection.revoked', rows[0].user_id as string, rows[0].provider_id as string, connectionId, {});
+  }
 }

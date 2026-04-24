@@ -40,6 +40,12 @@ export class OAuthError extends AdditionError {
 
 export class SchemaError extends AdditionError {}
 
+export class ConnectionNotFoundError extends AdditionError {
+  constructor(public readonly connectionId: string) {
+    super(`Connection '${connectionId}' not found`);
+  }
+}
+
 export class TokenRefreshError extends AdditionError {
   constructor(
     public readonly code: string,
