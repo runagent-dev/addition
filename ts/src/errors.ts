@@ -46,6 +46,22 @@ export class ConnectionNotFoundError extends AdditionError {
   }
 }
 
+export class ConnectionExpiredError extends AdditionError {
+  constructor(public readonly connectionId: string) {
+    super(`Connection '${connectionId}' returned 401 and has no refresh token`);
+  }
+}
+
+export class ProxyError extends AdditionError {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    public readonly description?: string,
+  ) {
+    super(description ? `Proxy error ${status} '${code}': ${description}` : `Proxy error ${status} '${code}'`);
+  }
+}
+
 export class TokenRefreshError extends AdditionError {
   constructor(
     public readonly code: string,
