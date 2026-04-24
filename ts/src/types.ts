@@ -68,7 +68,17 @@ export interface ToolParamDefinition {
 
 export interface ToolPaginationConfig {
   type: 'cursor' | 'offset' | 'page';
+  /** Query-string param name to send the cursor/page in. Always a simple key. */
   cursor_param: string;
+  /**
+   * Location of the next cursor in the API response. Supports **dot-paths**
+   * into nested objects — same convention as `token_response_mapping` in
+   * provider configs. Examples:
+   *   - `"nextPageToken"` → `response.nextPageToken` (top-level)
+   *   - `"response_metadata.next_cursor"` → `response.response_metadata.next_cursor` (Slack)
+   * `null` means the provider uses a different paging signal (e.g. GitHub's
+   * `page` offsets or Link header) and the tool engine should not auto-extract.
+   */
   cursor_response_field: string | null;
 }
 

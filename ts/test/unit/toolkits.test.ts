@@ -164,6 +164,38 @@ describe('toolkits — YAML toolkit registry', () => {
     });
   });
 
+  // Review fix (Issue 1): cursor_response_field supports dot-paths into nested
+  // response bodies. Pin the convention with an explicit test so M7/M10 can't
+  // drift. Slack is the only provider in v0.1.0 that uses nesting, so it is
+  // the canonical example.
+  describe('pagination cursor_response_field convention', () => {
+    it('top-level cursor: gmail list_messages uses simple "nextPageToken"', () => {
+      const list = getToolDefinition(toolkits, 'gmail', 'list_messages');
+      expect(list.pagination).not.toBeNull();
+      expect(list.pagination!.cursor_response_field).toBe('nextPageToken');
+      // No dot → top-level extraction at runtime.
+      expect(list.pagination!.cursor_response_field).not.toContain('.');
+    });
+
+    it('dot-path cursor: slack list_channels uses nested "response_metadata.next_cursor"', () => {
+      const list = getToolDefinition(toolkits, 'slack', 'list_channels');
+      expect(list.pagination).not.toBeNull();
+      expect(list.pagination!.cursor_response_field).toBe('response_metadata.next_cursor');
+      expect(list.pagination!.cursor_response_field).toContain('.');
+    });
+
+    it('dot-path cursor: slack list_messages also uses nested path', () => {
+      const list = getToolDefinition(toolkits, 'slack', 'list_messages');
+      expect(list.pagination!.cursor_response_field).toBe('response_metadata.next_cursor');
+    });
+
+    it('null cursor: github list_repos uses page-offset, no auto-extract field', () => {
+      const list = getToolDefinition(toolkits, 'github', 'list_repos');
+      expect(list.pagination!.type).toBe('page');
+      expect(list.pagination!.cursor_response_field).toBeNull();
+    });
+  });
+
   describe('cross-reference to providers', () => {
     it('every toolkit provider id maps to a loaded provider', () => {
       for (const [id] of Object.entries(toolkits)) {
