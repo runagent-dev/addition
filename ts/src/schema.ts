@@ -56,6 +56,14 @@ async function currentVersion(pool: Pool): Promise<string | null> {
  *
  * Migrations are run inside a transaction per file. A failing migration rolls
  * back cleanly and throws `SchemaError`.
+ *
+ * Pool lifecycle — for M12 (`Addition` main class) wiring:
+ * This function creates and tears down its own `pg.Pool` for the duration of
+ * the bootstrap call. It does NOT accept an existing pool. The runtime pool
+ * the rest of the library uses (OAuth engine, proxy, token manager) is
+ * created separately by `Addition` after `bootstrap` returns. Cost is one
+ * extra brief-lived pool at startup; benefit is that `schema.ts` has no
+ * dependency on the main class construction order.
  */
 export async function bootstrap(databaseUrl: string, schemaDir: string): Promise<void> {
   const migrations = loadMigrations(schemaDir);
