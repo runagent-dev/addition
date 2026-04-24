@@ -31,3 +31,13 @@ const registry: Record<string, TransformFunction> = {
 export function getTransform(transformId: string): TransformFunction | null {
   return registry[transformId] ?? null;
 }
+
+/** Register (or overwrite) a transform at runtime. Useful for custom transforms and tests. */
+export function registerTransform(id: string, fn: TransformFunction): void {
+  registry[id] = fn;
+}
+
+/** Remove a previously registered transform. */
+export function unregisterTransform(id: string): void {
+  delete registry[id];
+}

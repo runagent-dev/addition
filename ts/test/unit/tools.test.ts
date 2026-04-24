@@ -1,9 +1,10 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { loadProviders } from '../../src/providers.js';
 import { loadToolkits } from '../../src/toolkits.js';
 import { executeTool } from '../../src/tools.js';
 import { ToolNotFoundError, ToolValidationError } from '../../src/errors.js';
+import { registerTransform, unregisterTransform } from '../../src/transforms/index.js';
 import type { ToolkitRegistry, ProviderRegistry } from '../../src/types.js';
 import type { ProxyFn } from '../../src/tools.js';
 
@@ -310,6 +311,21 @@ describe('tool engine — method routing', () => {
     const req = proxy.mock.calls[0][0];
     expect(req.params!.labelIds).toBe('INBOX,UNREAD');
   });
+
+  it('empty string[] is omitted from query params', async () => {
+    const proxy = mkProxy();
+    await executeTool(
+      {
+        userId: 'u',
+        providerId: 'gmail',
+        toolId: 'list_messages',
+        params: { labelIds: [] },
+      },
+      { toolkits, proxy },
+    );
+    const req = proxy.mock.calls[0][0];
+    expect(req.params ?? {}).not.toHaveProperty('labelIds');
+  });
 });
 
 describe('tool engine — transforms', () => {
@@ -372,6 +388,61 @@ describe('tool engine — transforms', () => {
     expect(req.path).toBe('/calendars/primary/events/evt-1');
     expect(req.body).not.toHaveProperty('eventId');
     expect(req.body.summary).toBe('renamed');
+  });
+
+  it('unknown transform id throws ToolValidationError naming the transform', async () => {
+    const fakeToolkits: ToolkitRegistry = {
+      'fake-provider': {
+        providerId: 'fake-provider',
+        tools: [{
+          id: 'fake_tool',
+          name: 'Fake Tool',
+          description: 'test',
+          operation: 'POST /fake',
+          transform: 'no-such-transform',
+          params: [],
+        }],
+      },
+    };
+    const proxy = mkProxy();
+    await expect(
+      executeTool(
+        { userId: 'u', providerId: 'fake-provider', toolId: 'fake_tool', params: {} },
+        { toolkits: fakeToolkits, proxy },
+      ),
+    ).rejects.toThrow(ToolValidationError);
+    expect(proxy).not.toHaveBeenCalled();
+  });
+
+  describe('transform headers forwarded to proxy', () => {
+    afterEach(() => unregisterTransform('test:with-headers'));
+
+    it('headers returned by a transform are forwarded to the proxy', async () => {
+      registerTransform('test:with-headers', (_params) => ({
+        body: { ok: true },
+        headers: { 'X-Custom-Header': 'test-value' },
+      }));
+      const fakeToolkits: ToolkitRegistry = {
+        'fake-provider': {
+          providerId: 'fake-provider',
+          tools: [{
+            id: 'header_tool',
+            name: 'Header Tool',
+            description: 'test',
+            operation: 'POST /endpoint',
+            transform: 'test:with-headers',
+            params: [],
+          }],
+        },
+      };
+      const proxy = mkProxy();
+      await executeTool(
+        { userId: 'u', providerId: 'fake-provider', toolId: 'header_tool', params: {} },
+        { toolkits: fakeToolkits, proxy },
+      );
+      const req = proxy.mock.calls[0][0];
+      expect(req.headers).toEqual(expect.objectContaining({ 'X-Custom-Header': 'test-value' }));
+    });
   });
 });
 

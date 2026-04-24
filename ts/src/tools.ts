@@ -91,9 +91,7 @@ function checkType(p: ToolParamDefinition, value: unknown): string | null {
     case 'string':
       return typeof value === 'string' ? null : `must be a string`;
     case 'integer':
-      return typeof value === 'number' && Number.isInteger(value)
-        ? null
-        : `must be an integer`;
+      return Number.isInteger(value) ? null : `must be an integer`;
     case 'boolean':
       return typeof value === 'boolean' ? null : `must be a boolean`;
     case 'string[]':
@@ -123,16 +121,23 @@ function interpolate(
   tool: ToolDefinition,
   params: Record<string, unknown>,
 ): Interpolated {
-  const [method, template] = tool.operation.split(' ', 2);
+  const spaceIdx = tool.operation.indexOf(' ');
+  const method = tool.operation.slice(0, spaceIdx);
+  const template = tool.operation.slice(spaceIdx + 1);
   const remaining: Record<string, unknown> = { ...params };
+  const missingPathParams: string[] = [];
   const path = template.replace(/\{([^}]+)\}/g, (_, name) => {
     if (!(name in remaining) || remaining[name] === undefined || remaining[name] === null) {
-      throw new ToolValidationError(tool.id, [name], []);
+      missingPathParams.push(name);
+      return '';
     }
     const value = String(remaining[name]);
     delete remaining[name];
     return encodeURIComponent(value);
   });
+  if (missingPathParams.length) {
+    throw new ToolValidationError(tool.id, missingPathParams, []);
+  }
   return { method, path, remainingParams: remaining };
 }
 
@@ -143,6 +148,7 @@ function stringifyQuery(params: Record<string, unknown>): Record<string, string>
   for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null) continue;
     if (Array.isArray(v)) {
+      if (v.length === 0) continue;
       out[k] = v.join(',');
     } else if (typeof v === 'object') {
       out[k] = JSON.stringify(v);
@@ -164,13 +170,7 @@ export async function executeTool(
   const { toolkits, proxy } = deps;
 
   // 1. Find tool (ToolNotFoundError for unknown provider/tool)
-  let tool: ToolDefinition;
-  try {
-    tool = getToolDefinition(toolkits, args.providerId, args.toolId);
-  } catch (err) {
-    if (err instanceof ToolNotFoundError) throw err;
-    throw err;
-  }
+  const tool = getToolDefinition(toolkits, args.providerId, args.toolId);
 
   // 2. Validate + apply defaults
   const validated = validate(tool, args.params);
@@ -191,7 +191,7 @@ export async function executeTool(
       ]);
     }
     const out = transform(remainingParams);
-    if (out.body !== undefined) body = out.body;
+    if (out.body != null) body = out.body;
     if (out.params) query = out.params;
     if (out.headers) Object.assign(headers, out.headers);
   } else if (METHODS_WITH_QUERY.has(method)) {
