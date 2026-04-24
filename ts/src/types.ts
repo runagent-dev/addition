@@ -47,3 +47,55 @@ export interface ProviderConfig {
 }
 
 export type ProviderRegistry = Record<string, ProviderConfig>;
+
+// ---------- Toolkits (Layer 3) ----------
+
+export type ToolParamType =
+  | 'string'
+  | 'integer'
+  | 'boolean'
+  | 'string[]'
+  | 'object';
+
+export interface ToolParamDefinition {
+  name: string;
+  type: ToolParamType;
+  required: boolean;
+  default?: unknown;
+  enum?: (string | number)[];
+  description: string;
+}
+
+export interface ToolPaginationConfig {
+  type: 'cursor' | 'offset' | 'page';
+  cursor_param: string;
+  cursor_response_field: string | null;
+}
+
+export interface ToolResponseConfig {
+  type: 'object' | 'array';
+  fields: Record<string, string>;
+}
+
+export interface ToolDefinition {
+  id: string;
+  name: string;
+  description: string;
+  provider: string;
+  operation: string;
+  params: ToolParamDefinition[];
+  /** Named transform id in "{provider}:{transform_name}" form, or null. */
+  transform: string | null;
+  pagination: ToolPaginationConfig | null;
+  response: ToolResponseConfig | null;
+}
+
+export interface ToolkitConfig {
+  provider: string;
+  name: string;
+  description: string;
+  tools: ToolDefinition[];
+}
+
+/** Map from provider id → toolkit. */
+export type ToolkitRegistry = Record<string, ToolkitConfig>;

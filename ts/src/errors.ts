@@ -12,3 +12,13 @@ export class ProviderNotFoundError extends AdditionError {
     super(`Provider '${providerId}' is not defined`);
   }
 }
+
+export class ToolNotFoundError extends AdditionError {
+  constructor(public readonly providerId: string, public readonly toolId?: string) {
+    super(
+      toolId
+        ? `Tool '${toolId}' not found in toolkit '${providerId}'`
+        : `Toolkit for provider '${providerId}' is not defined`,
+    );
+  }
+}
