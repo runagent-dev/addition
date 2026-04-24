@@ -13,6 +13,12 @@ export class ProviderNotFoundError extends AdditionError {
   }
 }
 
+export class ProviderDisabledError extends AdditionError {
+  constructor(public readonly providerId: string) {
+    super(`Provider '${providerId}' is disabled`);
+  }
+}
+
 export class ToolNotFoundError extends AdditionError {
   constructor(public readonly providerId: string, public readonly toolId?: string) {
     super(
