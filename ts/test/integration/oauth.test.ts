@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
@@ -7,6 +7,7 @@ import { bootstrap } from '../../src/schema.js';
 import { loadProviders } from '../../src/providers.js';
 import { encrypt, decrypt } from '../../src/crypto.js';
 import { getAuthUrl, handleCallback } from '../../src/oauth.js';
+import { ProviderDisabledError } from '../../src/errors.js';
 import type { ProviderRegistry } from '../../src/types.js';
 import type { OAuthDeps } from '../../src/oauth.js';
 
@@ -598,6 +599,184 @@ describe('oauth engine — handleCallback', () => {
       const state = new URL(url).searchParams.get('state')!;
       const result = await handleCallback({ code: 'c', state }, d);
       expect(result.redirectAfter).toBe('/welcome');
+    });
+  });
+
+  // Review fix #10: pin audit rows for authorize_url_issued and token_exchange_failed.
+  it('writes oauth.authorize_url_issued audit row on successful getAuthUrl', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github', 'gh-client', 'gh-secret');
+      await getAuthUrl({ userId: 'u-audit', providerId: 'github' }, deps(pool));
+      const { rows } = await pool.query(
+        `SELECT event_type, user_id, provider_id FROM _addition.audit_log
+           WHERE user_id = 'u-audit' ORDER BY id`,
+      );
+      const types = rows.map((r) => r.event_type);
+      expect(types).toContain('oauth.authorize_url_issued');
+      const row = rows.find((r) => r.event_type === 'oauth.authorize_url_issued');
+      expect(row?.provider_id).toBe('github');
+    });
+  });
+
+  it('writes oauth.token_exchange_failed audit row when provider returns an error', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'google', 'g-client', 'g-secret');
+      const fetchImpl = mkFetch([
+        { status: 400, body: { error: 'invalid_grant', error_description: 'bad code' } },
+      ]);
+      const d = deps(pool, fetchImpl);
+      const url = await getAuthUrl({ userId: 'u1', providerId: 'google' }, d);
+      const state = new URL(url).searchParams.get('state')!;
+      await handleCallback({ code: 'c', state }, d);
+      const { rows } = await pool.query(
+        `SELECT event_type FROM _addition.audit_log WHERE user_id = 'u1' ORDER BY id`,
+      );
+      const types = rows.map((r) => r.event_type);
+      expect(types).toContain('oauth.token_exchange_failed');
+    });
+  });
+
+  // Review fix #11: state replay is rejected (DELETE…RETURNING atomicity).
+  it('replaying the same state after a successful callback returns invalid_state', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github', 'gh-client', 'gh-secret');
+      const fetchImpl = mkFetch([
+        { status: 200, body: { access_token: 't1', token_type: 'bearer' } },
+        { status: 200, body: { access_token: 't2', token_type: 'bearer' } },
+      ]);
+      const d = deps(pool, fetchImpl);
+      const url = await getAuthUrl({ userId: 'u1', providerId: 'github' }, d);
+      const state = new URL(url).searchParams.get('state')!;
+      const first = await handleCallback({ code: 'c1', state }, d);
+      expect(first.success).toBe(true);
+      const second = await handleCallback({ code: 'c2', state }, d);
+      expect(second.success).toBe(false);
+      expect(second.error).toBe('invalid_state');
+    });
+  });
+
+  // Review fix #12: malformed JSON from token endpoint.
+  it('malformed JSON from token endpoint → {success:false, error:"malformed_token_response"} + audit row', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github', 'gh-client', 'gh-secret');
+      const fetchImpl = mkFetch([{ status: 200, body: 'not-valid-json' }]);
+      const d = deps(pool, fetchImpl);
+      const url = await getAuthUrl({ userId: 'u1', providerId: 'github' }, d);
+      const state = new URL(url).searchParams.get('state')!;
+      const result = await handleCallback({ code: 'c', state }, d);
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('malformed_token_response');
+      const { rows } = await pool.query(
+        `SELECT event_type FROM _addition.audit_log WHERE user_id = 'u1' ORDER BY id`,
+      );
+      const types = rows.map((r) => r.event_type);
+      expect(types).toContain('oauth.token_exchange_failed');
+    });
+  });
+
+  // Review must-fix #3: missing code short-circuits before network call.
+  it('missing code short-circuits to {success:false, error:"missing_code"} without hitting token URL', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github', 'gh-client', 'gh-secret');
+      const fetchSpy = vi.fn() as unknown as typeof fetch;
+      const d = deps(pool, fetchSpy);
+      const url = await getAuthUrl({ userId: 'u1', providerId: 'github' }, d);
+      const state = new URL(url).searchParams.get('state')!;
+      const result = await handleCallback({ state }, d); // no code
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('missing_code');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // Review must-fix #4: disabled provider is distinguishable from unknown.
+  it('throws ProviderDisabledError when provider_configs row has enabled=false', async () => {
+    await withFreshDb(async (pool) => {
+      await pool.query(
+        `INSERT INTO _addition.provider_configs
+           (provider_id, client_id, client_secret_encrypted, scopes, enabled)
+         VALUES ($1, $2, $3, $4, false)`,
+        ['github', 'gh-client', encrypt('gh-secret', TEST_KEY), []],
+      );
+      await expect(
+        getAuthUrl({ userId: 'u1', providerId: 'github' }, deps(pool)),
+      ).rejects.toThrow(ProviderDisabledError);
+    });
+  });
+
+  // Review must-fix #4 cont.: disabled provider writes audit row.
+  it('writes oauth.authorize_url_failed audit row when provider is disabled', async () => {
+    await withFreshDb(async (pool) => {
+      await pool.query(
+        `INSERT INTO _addition.provider_configs
+           (provider_id, client_id, client_secret_encrypted, scopes, enabled)
+         VALUES ($1, $2, $3, $4, false)`,
+        ['github', 'gh-client', encrypt('gh-secret', TEST_KEY), []],
+      );
+      await expect(
+        getAuthUrl({ userId: 'u1', providerId: 'github' }, deps(pool)),
+      ).rejects.toThrow(ProviderDisabledError);
+      const { rows } = await pool.query(
+        `SELECT event_type FROM _addition.audit_log WHERE provider_id = 'github'`,
+      );
+      expect(rows.some((r) => r.event_type === 'oauth.authorize_url_failed')).toBe(true);
+    });
+  });
+
+  // Review must-fix #2: ?error= path carries user_id/provider_id from state row.
+  it('?error= callback audit row carries user_id and provider_id from the state row', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github', 'gh-client', 'gh-secret');
+      const d = deps(pool);
+      const url = await getAuthUrl({ userId: 'user-42', providerId: 'github' }, d);
+      const state = new URL(url).searchParams.get('state')!;
+      await handleCallback({ error: 'access_denied', state }, d);
+      const { rows } = await pool.query(
+        `SELECT user_id, provider_id FROM _addition.audit_log
+           WHERE event_type = 'oauth.callback_error'`,
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].user_id).toBe('user-42');
+      expect(rows[0].provider_id).toBe('github');
+    });
+  });
+
+  // Review should-fix #8: errorDescription surfaced in CallbackResult.
+  it('errorDescription is included in CallbackResult on token exchange failure', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'google', 'g-client', 'g-secret');
+      const fetchImpl = mkFetch([
+        { status: 400, body: { error: 'invalid_grant', error_description: 'Token expired' } },
+      ]);
+      const d = deps(pool, fetchImpl);
+      const url = await getAuthUrl({ userId: 'u1', providerId: 'google' }, d);
+      const state = new URL(url).searchParams.get('state')!;
+      const result = await handleCallback({ code: 'c', state }, d);
+      expect(result.error).toBe('invalid_grant');
+      expect(result.errorDescription).toBe('Token expired');
+    });
+  });
+
+  // Review should-fix #7: scopes_granted reflects what the provider actually returned.
+  it('scopes_granted uses scope field from token response, not the requested scopes', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github', 'gh-client', 'gh-secret');
+      // Provider grants a subset: repo only, not read:user.
+      const fetchImpl = mkFetch([
+        { status: 200, body: { access_token: 't', token_type: 'bearer', scope: 'repo' } },
+      ]);
+      const d = deps(pool, fetchImpl);
+      const url = await getAuthUrl(
+        { userId: 'u1', providerId: 'github', scopes: ['repo', 'read:user'] },
+        d,
+      );
+      const state = new URL(url).searchParams.get('state')!;
+      const result = await handleCallback({ code: 'c', state }, d);
+      const { rows } = await pool.query(
+        `SELECT scopes_granted FROM _addition.connections WHERE id = $1`,
+        [result.connectionId],
+      );
+      expect(rows[0].scopes_granted).toEqual(['repo']);
     });
   });
 });

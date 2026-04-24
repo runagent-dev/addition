@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { encrypt, decrypt } from './crypto.js';
 import { getProvider } from './providers.js';
 import { getAdapter } from './adapters/index.js';
-import { ProviderNotFoundError, OAuthError } from './errors.js';
+import { ProviderNotFoundError, ProviderDisabledError, OAuthError } from './errors.js';
 import type {
   ProviderConfig,
   ProviderRegistry,
@@ -27,6 +27,7 @@ export interface CallbackResult {
   providerId?: string;
   redirectAfter?: string;
   error?: string;
+  errorDescription?: string;
 }
 
 export interface OAuthDeps {
@@ -80,13 +81,12 @@ async function loadCredentials(
   encryptionKey: string,
 ): Promise<ProviderCredentials> {
   const { rows } = await pool.query(
-    `SELECT client_id, client_secret_encrypted FROM _addition.provider_configs
-       WHERE provider_id = $1 AND enabled = true`,
+    `SELECT client_id, client_secret_encrypted, enabled FROM _addition.provider_configs
+       WHERE provider_id = $1`,
     [providerId],
   );
-  if (rows.length === 0) {
-    throw new ProviderNotFoundError(providerId);
-  }
+  if (rows.length === 0) throw new ProviderNotFoundError(providerId);
+  if (!rows[0].enabled) throw new ProviderDisabledError(providerId);
   return {
     clientId: rows[0].client_id,
     clientSecret: decrypt(rows[0].client_secret_encrypted, encryptionKey),
@@ -115,44 +115,55 @@ export async function getAuthUrl(
   args: GetAuthUrlArgs,
   deps: OAuthDeps,
 ): Promise<string> {
-  const provider = getProvider(deps.providers, args.providerId);
-  const creds = await loadCredentials(deps.pool, args.providerId, deps.encryptionKey);
+  try {
+    const provider = getProvider(deps.providers, args.providerId);
+    const creds = await loadCredentials(deps.pool, args.providerId, deps.encryptionKey);
 
-  const scopes = args.scopes ?? provider.oauth2.default_scopes;
-  const state = randomBytes(32).toString('hex');
+    const scopes = args.scopes ?? provider.oauth2.default_scopes;
+    const state = randomBytes(32).toString('hex');
 
-  const verifier = provider.oauth2.pkce_supported ? genCodeVerifier() : null;
+    // pkce_required forces PKCE even when pkce_supported is also the gate; both
+    // are checked so either flag alone is sufficient to enable PKCE.
+    const usePkce = provider.oauth2.pkce_supported || provider.oauth2.pkce_required;
+    const verifier = usePkce ? genCodeVerifier() : null;
 
-  const params = new URLSearchParams();
-  params.set('client_id', creds.clientId);
-  params.set('redirect_uri', deps.callbackUrl);
-  params.set('response_type', 'code');
-  params.set('state', state);
-  params.set('scope', joinScopes(scopes, provider.oauth2.scopes_delimiter));
-  if (verifier) {
-    params.set('code_challenge', codeChallenge(verifier));
-    params.set('code_challenge_method', 'S256');
+    const params = new URLSearchParams();
+    params.set('client_id', creds.clientId);
+    params.set('redirect_uri', deps.callbackUrl);
+    params.set('response_type', 'code');
+    params.set('state', state);
+    params.set('scope', joinScopes(scopes, provider.oauth2.scopes_delimiter));
+    if (verifier) {
+      params.set('code_challenge', codeChallenge(verifier));
+      params.set('code_challenge_method', 'S256');
+    }
+    for (const [k, v] of Object.entries(provider.oauth2.authorize_params ?? {})) {
+      params.set(k, v);
+    }
+
+    const metadata: Record<string, unknown> = { ...(args.metadata ?? {}) };
+    if (args.redirectAfter !== undefined) metadata.redirect_after = args.redirectAfter;
+
+    await deps.pool.query(
+      `INSERT INTO _addition.oauth_state
+         (state, user_id, provider_id, code_verifier, redirect_uri, scopes_requested, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [state, args.userId, args.providerId, verifier, deps.callbackUrl, scopes, metadata],
+    );
+
+    await writeAudit(deps.pool, 'oauth.authorize_url_issued', args.userId, args.providerId, null, {
+      scopes,
+      pkce: verifier !== null,
+    });
+
+    return `${provider.oauth2.authorize_url}?${params.toString()}`;
+  } catch (err) {
+    // Best-effort: don't mask the real error if the audit write itself fails.
+    await writeAudit(deps.pool, 'oauth.authorize_url_failed', args.userId, args.providerId, null, {
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => {});
+    throw err;
   }
-  for (const [k, v] of Object.entries(provider.oauth2.authorize_params ?? {})) {
-    params.set(k, v);
-  }
-
-  const metadata: Record<string, unknown> = { ...(args.metadata ?? {}) };
-  if (args.redirectAfter !== undefined) metadata.redirect_after = args.redirectAfter;
-
-  await deps.pool.query(
-    `INSERT INTO _addition.oauth_state
-       (state, user_id, provider_id, code_verifier, redirect_uri, scopes_requested, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [state, args.userId, args.providerId, verifier, deps.callbackUrl, scopes, metadata],
-  );
-
-  await writeAudit(deps.pool, 'oauth.authorize_url_issued', args.userId, args.providerId, null, {
-    scopes,
-    pkce: verifier !== null,
-  });
-
-  return `${provider.oauth2.authorize_url}?${params.toString()}`;
 }
 
 // ---------- handleCallback ----------
@@ -179,8 +190,20 @@ async function consumeState(
   return rows.length === 0 ? null : (rows[0] as StoredState);
 }
 
-async function deleteState(pool: Pool, state: string): Promise<void> {
-  await pool.query(`DELETE FROM _addition.oauth_state WHERE state = $1`, [state]);
+/**
+ * Deletes a state row unconditionally (no expiry check) and returns whatever
+ * attribution data was stored. Used on the `?error=...` path so the audit row
+ * can carry user_id/provider_id even though the provider rejected the flow.
+ */
+async function deleteStateReturning(
+  pool: Pool,
+  state: string,
+): Promise<{ user_id: string | null; provider_id: string | null }> {
+  const { rows } = await pool.query(
+    `DELETE FROM _addition.oauth_state WHERE state = $1 RETURNING user_id, provider_id`,
+    [state],
+  );
+  return rows.length > 0 ? (rows[0] as { user_id: string; provider_id: string }) : { user_id: null, provider_id: null };
 }
 
 function buildTokenExchangeBody(
@@ -259,24 +282,53 @@ function extractTokens(
   };
 }
 
+/**
+ * Extract the actually-granted scopes from a token response.
+ * Providers return a `scope` field at the top level (or via a mapping path);
+ * fall back to what was requested when the field is absent.
+ */
+function extractGrantedScopes(
+  provider: ProviderConfig,
+  body: unknown,
+  requestedScopes: string[],
+): string[] {
+  const scopeField = getByPath(body, 'scope');
+  if (typeof scopeField === 'string' && scopeField.length > 0) {
+    const delimiter = provider.oauth2.scopes_delimiter === 'comma' ? ',' : ' ';
+    return scopeField.split(delimiter).filter(Boolean);
+  }
+  return requestedScopes;
+}
+
 export async function handleCallback(
   query: Record<string, string>,
   deps: OAuthDeps,
 ): Promise<CallbackResult> {
   const { state } = query;
 
-  // Provider-side errors arrive as ?error=... — respect them first if we can
-  // still associate them with a state row.
+  // Provider-side errors arrive as ?error=... — delete state and write audit
+  // with whatever attribution the state row carries.
   if (query.error) {
-    if (state) await deleteState(deps.pool, state);
-    await writeAudit(deps.pool, 'oauth.callback_error', null, null, null, {
+    let userId: string | null = null;
+    let providerId: string | null = null;
+    if (state) {
+      const row = await deleteStateReturning(deps.pool, state);
+      userId = row.user_id;
+      providerId = row.provider_id;
+    }
+    await writeAudit(deps.pool, 'oauth.callback_error', userId, providerId, null, {
       error: query.error,
-      error_description: query.error_description,
+      error_description: query.error_description ?? null,
     });
-    return { success: false, error: query.error };
+    return {
+      success: false,
+      error: query.error,
+      errorDescription: query.error_description,
+    };
   }
 
   if (!state) {
+    await writeAudit(deps.pool, 'oauth.invalid_state', null, null, null, { state: null });
     return { success: false, error: 'invalid_state' };
   }
 
@@ -286,6 +338,12 @@ export async function handleCallback(
     return { success: false, error: 'invalid_state' };
   }
 
+  // Short-circuit: no code means nothing to exchange — skip the network call.
+  if (!query.code) {
+    await writeAudit(deps.pool, 'oauth.missing_code', stored.user_id, stored.provider_id, null, {});
+    return { success: false, error: 'missing_code' };
+  }
+
   const provider = getProvider(deps.providers, stored.provider_id);
   const adapter = getAdapter(stored.provider_id);
   const creds = await loadCredentials(deps.pool, stored.provider_id, deps.encryptionKey);
@@ -293,7 +351,7 @@ export async function handleCallback(
   const bodyParams = buildTokenExchangeBody(
     provider,
     creds,
-    query.code ?? '',
+    query.code,
     stored.redirect_uri,
     stored.code_verifier,
   );
@@ -327,10 +385,10 @@ export async function handleCallback(
     const detail = adapter.extractErrorDetail(parsed);
     await writeAudit(deps.pool, 'oauth.token_exchange_failed', stored.user_id, stored.provider_id, null, {
       code: detail.code,
-      description: detail.description,
+      description: detail.description ?? null,
       status: response.status,
     });
-    return { success: false, error: detail.code };
+    return { success: false, error: detail.code, errorDescription: detail.description };
   }
 
   let tokens: ExtractedTokens;
@@ -338,10 +396,11 @@ export async function handleCallback(
     tokens = extractTokens(provider, parsed);
   } catch (err) {
     const code = err instanceof OAuthError ? err.code : 'malformed_token_response';
+    const description = err instanceof OAuthError ? err.description : undefined;
     await writeAudit(deps.pool, 'oauth.token_exchange_failed', stored.user_id, stored.provider_id, null, {
       code,
     });
-    return { success: false, error: code };
+    return { success: false, error: code, errorDescription: description };
   }
 
   const accessEnc = encrypt(tokens.accessToken, deps.encryptionKey);
@@ -351,6 +410,7 @@ export async function handleCallback(
     deps.encryptionKey,
   );
   const expiresAt = tokens.expiresIn != null ? new Date(Date.now() + tokens.expiresIn * 1000) : null;
+  const scopesGranted = extractGrantedScopes(provider, parsed, stored.scopes_requested);
 
   const { rows } = await deps.pool.query(
     `INSERT INTO _addition.connections
@@ -365,7 +425,7 @@ export async function handleCallback(
       refreshEnc,
       expiresAt,
       rawEnc,
-      stored.scopes_requested,
+      scopesGranted,
     ],
   );
   const connectionId = rows[0].id as string;

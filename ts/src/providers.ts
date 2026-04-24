@@ -164,6 +164,9 @@ function validateResolved(cfg: ProviderConfig): void {
     requireBoolean('oauth2.refresh_supported', o.refresh_supported);
     requireBoolean('oauth2.pkce_supported', o.pkce_supported);
     requireBoolean('oauth2.pkce_required', o.pkce_required);
+    if (o.pkce_required && !o.pkce_supported) {
+      err(`'oauth2.pkce_required' is true but 'oauth2.pkce_supported' is false — contradiction`);
+    }
     requireStringArray('oauth2.default_scopes', o.default_scopes);
     requireOneOf('oauth2.scopes_delimiter', o.scopes_delimiter, ['space', 'comma']);
     requirePlainObject('oauth2.authorize_params', o.authorize_params);
