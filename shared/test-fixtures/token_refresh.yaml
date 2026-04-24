@@ -1,0 +1,58 @@
+# Cross-language conformance fixture for the token refresh flow.
+# Both TS and Python token manager tests drive these scenarios.
+#
+# Format:
+#   provider        — id of a real provider in shared/providers/
+#   initial         — token state seeded before the refresh call
+#   mock_response   — what the token endpoint returns (mocked HTTP)
+#   expected        — asserted state after refreshConnection() completes
+
+scenarios:
+  - name: happy_path_new_refresh_token
+    description: Provider rotates both access and refresh tokens
+    provider: google
+    initial:
+      access_token: old-access-token
+      refresh_token: old-refresh-token
+    mock_response:
+      status: 200
+      body:
+        access_token: new-access-token
+        refresh_token: new-refresh-token
+        expires_in: 3600
+    expected:
+      access_token: new-access-token
+      refresh_token: new-refresh-token
+      status: active
+
+  - name: happy_path_no_new_refresh_token
+    description: Provider refreshes access token but keeps existing refresh token
+    provider: google
+    initial:
+      access_token: old-access-token
+      refresh_token: keep-this-refresh
+    mock_response:
+      status: 200
+      body:
+        access_token: fresh-access-token
+        expires_in: 3600
+    expected:
+      access_token: fresh-access-token
+      refresh_token: keep-this-refresh
+      status: active
+
+  - name: refresh_failure_invalid_grant
+    description: Provider rejects a revoked or expired refresh token
+    provider: google
+    initial:
+      access_token: valid-access-token
+      refresh_token: revoked-refresh-token
+    mock_response:
+      status: 400
+      body:
+        error: invalid_grant
+        error_description: Token has been revoked
+    expected:
+      access_token: valid-access-token
+      refresh_token: revoked-refresh-token
+      status: refresh_failed
