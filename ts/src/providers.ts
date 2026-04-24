@@ -62,10 +62,12 @@ function topoSort(raws: RawProvider[]): RawProvider[] {
 
 /**
  * Deep-merge child config onto base. Rules (spec §6):
- * - scalars: child overrides base
+ * - scalars: child overrides base (including `null` — a child's explicit
+ *   `null` overwrites the base's value. Used e.g. to say "this provider
+ *   has no revoke_url even though the base does")
  * - plain objects: recurse
  * - arrays: child REPLACES base (no concatenation)
- * - id and name always come from child
+ * - id and name always come from child (enforced in `mergeConfigs`)
  */
 function deepMerge(
   base: Record<string, unknown>,
@@ -105,6 +107,46 @@ function mergeConfigs(base: RawProvider, child: RawProvider): RawProvider {
   return merged as unknown as RawProvider;
 }
 
+/**
+ * Validates that a resolved provider config has all required string fields
+ * populated. Catches YAML typos at load time rather than as `undefined`
+ * runtime values deep inside the OAuth engine.
+ */
+function validateResolved(cfg: ProviderConfig): void {
+  const id = cfg.id;
+  const requireNonEmptyString = (path: string, value: unknown) => {
+    if (typeof value !== 'string' || value === '') {
+      throw new AdditionError(
+        `provider '${id}' is missing required string field '${path}' after extends resolution`,
+      );
+    }
+  };
+  requireNonEmptyString('name', cfg.name);
+  requireNonEmptyString('auth_type', cfg.auth_type);
+  if (cfg.auth_type === 'oauth2') {
+    if (!cfg.oauth2) {
+      throw new AdditionError(`provider '${id}' has auth_type=oauth2 but no 'oauth2' block`);
+    }
+    requireNonEmptyString('oauth2.authorize_url', cfg.oauth2.authorize_url);
+    requireNonEmptyString('oauth2.token_url', cfg.oauth2.token_url);
+  }
+  if (!cfg.api) {
+    throw new AdditionError(`provider '${id}' has no 'api' block`);
+  }
+  requireNonEmptyString('api.base_url', cfg.api.base_url);
+  requireNonEmptyString('api.auth_header', cfg.api.auth_header);
+  requireNonEmptyString('api.auth_prefix', cfg.api.auth_prefix);
+}
+
+/**
+ * Loads every `*.yaml` file in `dir` (skipping `_` -prefixed files), resolves
+ * `extends` chains, and returns a typed provider registry.
+ *
+ * This function is intentionally **synchronous**: provider configs are static
+ * data read once at application startup, not on a hot path. Do not call it
+ * per-request. Call it once during `Addition` construction and reuse the
+ * resulting registry for the process lifetime.
+ */
 export function loadProviders(dir: string): ProviderRegistry {
   const raws = readRawProviders(dir);
   const sorted = topoSort(raws);
@@ -124,7 +166,9 @@ export function loadProviders(dir: string): ProviderRegistry {
     }
     // strip 'extends' from the resolved config — it's a loader directive, not runtime state
     const { extends: _drop, ...final } = merged;
-    resolved.set(node.id, final as ProviderConfig);
+    const cfg = final as ProviderConfig;
+    validateResolved(cfg);
+    resolved.set(node.id, cfg);
   }
 
   const registry: ProviderRegistry = {};

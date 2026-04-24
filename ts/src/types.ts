@@ -11,7 +11,16 @@ export interface ProviderOAuth2Config {
   token_params: Record<string, string>;
   token_response_format: 'json' | 'form';
   client_auth_method: 'body' | 'header';
-  token_response_mapping: {
+  /**
+   * Dot-paths into the token-exchange JSON response for providers that don't
+   * return tokens at the top level (e.g. Slack nests under `authed_user`).
+   *
+   * Optional — when absent, the OAuth engine uses the standard OAuth2 layout
+   * (top-level `access_token`, `refresh_token`, `expires_in`). This is the
+   * single source of truth for where tokens live in the response; adapters
+   * MUST NOT duplicate this extraction logic (see CLAUDE.md §6 invariant 10).
+   */
+  token_response_mapping?: {
     access_token: string;
     refresh_token: string;
     expires_in: string;

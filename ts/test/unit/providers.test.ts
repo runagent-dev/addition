@@ -201,5 +201,167 @@ extends: "ghost"
         rmSync(tmp, { recursive: true, force: true });
       }
     });
+
+    // Review fix (Issue 6): synthetic test that exercises deep object recursion
+    // independent of real provider YAML content.
+    it('deep-merges nested objects 3+ levels down', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'base.yaml',
+          `id: "base"
+name: "Base"
+auth_type: "oauth2"
+oauth2:
+  authorize_url: "https://base.example.com/auth"
+  token_url: "https://base.example.com/token"
+  refresh_supported: true
+  default_scopes: []
+  scopes_delimiter: "space"
+api:
+  base_url: "https://base.example.com"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+  rate_limit:
+    requests_per_second: 10
+    retry_after_header: "Retry-After"
+`,
+        );
+        writeYaml(
+          tmp,
+          'child.yaml',
+          `id: "child"
+name: "Child"
+auth_type: "oauth2"
+extends: "base"
+api:
+  rate_limit:
+    requests_per_second: 99
+`,
+        );
+        const reg = loadProviders(tmp);
+        // Deepest field: child overrides
+        expect(reg['child'].api.rate_limit.requests_per_second).toBe(99);
+        // Sibling at the same depth: inherited from base (not clobbered by partial child)
+        expect(reg['child'].api.rate_limit.retry_after_header).toBe('Retry-After');
+        // Parent of the merged key: inherited scalar siblings survive
+        expect(reg['child'].api.base_url).toBe('https://base.example.com');
+        expect(reg['child'].api.auth_header).toBe('Authorization');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // Review fix (Issue 4): post-merge validation of the resolved config shape.
+  describe('post-merge validation', () => {
+    let tmp: string;
+    function writeYaml(dir: string, filename: string, content: string) {
+      writeFileSync(join(dir, filename), content, 'utf8');
+    }
+    function makeTmp(): string {
+      return mkdtempSync(join(tmpdir(), 'addition-providers-val-'));
+    }
+
+    it('throws when authorize_url is missing after merge (catches YAML typos)', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'broken.yaml',
+          `id: "broken"
+name: "Broken"
+auth_type: "oauth2"
+oauth2:
+  authorize_ur: "https://typo.example.com/auth"  # typo: missing 'l'
+  token_url: "https://broken.example.com/token"
+  refresh_supported: true
+  default_scopes: []
+  scopes_delimiter: "space"
+api:
+  base_url: "https://broken.example.com"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+`,
+        );
+        // Must throw at load, not silently produce undefined downstream.
+        expect(() => loadProviders(tmp)).toThrow(/authorize_url/i);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('throws when api.base_url is missing', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'nourl.yaml',
+          `id: "nourl"
+name: "No URL"
+auth_type: "oauth2"
+oauth2:
+  authorize_url: "https://nourl.example.com/auth"
+  token_url: "https://nourl.example.com/token"
+  refresh_supported: true
+  default_scopes: []
+  scopes_delimiter: "space"
+api:
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+`,
+        );
+        expect(() => loadProviders(tmp)).toThrow(/base_url/i);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('accepts a minimal but fully-specified provider', () => {
+      tmp = makeTmp();
+      try {
+        writeYaml(
+          tmp,
+          'ok.yaml',
+          `id: "ok"
+name: "OK"
+auth_type: "oauth2"
+oauth2:
+  authorize_url: "https://ok.example.com/auth"
+  token_url: "https://ok.example.com/token"
+  refresh_supported: true
+  default_scopes: []
+  scopes_delimiter: "space"
+api:
+  base_url: "https://ok.example.com"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+`,
+        );
+        const reg = loadProviders(tmp);
+        expect(reg['ok'].id).toBe('ok');
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // Review fix (Issue 1): token_response_mapping is optional — most YAMLs omit it.
+  describe('token_response_mapping', () => {
+    it('google/gmail/github do NOT declare token_response_mapping (use defaults)', () => {
+      expect(getProvider(registry, 'google').oauth2.token_response_mapping).toBeUndefined();
+      expect(getProvider(registry, 'gmail').oauth2.token_response_mapping).toBeUndefined();
+      expect(getProvider(registry, 'github').oauth2.token_response_mapping).toBeUndefined();
+    });
+
+    it('slack declares nested token_response_mapping paths', () => {
+      const slack = getProvider(registry, 'slack');
+      expect(slack.oauth2.token_response_mapping).toEqual({
+        access_token: 'authed_user.access_token',
+        refresh_token: 'authed_user.refresh_token',
+        expires_in: 'authed_user.expires_in',
+      });
+    });
   });
 });
