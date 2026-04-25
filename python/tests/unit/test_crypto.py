@@ -63,6 +63,11 @@ class TestAES256GCM:
         with pytest.raises(EncryptionError):
             decrypt("AAAA", "too-short")
 
+    def test_rejects_key_with_trailing_newline(self):
+        # re.match("$") matches before \n — fullmatch is required to reject this.
+        with pytest.raises(EncryptionError):
+            encrypt("x", "a" * 63 + "\n")
+
     def test_rejects_ciphertext_too_short(self):
         too_short = base64.b64encode(bytes(10)).decode()
         with pytest.raises(EncryptionError):

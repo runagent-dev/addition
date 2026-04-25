@@ -10,15 +10,13 @@ _IV_BYTES = 12
 _TAG_BYTES = 16
 _KEY_BYTES = 32
 _KEY_HEX_LEN = _KEY_BYTES * 2
-_HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
+# fullmatch requires the entire string to match — trailing \n and other
+# whitespace are rejected, so bytes.fromhex is never reached with invalid input.
+_HEX_RE = re.compile(r"[0-9a-fA-F]{64}")
 
 
 def _parse_key(hex_key: str) -> bytes:
-    if (
-        not isinstance(hex_key, str)
-        or len(hex_key) != _KEY_HEX_LEN
-        or not _HEX_RE.match(hex_key)
-    ):
+    if not isinstance(hex_key, str) or not _HEX_RE.fullmatch(hex_key):
         raise EncryptionError(
             f"encryption key must be {_KEY_HEX_LEN} hex characters ({_KEY_BYTES} bytes)"
         )
