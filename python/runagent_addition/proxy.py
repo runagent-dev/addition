@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
-from urllib.parse import urlencode, urlparse, urljoin
+from urllib.parse import urlencode
 
 import asyncpg
 
@@ -119,5 +120,4 @@ async def proxy(args: dict, deps: dict) -> dict:
 
 
 async def _default_sleep(ms: int) -> None:
-    import asyncio
     await asyncio.sleep(ms / 1000)
