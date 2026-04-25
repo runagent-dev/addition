@@ -1,0 +1,52 @@
+# Cross-language conformance fixture for the proxy request-building flow.
+# Verifies URL construction, auth header injection, and response handling.
+
+scenarios:
+  - name: get_injects_auth_header
+    description: Auth header is injected using provider api.auth_header / api.auth_prefix
+    provider: google
+    method: GET
+    path: /drive/v3/files
+    params: {}
+    body: null
+    mock_response:
+      status: 200
+      body: { files: [] }
+    expected:
+      status: 200
+      auth_header: Authorization
+      auth_prefix: Bearer
+
+  - name: get_with_query_params
+    description: Scalar query params are appended to the URL
+    provider: github
+    method: GET
+    path: /user/repos
+    params:
+      per_page: 10
+      sort: updated
+    body: null
+    mock_response:
+      status: 200
+      body: []
+    expected:
+      status: 200
+      url_query_params:
+        per_page: "10"
+        sort: updated
+
+  - name: post_with_json_body
+    description: POST with object body sets Content-Type and serialises to JSON
+    provider: github
+    method: POST
+    path: /repos/owner/repo/issues
+    params: {}
+    body:
+      title: Test issue
+      body: Description
+    mock_response:
+      status: 201
+      body: { id: 1, title: Test issue }
+    expected:
+      status: 201
+      request_has_body: true
