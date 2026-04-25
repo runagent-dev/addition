@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import asyncpg
 import pytest
 import yaml
+from urllib.parse import urlparse, parse_qs
 
 from runagent_addition.addition import Addition
 from runagent_addition.crypto import decrypt, encrypt
@@ -212,7 +213,6 @@ async def test_proxy_conformance(scenario, admin_dsn):
             assert headers[expected["auth_header"]].startswith(expected["auth_prefix"] + " ")
 
         if "url_query_params" in expected:
-            from urllib.parse import urlparse, parse_qs
             parsed = urlparse(url)
             qs = parse_qs(parsed.query)
             for k, v in expected["url_query_params"].items():
