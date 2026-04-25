@@ -51,6 +51,23 @@ class ConnectionNotFoundError(AdditionError):
         self.connection_id = connection_id
 
 
+class ConnectionExpiredError(AdditionError):
+    def __init__(self, connection_id: str) -> None:
+        super().__init__(f"connection '{connection_id}' has expired and cannot be refreshed")
+        self.connection_id = connection_id
+
+
+class ProxyError(AdditionError):
+    def __init__(self, status: int, code: str, description: str | None = None) -> None:
+        msg = f"proxy error {status}: {code}"
+        if description:
+            msg += f" — {description}"
+        super().__init__(msg)
+        self.status = status
+        self.code = code
+        self.description = description
+
+
 class TokenRefreshError(AdditionError):
     def __init__(self, code: str, description: str | None = None) -> None:
         msg = f"token refresh failed: {code}"
