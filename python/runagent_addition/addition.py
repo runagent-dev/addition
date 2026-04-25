@@ -26,7 +26,7 @@ _SHARED_PROVIDERS = _SHARED_ROOT / "providers"
 _SHARED_TOOLKITS = _SHARED_ROOT / "toolkits"
 _SHARED_SCHEMA = _SHARED_ROOT / "schema"
 
-_HEX_64 = re.compile(r"^[0-9a-fA-F]{64}$")
+_HEX_64 = re.compile(r"[0-9a-fA-F]{64}")
 
 
 class Addition:
@@ -39,7 +39,7 @@ class Addition:
         token_refresh_buffer_ms: int = 300_000,
         fetch: Callable | None = None,
     ) -> None:
-        if not _HEX_64.match(encryption_key):
+        if not _HEX_64.fullmatch(encryption_key):
             raise EncryptionError("encryption_key must be exactly 64 hexadecimal characters (32 bytes)")
 
         self._database_url = database_url
@@ -279,6 +279,8 @@ class Addition:
     def start_background_tasks(self) -> None:
         if self._bg_handle is not None:
             return
+        if self._conn is None:
+            raise RuntimeError("call an async method first to open the connection before starting background tasks")
         self._bg_handle = start_background_tasks({
             "conn": self._conn,
             "providers": self._providers,
