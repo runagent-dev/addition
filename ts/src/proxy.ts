@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { findActiveConnection, getConnectionById, refreshConnection } from './tokens.js';
 import { getAdapter } from './adapters/index.js';
-import { ConnectionNotFoundError, ConnectionExpiredError, ProxyError } from './errors.js';
+import { ConnectionNotFoundError, ConnectionExpiredError, ProxyError, ProviderNotFoundError } from './errors.js';
 import type { ProviderRegistry } from './types.js';
 
 export interface ProxyDeps {
@@ -37,13 +37,24 @@ export async function proxy(args: ProxyArgs, deps: ProxyDeps): Promise<ProxyResp
   const { pool, providers, encryptionKey, fetch: fetchFn, sleep = DEFAULT_SLEEP } = deps;
 
   const provider = providers[providerId];
+  if (!provider) throw new ProviderNotFoundError(providerId);
+
   const adapter = getAdapter(providerId);
 
   let conn = connectionId
     ? await getConnectionById(pool, connectionId, encryptionKey)
     : await findActiveConnection(pool, userId, providerId, encryptionKey);
 
-  if (!conn) throw new ConnectionNotFoundError(connectionId ?? `${userId}/${providerId}`);
+  // Enforce multi-tenancy: explicit connectionId must belong to the requesting user.
+  if (!conn || (connectionId && conn.userId !== userId)) {
+    throw new ConnectionNotFoundError(connectionId ?? `${userId}/${providerId}`);
+  }
+
+  await pool.query(
+    `INSERT INTO _addition.audit_log (event_type, user_id, provider_id, connection_id, detail)
+     VALUES ($1, $2, $3, $4, $5)`,
+    ['proxy.called', userId, providerId, conn.id, { method, path }],
+  );
 
   const urlObj = new URL(provider.api.base_url.replace(/\/$/, '') + path);
   if (params) {
@@ -94,6 +105,7 @@ export async function proxy(args: ProxyArgs, deps: ProxyDeps): Promise<ProxyResp
   for (;;) {
     let { res, parsed } = await executeRequest(conn.accessToken);
 
+    // 401: inline refresh+retry — does not loop back through the 401 check.
     if (res.status === 401) {
       if (!conn.refreshToken) throw new ConnectionExpiredError(conn.id);
       conn = await refreshConnection(conn.id, { pool, providers, encryptionKey, fetch: fetchFn });
@@ -102,7 +114,7 @@ export async function proxy(args: ProxyArgs, deps: ProxyDeps): Promise<ProxyResp
 
     if (res.status === 429 && retries429 < MAX_429_RETRIES) {
       retries429++;
-      const retryAfter = parseInt(res.headers.get('Retry-After') ?? '1', 10);
+      const retryAfter = Math.min(parseInt(res.headers.get('Retry-After') ?? '1', 10), 60);
       await sleep(retryAfter * 1000);
       continue;
     }

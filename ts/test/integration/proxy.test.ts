@@ -12,6 +12,7 @@ import {
   ConnectionNotFoundError,
   ConnectionExpiredError,
   ProxyError,
+  ProviderNotFoundError,
 } from '../../src/errors.js';
 import { proxy } from '../../src/proxy.js';
 import type { ProviderRegistry } from '../../src/types.js';
@@ -397,6 +398,34 @@ describe('proxy — connection not found', () => {
           connectionId: '00000000-0000-0000-0000-000000000000',
         }, deps(pool, spy)),
       ).rejects.toThrow(ConnectionNotFoundError);
+      expect(spy).not.toHaveBeenCalled();
+    });
+  });
+
+  it('throws ConnectionNotFoundError when connectionId belongs to a different user (tenant isolation)', async () => {
+    await withFreshDb(async (pool) => {
+      await seedProviderConfig(pool, 'github');
+      const connId = await storeConnection(pool, 'owner', 'github',
+        { accessToken: 't', refreshToken: null, expiresIn: null, scopesGranted: [] }, TEST_KEY);
+      const spy = mkFetch([{ status: 200, body: {} }]);
+      await expect(
+        proxy({
+          userId: 'attacker', providerId: 'github', method: 'GET', path: '/user',
+          connectionId: connId,
+        }, deps(pool, spy)),
+      ).rejects.toThrow(ConnectionNotFoundError);
+      expect(spy).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('proxy — provider guard', () => {
+  it('throws ProviderNotFoundError for an unknown providerId', async () => {
+    await withFreshDb(async (pool) => {
+      const spy = mkFetch([{ status: 200, body: {} }]);
+      await expect(
+        proxy({ userId: 'u1', providerId: 'nonexistent', method: 'GET', path: '/foo' }, deps(pool, spy)),
+      ).rejects.toThrow(ProviderNotFoundError);
       expect(spy).not.toHaveBeenCalled();
     });
   });
