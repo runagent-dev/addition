@@ -27,3 +27,21 @@ class ToolNotFoundError(AdditionError):
 
 class SchemaError(AdditionError):
     pass
+
+
+class ToolValidationError(AdditionError):
+    def __init__(
+        self,
+        tool_id: str,
+        missing: list[str],
+        invalid: list[dict[str, str]],
+    ) -> None:
+        parts: list[str] = []
+        if missing:
+            parts.append(f"missing required: {', '.join(missing)}")
+        if invalid:
+            parts.append("invalid: " + "; ".join(f"{i['name']} ({i['reason']})" for i in invalid))
+        super().__init__(f"tool '{tool_id}': {'; '.join(parts) or 'validation failed'}")
+        self.tool_id = tool_id
+        self.missing = missing
+        self.invalid = invalid
