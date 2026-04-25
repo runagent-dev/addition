@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, parse_qs
+
+import base64
 
 import asyncpg
 
@@ -179,7 +181,6 @@ async def refresh_connection(connection_id: str, deps: dict) -> dict:
 
     headers: dict[str, str] = {"Content-Type": "application/x-www-form-urlencoded"}
     if oauth2.get("client_auth_method") == "header":
-        import base64
         cred_str = f"{creds['client_id']}:{creds['client_secret']}"
         basic = base64.b64encode(cred_str.encode()).decode()
         headers["Authorization"] = f"Basic {basic}"
@@ -205,7 +206,6 @@ async def refresh_connection(connection_id: str, deps: dict) -> dict:
         except Exception:
             parsed = text
     else:
-        from urllib.parse import parse_qs
         params = parse_qs(text, keep_blank_values=True)
         parsed = {k: v[0] for k, v in params.items()}
 
