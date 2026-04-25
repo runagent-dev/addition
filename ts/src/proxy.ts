@@ -10,6 +10,7 @@ export interface ProxyDeps {
   encryptionKey: string;
   fetch: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  onTokenRefreshed?: (connectionId: string) => void;
 }
 
 export interface ProxyArgs {
@@ -109,6 +110,7 @@ export async function proxy(args: ProxyArgs, deps: ProxyDeps): Promise<ProxyResp
     if (res.status === 401) {
       if (!conn.refreshToken) throw new ConnectionExpiredError(conn.id);
       conn = await refreshConnection(conn.id, { pool, providers, encryptionKey, fetch: fetchFn });
+      deps.onTokenRefreshed?.(conn.id);
       ({ res, parsed } = await executeRequest(conn.accessToken));
     }
 
