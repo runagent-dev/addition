@@ -318,7 +318,7 @@ export async function listConnections(
 export async function revokeConnection(
   pool: Pool,
   connectionId: string,
-): Promise<void> {
+): Promise<boolean> {
   const { rows } = await pool.query(
     `DELETE FROM _addition.connections WHERE id = $1
      RETURNING user_id, provider_id`,
@@ -326,5 +326,7 @@ export async function revokeConnection(
   );
   if (rows.length > 0) {
     await writeAudit(pool, 'connection.revoked', rows[0].user_id as string, rows[0].provider_id as string, connectionId, {});
+    return true;
   }
+  return false;
 }

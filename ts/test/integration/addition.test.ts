@@ -307,3 +307,108 @@ describe('Addition — lifecycle', () => {
     });
   });
 });
+
+// ─── Connection management ────────────────────────────────────────────────────
+
+describe('Addition — connection management', () => {
+  async function seedConnection(dbUrl: string, userId: string, providerId: string): Promise<string> {
+    const { encrypt } = await import('../../src/crypto.js');
+    const pool = new Pool({ connectionString: dbUrl });
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO _addition.connections
+           (user_id, provider_id, access_token_encrypted, refresh_token_encrypted,
+            token_expires_at, scopes_granted)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [userId, providerId, encrypt('tok', TEST_KEY), null, null, []],
+      );
+      return rows[0].id as string;
+    } finally {
+      await pool.end();
+    }
+  }
+
+  it('getConnection returns the ConnectionRecord for a known UUID', async () => {
+    await withFreshDb(async (dbUrl) => {
+      const addition = mkAddition(dbUrl);
+      await addition.listConfiguredProviders(); // bootstrap
+      const connId = await seedConnection(dbUrl, 'u1', 'github');
+      const conn = await addition.getConnection(connId);
+      expect(conn).not.toBeNull();
+      expect(conn!.id).toBe(connId);
+      expect(conn!.userId).toBe('u1');
+      expect(conn!.providerId).toBe('github');
+      await addition.shutdown();
+    });
+  });
+
+  it('getConnection returns null for an unknown UUID', async () => {
+    await withFreshDb(async (dbUrl) => {
+      const addition = mkAddition(dbUrl);
+      await addition.listConfiguredProviders();
+      const conn = await addition.getConnection('00000000-0000-0000-0000-000000000000');
+      expect(conn).toBeNull();
+      await addition.shutdown();
+    });
+  });
+
+  it('listConnections filters by providerId when provided', async () => {
+    await withFreshDb(async (dbUrl) => {
+      const addition = mkAddition(dbUrl);
+      await addition.listConfiguredProviders();
+      await seedConnection(dbUrl, 'u1', 'github');
+      await seedConnection(dbUrl, 'u1', 'github');
+      // Seed a second provider connection that should be excluded
+      const pool = new Pool({ connectionString: dbUrl });
+      try {
+        const { encrypt } = await import('../../src/crypto.js');
+        await pool.query(
+          `INSERT INTO _addition.connections
+             (user_id, provider_id, access_token_encrypted, refresh_token_encrypted,
+              token_expires_at, scopes_granted)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          ['u1', 'slack', encrypt('tok', TEST_KEY), null, null, []],
+        );
+      } finally {
+        await pool.end();
+      }
+      const conns = await addition.listConnections({ userId: 'u1', providerId: 'github' });
+      expect(conns).toHaveLength(2);
+      expect(conns.every((c) => c.providerId === 'github')).toBe(true);
+      await addition.shutdown();
+    });
+  });
+
+  it('revokeConnection emits connection.revoked only when the connection existed', async () => {
+    await withFreshDb(async (dbUrl) => {
+      const addition = mkAddition(dbUrl);
+      await addition.listConfiguredProviders();
+      const connId = await seedConnection(dbUrl, 'u1', 'github');
+
+      const handler = vi.fn();
+      addition.on('connection.revoked', handler);
+
+      // Revoke an existing connection — event should fire.
+      await addition.revokeConnection(connId);
+      expect(handler).toHaveBeenCalledOnce();
+
+      // Revoke the same (now deleted) connection — event must NOT fire again.
+      await addition.revokeConnection(connId);
+      expect(handler).toHaveBeenCalledOnce();
+
+      await addition.shutdown();
+    });
+  });
+
+  it('revokeConnection does not emit for a non-existent connectionId', async () => {
+    await withFreshDb(async (dbUrl) => {
+      const addition = mkAddition(dbUrl);
+      await addition.listConfiguredProviders();
+      const handler = vi.fn();
+      addition.on('connection.revoked', handler);
+      await addition.revokeConnection('00000000-0000-0000-0000-000000000000');
+      expect(handler).not.toHaveBeenCalled();
+      await addition.shutdown();
+    });
+  });
+});

@@ -146,7 +146,7 @@ export class Addition extends EventEmitter {
 
   // ── Connections ─────────────────────────────────────────────────────────────
 
-  async listConnections(params: { userId: string; providerId?: string }): Promise<ReturnType<typeof listConnections> extends Promise<infer T> ? T : never> {
+  async listConnections(params: { userId: string; providerId?: string }): Promise<Array<{ id: string; providerId: string; scopesGranted: string[]; status: string; createdAt: Date }>> {
     await this._ready;
     const all = await listConnections(this.pool, params.userId);
     if (params.providerId) return all.filter((c) => c.providerId === params.providerId);
@@ -160,8 +160,8 @@ export class Addition extends EventEmitter {
 
   async revokeConnection(connectionId: string): Promise<void> {
     await this._ready;
-    await revokeConn(this.pool, connectionId);
-    this.emit('connection.revoked', { connectionId });
+    const deleted = await revokeConn(this.pool, connectionId);
+    if (deleted) this.emit('connection.revoked', { connectionId });
   }
 
   // ── Proxy ───────────────────────────────────────────────────────────────────
@@ -220,6 +220,13 @@ export class Addition extends EventEmitter {
 
   // ── Background tasks ────────────────────────────────────────────────────────
 
+  /**
+   * Starts the background token-refresh loop.
+   * Call this after at least one awaited method (e.g. `configureProvider`) to
+   * ensure the schema is bootstrapped before the first tick fires.
+   * Listeners attached via `on()` must not throw — listener exceptions propagate
+   * to the caller of the method that emits the event.
+   */
   startBackgroundTasks(): void {
     if (this.bgHandle) return;
     this.bgHandle = startBackgroundTasks({
