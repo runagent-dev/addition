@@ -291,3 +291,51 @@ class TestShapeValidation:
             )
             reg = load_toolkits(tmp, self.providers)
             assert reg["gmail"]["tools"][0]["params"][0]["enum"] == [1, 2, 3]
+
+    def test_rejects_non_string_cursor_response_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write(
+                tmp,
+                "bad.yaml",
+                'provider: "gmail"\nname: "Bad"\ndescription: "x"\n'
+                "tools:\n"
+                "  - id: foo\n    name: Foo\n    description: x\n"
+                '    operation: "GET /foo"\n'
+                "    params: []\n"
+                "    pagination:\n"
+                '      type: "cursor"\n'
+                '      cursor_param: "pageToken"\n'
+                "      cursor_response_field: 42\n",
+            )
+            with pytest.raises(Exception, match="cursor_response_field"):
+                load_toolkits(tmp, self.providers)
+
+    def test_rejects_non_dict_response_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write(
+                tmp,
+                "bad.yaml",
+                'provider: "gmail"\nname: "Bad"\ndescription: "x"\n'
+                "tools:\n"
+                "  - id: foo\n    name: Foo\n    description: x\n"
+                '    operation: "GET /foo"\n'
+                "    params: []\n"
+                '    response: "string-not-object"\n',
+            )
+            with pytest.raises(Exception, match="response"):
+                load_toolkits(tmp, self.providers)
+
+    def test_rejects_duplicate_tool_ids_within_toolkit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write(
+                tmp,
+                "dup.yaml",
+                'provider: "gmail"\nname: "Dup"\ndescription: "x"\n'
+                "tools:\n"
+                "  - id: foo\n    name: Foo\n    description: x\n"
+                '    operation: "GET /foo"\n    params: []\n'
+                "  - id: foo\n    name: Foo2\n    description: x\n"
+                '    operation: "GET /foo2"\n    params: []\n',
+            )
+            with pytest.raises(Exception, match="duplicate.*foo|foo.*duplicate"):
+                load_toolkits(tmp, self.providers)

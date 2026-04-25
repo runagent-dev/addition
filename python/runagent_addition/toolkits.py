@@ -89,13 +89,17 @@ def _parse_pagination(raw: Any, context: str) -> Optional[dict]:
         )
     cursor_param = _require_string(raw.get("cursor_param"), "pagination.cursor_param", context)
     crf = raw.get("cursor_response_field")
-    cursor_response_field = None if crf is None else str(crf)
+    if crf is not None and not isinstance(crf, str):
+        raise AdditionError(f"{context}: 'pagination.cursor_response_field' must be a string or null")
+    cursor_response_field: str | None = crf
     return {"type": type_, "cursor_param": cursor_param, "cursor_response_field": cursor_response_field}
 
 
-def _parse_response(raw: Any) -> Optional[dict]:
-    if raw is None or not isinstance(raw, dict):
+def _parse_response(raw: Any, context: str) -> Optional[dict]:
+    if raw is None:
         return None
+    if not isinstance(raw, dict):
+        raise AdditionError(f"{context}: 'response' must be an object or null")
     type_ = "array" if raw.get("type") == "array" else "object"
     fields = raw.get("fields") or {}
     if not isinstance(fields, dict):
@@ -134,7 +138,7 @@ def _parse_tool(raw: dict, provider_id: str, idx: int) -> dict:
         "params": params,
         "transform": transform,
         "pagination": _parse_pagination(raw.get("pagination"), ctx),
-        "response": _parse_response(raw.get("response")),
+        "response": _parse_response(raw.get("response"), ctx),
     }
 
 
@@ -146,6 +150,11 @@ def _parse_toolkit(raw: dict, filename: str) -> dict:
     if not isinstance(raw.get("tools"), list):
         raise AdditionError(f"{ctx}: 'tools' must be an array")
     tools = [_parse_tool(t, provider, i) for i, t in enumerate(raw["tools"])]
+    seen_ids: set[str] = set()
+    for tool in tools:
+        if tool["id"] in seen_ids:
+            raise AdditionError(f"{ctx}: duplicate tool id '{tool['id']}'")
+        seen_ids.add(tool["id"])
     return {"provider": provider, "name": name, "description": description, "tools": tools}
 
 
