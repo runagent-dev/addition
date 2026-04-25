@@ -30,7 +30,6 @@ def _load_migrations(dir_: str) -> List[_Migration]:
         if not m:
             continue
         version = m.group(1)
-        sql = (os.path.join(dir_, fname))
         with open(os.path.join(dir_, fname), encoding="utf-8") as fh:
             sql_text = fh.read()
         migrations.append(_Migration(version, fname, sql_text))
@@ -84,7 +83,8 @@ async def bootstrap(database_url: str, schema_dir: str) -> None:
 
             for migration in pending:
                 try:
-                    await conn.execute(migration.sql)
+                    async with conn.transaction():
+                        await conn.execute(migration.sql)
                 except Exception as exc:
                     raise SchemaError(
                         f"migration {migration.filename} failed: {exc}"
