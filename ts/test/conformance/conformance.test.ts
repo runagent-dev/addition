@@ -158,6 +158,13 @@ function isTokenRefreshScenario(s: unknown): s is TokenRefreshScenario {
 
 const fixtures = loadFixtures();
 
+// Fail fast at collection time if a fixture file is empty or mis-keyed.
+for (const { file, scenarios } of fixtures) {
+  if (scenarios.length === 0) {
+    throw new Error(`Fixture '${file}' has 0 scenarios — check for a parse error or wrong top-level key`);
+  }
+}
+
 for (const { file, scenarios } of fixtures) {
   describe(`conformance — ${file}`, () => {
     for (const scenario of scenarios) {
@@ -266,6 +273,13 @@ for (const { file, scenarios } of fixtures) {
 
             await addition.shutdown();
           });
+        });
+      } else {
+        const name = (scenario as Record<string, unknown>).name ?? JSON.stringify(scenario);
+        it(`UNRECOGNISED scenario: ${name}`, () => {
+          throw new Error(
+            `Scenario shape not handled by any driver — add a driver in conformance.test.ts or fix the fixture`,
+          );
         });
       }
     }
