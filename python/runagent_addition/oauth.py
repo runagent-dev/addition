@@ -7,7 +7,7 @@ import os
 import secrets
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, parse_qs
 
 import asyncpg
 
@@ -158,7 +158,6 @@ async def _parse_response(resp: Any, fmt: str) -> Any:
         except Exception:
             return text
     # form-encoded
-    from urllib.parse import parse_qs
     params = parse_qs(text, keep_blank_values=True)
     return {k: v[0] for k, v in params.items()}
 
@@ -218,9 +217,12 @@ async def get_auth_url(args: dict, deps: dict) -> str:
         return f"{oauth2['authorize_url']}?{urlencode(params)}"
 
     except Exception as exc:
-        await _write_audit(conn, "oauth.authorize_url_failed", user_id, provider_id, None, {
-            "error": str(exc),
-        })
+        try:
+            await _write_audit(conn, "oauth.authorize_url_failed", user_id, provider_id, None, {
+                "error": str(exc),
+            })
+        except Exception:
+            pass
         raise
 
 
@@ -280,9 +282,8 @@ async def handle_callback(query: dict, deps: dict) -> dict:
 
     base_headers: dict[str, str] = {"Content-Type": "application/x-www-form-urlencoded"}
     if oauth2.get("client_auth_method") == "header":
-        import base64 as _b64
         cred_str = f"{creds['client_id']}:{creds['client_secret']}"
-        basic = _b64.b64encode(cred_str.encode()).decode()
+        basic = base64.b64encode(cred_str.encode()).decode()
         base_headers["Authorization"] = f"Basic {basic}"
 
     token_req = {
