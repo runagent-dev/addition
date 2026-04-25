@@ -45,6 +45,22 @@ class ProviderDisabledError(AdditionError):
         self.provider_id = provider_id
 
 
+class ConnectionNotFoundError(AdditionError):
+    def __init__(self, connection_id: str) -> None:
+        super().__init__(f"connection '{connection_id}' not found")
+        self.connection_id = connection_id
+
+
+class TokenRefreshError(AdditionError):
+    def __init__(self, code: str, description: str | None = None) -> None:
+        msg = f"token refresh failed: {code}"
+        if description:
+            msg += f" — {description}"
+        super().__init__(msg)
+        self.code = code
+        self.description = description
+
+
 class ToolValidationError(AdditionError):
     def __init__(
         self,
