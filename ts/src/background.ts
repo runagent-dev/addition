@@ -26,7 +26,9 @@ export async function runRefreshTick(deps: BackgroundDeps): Promise<void> {
      WHERE status = 'active'
        AND refresh_token_encrypted IS NOT NULL
        AND token_expires_at IS NOT NULL
-       AND token_expires_at <= NOW() + ($1 * interval '1 ms')`,
+       AND token_expires_at <= NOW() + ($1 * interval '1 ms')
+     ORDER BY token_expires_at ASC
+     LIMIT 1000`,
     [tokenRefreshBufferMs],
   );
 
@@ -41,12 +43,19 @@ export async function runRefreshTick(deps: BackgroundDeps): Promise<void> {
 
 export function startBackgroundTasks(deps: BackgroundDeps): BackgroundHandle {
   const tick = deps._tickFn ?? runRefreshTick;
-  const id = setInterval(() => { void tick(deps); }, deps.tokenRefreshIntervalMs);
+  let running = false;
+  const id = setInterval(() => {
+    if (running) return;
+    running = true;
+    void tick(deps).finally(() => { running = false; });
+  }, deps.tokenRefreshIntervalMs);
 
   return {
     stop() {
       clearInterval(id);
     },
+    // Note: does not drain in-flight ticks — a tick fired just before shutdown()
+    // may still be mid-execution when pool.end() is called. Acceptable for v0.1.0.
     async shutdown() {
       clearInterval(id);
       await deps.pool.end();
