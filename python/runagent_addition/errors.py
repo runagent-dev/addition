@@ -23,3 +23,7 @@ class ToolNotFoundError(AdditionError):
             super().__init__(f"toolkit for provider '{provider_id}' not found")
         self.provider_id = provider_id
         self.tool_id = tool_id
+
+
+class SchemaError(AdditionError):
+    pass
