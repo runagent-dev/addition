@@ -29,6 +29,22 @@ class SchemaError(AdditionError):
     pass
 
 
+class OAuthError(AdditionError):
+    def __init__(self, code: str, description: str | None = None) -> None:
+        msg = f"oauth error: {code}"
+        if description:
+            msg += f" — {description}"
+        super().__init__(msg)
+        self.code = code
+        self.description = description
+
+
+class ProviderDisabledError(AdditionError):
+    def __init__(self, provider_id: str) -> None:
+        super().__init__(f"provider '{provider_id}' is disabled")
+        self.provider_id = provider_id
+
+
 class ToolValidationError(AdditionError):
     def __init__(
         self,
