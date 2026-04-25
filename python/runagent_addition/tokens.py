@@ -290,10 +290,12 @@ async def list_connections(conn: asyncpg.Connection, user_id: str) -> list[dict]
     ]
 
 
-async def revoke_connection(conn: asyncpg.Connection, connection_id: str) -> None:
+async def revoke_connection(conn: asyncpg.Connection, connection_id: str) -> bool:
     row = await conn.fetchrow(
         "DELETE FROM _addition.connections WHERE id = $1 RETURNING user_id, provider_id",
         connection_id,
     )
     if row is not None:
         await _write_audit(conn, "connection.revoked", row["user_id"], row["provider_id"], connection_id, {})
+        return True
+    return False

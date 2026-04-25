@@ -103,6 +103,9 @@ async def proxy(args: dict, deps: dict) -> dict:
             if not record["refresh_token"]:
                 raise ConnectionExpiredError(record["id"])
             record = await refresh_connection(record["id"], deps)
+            on_token_refreshed = deps.get("on_token_refreshed")
+            if on_token_refreshed:
+                on_token_refreshed(record["id"])
             resp, parsed = await execute(record["access_token"])
 
         if resp.status == 429 and retries_429 < MAX_429_RETRIES:
