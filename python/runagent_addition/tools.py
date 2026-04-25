@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Awaitable, Callable, Dict, Optional
 from urllib.parse import quote
@@ -100,7 +101,6 @@ def _stringify_query(params: dict) -> dict[str, str]:
             if v:
                 out[k] = ",".join(str(i) for i in v)
         elif isinstance(v, dict):
-            import json
             out[k] = json.dumps(v)
         else:
             out[k] = str(v)
