@@ -56,9 +56,10 @@ function baseSchema(type: ToolParamDefinition['type']): JsonSchema {
 function paramToSchema(param: ToolParamDefinition): JsonSchema {
   const schema = baseSchema(param.type);
   schema.description = param.description;
-  // Copy the enum array — never alias the input catalog's array into the output schema.
+  // Never alias the input catalog into the output — copy the enum array and
+  // deep-copy the default (which may be an array/object) so the projection is pure.
   if (param.enum !== undefined) schema.enum = [...param.enum];
-  if (param.default !== undefined) schema.default = param.default;
+  if (param.default !== undefined) schema.default = structuredClone(param.default);
   return schema;
 }
 

@@ -144,6 +144,16 @@ describe('purity — no aliasing of the input catalog (round-1 review)', () => {
 
     expect(formatParam.enum).toEqual(originalEnum);
   });
+
+  it('does not alias array/object default values (round-2 review)', () => {
+    const params: ToolParamDefinition[] = [
+      { name: 'tags', type: 'string[]', required: false, description: '', default: ['a', 'b'] },
+    ];
+    const schema = paramsToJsonSchema(params);
+    (schema.properties!.tags.default as unknown[]).push('MUTATED');
+
+    expect(params[0].default).toEqual(['a', 'b']);
+  });
 });
 
 describe('parseOperation guard (round-1 review)', () => {
