@@ -16,6 +16,14 @@ export {
   TokenRefreshError,
 } from './errors.js';
 
+export {
+  paramsToJsonSchema,
+  toMcpTool,
+  toolCatalog,
+  mcpToolName,
+} from './toolschema.js';
+export type { JsonSchema, McpTool, CatalogEntry } from './toolschema.js';
+
 export type { ProviderConfig, ToolDefinition } from './types.js';
 export type { CallbackResult } from './oauth.js';
 export type { ConnectionRecord } from './tokens.js';
