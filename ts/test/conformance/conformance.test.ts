@@ -110,9 +110,12 @@ function loadFixtures(): Array<{ file: string; scenarios: unknown[] }> {
   return readdirSync(FIXTURES_DIR)
     .filter((f) => f.endsWith('.yaml') || f.endsWith('.yml'))
     .map((f) => {
-      const raw = parseYaml(readFileSync(join(FIXTURES_DIR, f), 'utf8')) as { scenarios: unknown[] };
-      return { file: f, scenarios: raw.scenarios ?? [] };
-    });
+      const raw = parseYaml(readFileSync(join(FIXTURES_DIR, f), 'utf8')) as Record<string, unknown>;
+      return { file: f, hasScenarios: raw != null && 'scenarios' in raw, scenarios: (raw?.scenarios as unknown[]) ?? [] };
+    })
+    // Fixtures without a `scenarios:` key are non-scenario vectors (e.g. crypto_interop,
+    // driven directly by the crypto unit tests) — skip them here rather than fail collection.
+    .filter((x) => x.hasScenarios);
 }
 
 // ─── Proxy scenario driver ────────────────────────────────────────────────────
