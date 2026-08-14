@@ -1,0 +1,125 @@
+# Cross-language conformance fixture for the tool-schema projection (M14).
+#
+# The SAME toolkit definitions in shared/toolkits/*.yaml must project into the
+# SAME MCP tool descriptors in both the TypeScript and Python SDKs. Each entry
+# below is the expected output of:
+#     toMcpTool(provider, getToolDefinition(provider, toolId))
+#         -> { name, description, inputSchema }
+# plus the parsed (method, path) that toolCatalog(registry) also exposes.
+#
+# This file has no `scenarios:` key on purpose — it is driven directly by the
+# toolschema unit tests in each language, not by the generic conformance driver.
+# (The TS conformance loader skips non-scenario fixtures; the Python suite lists
+# this file in its `handled` set.)
+#
+# Coverage: required + optional strings, integer with default, string[] arrays,
+# enum + default, and path params ({owner}/{repo}/{messageId}) — which are
+# interpolated into the URL at execution but MUST still appear in the input
+# schema because the caller has to supply them.
+
+mcp_tools:
+
+  - provider: gmail
+    toolId: send_message
+    name: gmail__send_message
+    description: "Send a new email message. The library handles MIME formatting automatically."
+    method: POST
+    path: /gmail/v1/users/me/messages/send
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required: [to, subject, body]
+      properties:
+        to:
+          type: string
+          description: "Recipient email address (e.g., 'alice@example.com')"
+        subject:
+          type: string
+          description: "Email subject line"
+        body:
+          type: string
+          description: "Email body (plain text)"
+        cc:
+          type: string
+          description: "CC recipient email address"
+        bcc:
+          type: string
+          description: "BCC recipient email address"
+
+  - provider: gmail
+    toolId: list_messages
+    name: gmail__list_messages
+    description: "List email messages in the user's mailbox. Returns message IDs and thread IDs. Use get_message to fetch full content."
+    method: GET
+    path: /gmail/v1/users/me/messages
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required: []
+      properties:
+        query:
+          type: string
+          description: "Gmail search query (e.g., 'is:unread', 'from:alice@example.com', 'subject:meeting')"
+        maxResults:
+          type: integer
+          description: "Maximum number of messages to return (1-500)"
+          default: 10
+        labelIds:
+          type: array
+          items:
+            type: string
+          description: "Only return messages with these label IDs (e.g., ['INBOX', 'UNREAD'])"
+
+  - provider: gmail
+    toolId: get_message
+    name: gmail__get_message
+    description: "Get the full content of a specific email message, including headers, body, and attachments metadata"
+    method: GET
+    path: /gmail/v1/users/me/messages/{messageId}
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required: [messageId]
+      properties:
+        messageId:
+          type: string
+          description: "The ID of the message to retrieve"
+        format:
+          type: string
+          description: "The format to return the message in"
+          enum: [minimal, full, raw, metadata]
+          default: full
+
+  - provider: github
+    toolId: create_issue
+    name: github__create_issue
+    description: "Create a new issue in a repository"
+    method: POST
+    path: /repos/{owner}/{repo}/issues
+    inputSchema:
+      type: object
+      additionalProperties: false
+      required: [owner, repo, title]
+      properties:
+        owner:
+          type: string
+          description: "Repository owner"
+        repo:
+          type: string
+          description: "Repository name"
+        title:
+          type: string
+          description: "Issue title"
+        body:
+          type: string
+          description: "Issue body (supports markdown)"
+        labels:
+          type: array
+          items:
+            type: string
+          description: "Labels to apply"
+        assignees:
+          type: array
+          items:
+            type: string
+          description: "GitHub usernames to assign"
