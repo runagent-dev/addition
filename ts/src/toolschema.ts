@@ -1,3 +1,4 @@
+import { AdditionError } from './errors.js';
 import type { ToolDefinition, ToolParamDefinition, ToolkitRegistry } from './types.js';
 
 /**
@@ -55,7 +56,8 @@ function baseSchema(type: ToolParamDefinition['type']): JsonSchema {
 function paramToSchema(param: ToolParamDefinition): JsonSchema {
   const schema = baseSchema(param.type);
   schema.description = param.description;
-  if (param.enum !== undefined) schema.enum = param.enum;
+  // Copy the enum array — never alias the input catalog's array into the output schema.
+  if (param.enum !== undefined) schema.enum = [...param.enum];
   if (param.default !== undefined) schema.default = param.default;
   return schema;
 }
@@ -86,6 +88,9 @@ export function toMcpTool(provider: string, tool: ToolDefinition): McpTool {
 
 function parseOperation(operation: string): { method: string; path: string } {
   const spaceIdx = operation.indexOf(' ');
+  if (spaceIdx === -1) {
+    throw new AdditionError(`Malformed tool operation '${operation}': expected "METHOD /path"`);
+  }
   return {
     method: operation.slice(0, spaceIdx),
     path: operation.slice(spaceIdx + 1),

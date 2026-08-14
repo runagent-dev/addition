@@ -18,6 +18,7 @@ import {
 } from '../../src/toolschema.js';
 import { loadToolkits, getToolDefinition } from '../../src/toolkits.js';
 import { loadProviders } from '../../src/providers.js';
+import { AdditionError } from '../../src/errors.js';
 import type { ProviderRegistry, ToolkitRegistry, ToolParamDefinition } from '../../src/types.js';
 
 const SHARED = join(__dirname, '..', '..', '..', 'shared');
@@ -129,6 +130,45 @@ describe('toMcpTool', () => {
     expect(mcp.description).toBe(tool.description);
     expect(mcp.inputSchema.type).toBe('object');
     expect(mcp.inputSchema.required).toEqual(['to', 'subject', 'body']);
+  });
+});
+
+describe('purity — no aliasing of the input catalog (round-1 review)', () => {
+  it('does not alias the input enum array (mutating output leaves the catalog intact)', () => {
+    const tool = getToolDefinition(toolkits, 'gmail', 'get_message');
+    const formatParam = tool.params.find((p) => p.name === 'format')!;
+    const originalEnum = [...(formatParam.enum as string[])];
+
+    const schema = paramsToJsonSchema(tool.params);
+    (schema.properties!.format.enum as unknown[]).push('MUTATED');
+
+    expect(formatParam.enum).toEqual(originalEnum);
+  });
+});
+
+describe('parseOperation guard (round-1 review)', () => {
+  it('toolCatalog throws AdditionError on an operation with no METHOD/path space', () => {
+    const badRegistry: ToolkitRegistry = {
+      x: {
+        provider: 'x',
+        name: 'X',
+        description: '',
+        tools: [
+          {
+            id: 't',
+            name: 'T',
+            description: '',
+            provider: 'x',
+            operation: 'GETnoSpace',
+            params: [],
+            transform: null,
+            pagination: null,
+            response: null,
+          },
+        ],
+      },
+    };
+    expect(() => toolCatalog(badRegistry)).toThrow(AdditionError);
   });
 });
 
