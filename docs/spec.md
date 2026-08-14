@@ -2227,17 +2227,27 @@ A future `@runagent/addition-mcp` package could expose an MCP server that wraps 
 
 **Non-goals for v0.1.0**: Webhook/trigger support, UI components, SQLite support, MCP export, rate limit persistence, connection health checks
 
-### v0.2.0 — Developer Experience
-- SQLite for local development
-- Pre-built `<ConnectButton>` React component
-- CLI: `npx addition add google`
-- More providers: Microsoft (Outlook, Calendar), Notion, Linear, Jira
+> **Roadmap re-sequenced (2026-08-14).** To back an on-platform Composio/Nango
+> for the host app, MCP export and endpoint auto-mounting are pulled forward
+> from v0.3.0 into the **v0.2.0** arc, joined by a new **collections** concept.
+> The detailed, test-first breakdown lives in `docs/mcp-collections-plan.md`
+> (milestones M14–M18); this section is the summary of record.
 
-### v0.3.0 — Agentic
-- `getToolDefinitions()` export as OpenAI/Anthropic/MCP format
-- Optional `@runagent/addition-mcp` package (MCP server wrapping the tool engine)
+### v0.2.0 — Projections: MCP + REST + Collections
+The v0.1.0 tool catalog becomes a single source of truth projected three ways
+(manual `executeTool`, REST endpoints, MCP server), sliceable into collections.
+- Tool-schema projection: `params → JSON Schema`, MCP tool descriptors (M14)
+- MCP server generation wrapping the tool engine (M15)
+- REST endpoint generation + framework adapters (Express/Next/FastAPI) (M16)
+- Collections domain model (`002_collections.sql`, per-tenant scoping) (M17)
+- Collection-scoped projections + conformance + version bump to 0.2.0 (M18)
+
+### v0.3.0 — Developer Experience & breadth
+- OpenAI/Anthropic function-calling export (trivial atop the M14 schema mapper)
+- SQLite for local development
+- Pre-built `<ConnectButton>` React component; CLI `npx addition add google`
 - Webhook/trigger support
-- More providers: HubSpot, Salesforce, Stripe, Discord
+- More providers: Microsoft, Notion, Linear, Jira, HubSpot, Salesforce, Stripe, Discord
 
 ---
 

@@ -196,14 +196,20 @@ Before marking any PR ready for review:
 
 Do not add code or tests for these until they have their own milestone:
 
-- SQLite support (v0.2.0)
-- MCP / OpenAI function-calling export (v0.3.0)
+- SQLite support (v0.3.0)
+- OpenAI / Anthropic function-calling export (v0.3.0)
 - Webhooks / triggers
 - UI components (`<ConnectButton>`, etc.)
 - Rate-limit persistence across restarts
 - Connection health checks
 
-If a milestone surfaces one of these as "nice to have", note it in the PR description as follow-up — do not implement.
+**Now in scope (v0.2.0, `docs/mcp-collections-plan.md`, milestones M14–M18):**
+MCP server generation, REST endpoint auto-mounting, and collections. These were
+v0.3.0 non-goals; the roadmap was re-sequenced 2026-08-14 on user direction to
+back an on-platform Composio/Nango. Build them only within their M14–M18
+milestones, one PR each, same TDD workflow.
+
+If a milestone surfaces one of the remaining non-goals as "nice to have", note it in the PR description as follow-up — do not implement.
 
 ---
 
