@@ -301,7 +301,12 @@ async def test_token_refresh_conformance(scenario, admin_dsn):
 
 class TestFixtureCoverage:
     def test_all_fixture_files_are_handled(self):
-        handled = {"crypto_interop.yaml", "proxy_requests.yaml", "token_refresh.yaml"}
+        handled = {
+            "crypto_interop.yaml",
+            "proxy_requests.yaml",
+            "token_refresh.yaml",
+            "tool_schema_export.yaml",  # driven by tests/unit/test_toolschema.py
+        }
         for name in _all_fixture_files():
             assert name in handled, (
                 f"Fixture '{name}' is not handled by any conformance driver — "
