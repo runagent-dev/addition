@@ -153,7 +153,7 @@ func ParseCallback(raw string) (Callback, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return Callback{}, ErrBadRedirect
 	}
-	cb := callbackFromQuery(u.Query())
+	cb := callbackFromQuery(u.RawQuery)
 	if cb.State == "" || !cb.wellFormed() {
 		return Callback{}, ErrBadRedirect
 	}
@@ -161,15 +161,16 @@ func ParseCallback(raw string) (Callback, error) {
 	return cb, nil
 }
 
-// callbackFromQuery marks a callback ambiguous when a key repeats or both code and error are present,
-// even empty, since q.Get would otherwise pick one value and hide the rest.
-func callbackFromQuery(q url.Values) Callback {
+// callbackFromQuery marks a callback ambiguous when the query has an undecodable parameter, a key
+// repeats, or both code and error are present even empty, since q.Get would hide the rest.
+func callbackFromQuery(rawQuery string) Callback {
+	q, err := url.ParseQuery(rawQuery)
 	_, hasCode := q["code"]
 	_, hasError := q["error"]
 	repeated := len(q["code"]) > 1 || len(q["state"]) > 1 || len(q["error"]) > 1
 	return Callback{
 		Code: q.Get("code"), State: q.Get("state"), Error: q.Get("error"),
-		ambiguous: repeated || (hasCode && hasError),
+		ambiguous: err != nil || repeated || (hasCode && hasError),
 	}
 }
 

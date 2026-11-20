@@ -47,7 +47,7 @@ func (l *Loopback) RedirectURI() string {
 }
 
 func (l *Loopback) handle(w http.ResponseWriter, r *http.Request) {
-	cb := callbackFromQuery(r.URL.Query())
+	cb := callbackFromQuery(r.URL.RawQuery)
 	cb.RedirectURI = l.RedirectURI()
 	l.mu.Lock()
 	defer l.mu.Unlock()
