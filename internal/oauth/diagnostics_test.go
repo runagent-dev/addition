@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/runagent-dev/addition/internal/catalog"
+	"github.com/runagent-dev/addition/internal/faultpeer"
 	"github.com/runagent-dev/addition/internal/oauth"
 )
 
@@ -123,8 +124,8 @@ func TestNetworkErrorsAreLocallyAuthored(t *testing.T) {
 		if err.Error() != want[name] {
 			t.Errorf("%s message = %q, want %q", name, err.Error(), want[name])
 		}
-		if nerr.RequestSent {
-			t.Errorf("%s: a request that never reached the wire counts as sent", name)
+		if !nerr.RequestSent {
+			t.Errorf("%s: a transport failure without evidence of no connection counts as unsent", name)
 		}
 		assertNoSecretIn(t, err.Error(), a)
 	}
@@ -133,19 +134,19 @@ func TestNetworkErrorsAreLocallyAuthored(t *testing.T) {
 func TestNetworkErrorKnowsWhetherTheRequestWasSent(t *testing.T) {
 	refused := httptest.NewServer(http.NotFoundHandler())
 	refused.Close()
-	hangUp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.ReadAll(r.Body)
-		conn, _, _ := w.(http.Hijacker).Hijack()
-		_ = conn.Close()
-	}))
-	t.Cleanup(hangUp.Close)
 
 	for _, tc := range []struct {
 		name string
 		url  string
 		sent bool
-	}{{"refused", refused.URL, false}, {"hung up after reading", hangUp.URL, true}} {
+	}{
+		{"refused", refused.URL, false},
+		{"reset on accept", faultpeer.Listen(t, faultpeer.ResetOnAccept), true},
+		{"reset mid-request", faultpeer.Listen(t, faultpeer.ResetMidRequest), true},
+		{"reset after the whole request", faultpeer.Listen(t, faultpeer.ResetAfterRequest), true},
+	} {
 		p := googleLike(tc.url)
+		p.OAuth2.TokenParams = map[string]string{"padding": strings.Repeat("x", 8<<20)}
 		_, err := oauth.Exchange(context.Background(), &http.Client{}, p, client, newAuthorization(t, p.OAuth2), "c")
 		var nerr *oauth.NetworkError
 		if !errors.As(err, &nerr) || nerr.RequestSent != tc.sent {
@@ -178,6 +179,21 @@ func TestBackChannelNeverFollowsRedirects(t *testing.T) {
 		}
 		if n := elsewhere.Load(); n != 0 {
 			t.Errorf("a %d redirect reached the second server %d times", status, n)
+		}
+	}
+}
+
+func TestBackChannelReportsARedirectWithAnInvalidLocation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "http://[::1%zz/elsewhere")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+	p := pointedAt(srv.URL)
+	for name, call := range backChannelCalls(p, newAuthorization(t, p.OAuth2)) {
+		var perr *oauth.ProviderError
+		if err := call(srv.Client()); !errors.As(err, &perr) || perr.Status != http.StatusTemporaryRedirect {
+			t.Errorf("%s: err = %v, want ProviderError 307", name, err)
 		}
 	}
 }

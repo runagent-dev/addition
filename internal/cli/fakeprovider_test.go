@@ -62,16 +62,18 @@ type fakeGoogle struct {
 	grant       func(requested []string) []string
 	scopeReply  func(granted []string) (value any, present bool)
 	tokenStatus int
-	userinfoBad bool
-	revokeFails bool
-	onToken     func()
-	codes       map[string]issuedCode
-	issued      []string
-	authorizes  []url.Values
-	exchanges   []url.Values
-	verifiers   []string
-	revoked     []string
-	pkceOK      int
+	// noRefreshToken leaves refresh_token out of the token response, as a re-consent may.
+	noRefreshToken bool
+	userinfoBad    bool
+	revokeFails    bool
+	onToken        func()
+	codes          map[string]issuedCode
+	issued         []string
+	authorizes     []url.Values
+	exchanges      []url.Values
+	verifiers      []string
+	revoked        []string
+	pkceOK         int
 }
 
 func newFakeGoogle(t *testing.T) *fakeGoogle {
@@ -164,6 +166,9 @@ func (f *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
 	reply := map[string]any{
 		"access_token": fakeAccessToken, "refresh_token": fakeRefreshToken, "token_type": "Bearer",
 		"expires_in": 3599, "scope": strings.Join(granted, " "),
+	}
+	if f.noRefreshToken {
+		delete(reply, "refresh_token")
 	}
 	if f.scopeReply != nil {
 		if value, present := f.scopeReply(granted); present {

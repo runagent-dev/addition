@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/runagent-dev/addition/internal/vault"
 )
 
 type connected struct {
@@ -300,6 +303,7 @@ func TestCompleteRejectsBadPastes(t *testing.T) {
 	moved.Host = "127.0.0.1:1"
 
 	h.wantError(h.run("connect", "--complete", "not a url"), ExitUsage, "bad-redirect")
+	h.wantError(h.run("connect", "--complete", landed+"&error=access_denied"), ExitUsage, "bad-redirect")
 	h.wantError(h.run("connect", "--complete", forged.String()), ExitUsage, "unknown-state")
 	h.wantError(h.run("connect", "--complete", moved.String()), ExitUsage, "redirect-mismatch")
 	h.wantError(h.run("connect", "google", "--complete", landed), ExitUsage, "usage")
@@ -420,6 +424,45 @@ func TestReconnectFollowsTheSubjectThroughAnEmailRename(t *testing.T) {
 	}
 }
 
+func TestReconsentOfASubjectlessAccountKeepsNoOldCredential(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	const legacyRefresh = "1//legacy-refresh-token"
+	s, err := vault.Open(context.Background(), h.deps.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := s.CreateAccount(context.Background(), vault.Account{Provider: "google", Alias: "work", Identity: workIdentity, Scopes: gmailScopes})
+	if err == nil {
+		err = s.PutCredential(context.Background(), legacy.ID, vault.Credential{AccessToken: "legacy-access", RefreshToken: legacyRefresh})
+	}
+	_ = s.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.google.noRefreshToken = true
+
+	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+
+	s, err = vault.Open(context.Background(), h.deps.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	acct, err := s.GetAccount(context.Background(), "google", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := s.GetCredential(context.Background(), acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.Subject != workSubject || cred.AccessToken != fakeAccessToken || cred.RefreshToken != "" {
+		t.Errorf("subject %q, access %q, refresh kept %v; want the new subject and only the new tokens",
+			acct.Subject, cred.AccessToken, cred.RefreshToken == legacyRefresh)
+	}
+}
+
 func TestConnectNeedsASubject(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
@@ -439,6 +482,7 @@ func TestConnectScopeResponse(t *testing.T) {
 		{"absent grants what was requested", func([]string) (any, bool) { return nil, false }, ExitOK, ""},
 		{"empty grants nothing", func([]string) (any, bool) { return "", true }, ExitNeedsConnect, "scopes-not-granted"},
 		{"not a string is malformed", func(g []string) (any, bool) { return g, true }, ExitUpstreamClient, "token-exchange-rejected"},
+		{"null is malformed", func([]string) (any, bool) { return nil, true }, ExitUpstreamClient, "token-exchange-rejected"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -454,6 +498,9 @@ func TestConnectScopeResponse(t *testing.T) {
 				return
 			}
 			h.wantError(r, tc.exit, tc.code)
+			if tc.exit == ExitUpstreamClient {
+				h.wantAccounts(0)
+			}
 		})
 	}
 }

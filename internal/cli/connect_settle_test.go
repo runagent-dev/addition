@@ -5,47 +5,33 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/runagent-dev/addition/internal/faultpeer"
 	"github.com/runagent-dev/addition/internal/oauth"
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
-// tokenTransport sends every request to the fake, except that fail decides, per token request,
-// whether to fail it before it is sent, after the fake has answered, or not at all.
+// tokenTransport sends every request to the fake, except that fail picks, per token request,
+// a failure to replace it with; nil sends it normally.
 type tokenTransport struct {
 	fail func(n int) failure
 	n    atomic.Int32
 }
 
-type failure int
-
-const (
-	noFailure failure = iota
-	failBeforeSending
-	failAfterAnswer
-)
+type failure func(r *http.Request) (*http.Response, error)
 
 func (tt *tokenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if !strings.HasSuffix(r.URL.Path, "/token") {
-		return http.DefaultTransport.RoundTrip(r)
-	}
-	switch tt.fail(int(tt.n.Add(1))) {
-	case failBeforeSending:
-		body, _ := io.ReadAll(r.Body)
-		return nil, fmt.Errorf("dial tcp: %s %s", echoMarker, body)
-	case failAfterAnswer:
-		resp, err := http.DefaultTransport.RoundTrip(r)
-		if err == nil {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			return nil, fmt.Errorf("read: connection reset: %s %s", echoMarker, body)
+	if strings.HasSuffix(r.URL.Path, "/token") {
+		if fail := tt.fail(int(tt.n.Add(1))); fail != nil {
+			return fail(r)
 		}
-		return nil, err
 	}
 	return http.DefaultTransport.RoundTrip(r)
 }
@@ -54,14 +40,55 @@ func (h *harness) failTokenRequests(fail func(n int) failure) {
 	h.deps.httpClient = &http.Client{Transport: &tokenTransport{fail: fail}}
 }
 
-func TestCompleteReleasesTheClaimWhenTheExchangeWasNeverSent(t *testing.T) {
+// failEchoing fails without touching the network, with an error that repeats the request.
+func failEchoing(r *http.Request) (*http.Response, error) {
+	body, _ := io.ReadAll(r.Body)
+	return nil, fmt.Errorf("dial tcp: %s %s", echoMarker, body)
+}
+
+// failAfterAnswer lets the fake answer, then reports a broken connection.
+func failAfterAnswer(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	return nil, fmt.Errorf("read: connection reset: %s %s", echoMarker, body)
+}
+
+// sendTo redirects the request to base, padded past what a fault peer reads before it resets.
+func sendTo(base string) failure {
+	return func(r *http.Request) (*http.Response, error) {
+		target, err := url.Parse(base)
+		if err != nil {
+			return nil, err
+		}
+		padding := "&padding=" + strings.Repeat("x", 8<<20)
+		out := r.Clone(r.Context())
+		out.URL.Scheme, out.URL.Host, out.Host = target.Scheme, target.Host, ""
+		out.Body = io.NopCloser(io.MultiReader(r.Body, strings.NewReader(padding)))
+		out.ContentLength = r.ContentLength + int64(len(padding))
+		out.GetBody = nil
+		return http.DefaultTransport.RoundTrip(out)
+	}
+}
+
+func refusedURL(t *testing.T) string {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close()
+	return srv.URL
+}
+
+func TestCompleteReleasesTheClaimWhenNoConnectionWasMade(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
+	refused := sendTo(refusedURL(t))
 	h.failTokenRequests(func(n int) failure {
 		if n == 1 {
-			return failBeforeSending
+			return refused
 		}
-		return noFailure
+		return nil
 	})
 	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
 
@@ -76,18 +103,28 @@ func TestCompleteReleasesTheClaimWhenTheExchangeWasNeverSent(t *testing.T) {
 }
 
 func TestCompleteDropsTheAuthorizationWhenTheExchangeOutcomeIsUnknown(t *testing.T) {
-	h := newHarness(t)
-	h.addClient()
-	h.failTokenRequests(func(int) failure { return failAfterAnswer })
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
-
-	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
-	if !strings.Contains(env.Error.Message, "addn connect") {
-		t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
+	cases := map[string]func(t *testing.T) failure{
+		"answered, then broken":         func(*testing.T) failure { return failAfterAnswer },
+		"no evidence about the network": func(*testing.T) failure { return failEchoing },
+		"reset on accept":               func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetOnAccept)) },
+		"reset mid-request":             func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetMidRequest)) },
+		"reset after the whole request": func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetAfterRequest)) },
 	}
-	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
-	if len(h.google.exchanges) != 1 {
-		t.Errorf("token endpoint hit %d times, want once", len(h.google.exchanges))
+	for name, makeFailure := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.addClient()
+			fail := makeFailure(t)
+			h.failTokenRequests(func(int) failure { return fail })
+			landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+
+			env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
+			if !strings.Contains(env.Error.Message, "addn connect") {
+				t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
+			}
+			h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
+			h.wantAccounts(0)
+		})
 	}
 }
 
@@ -102,6 +139,40 @@ func TestCompleteDropsTheAuthorizationWhenTheProviderAnswers5xx(t *testing.T) {
 		t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
 	}
 	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
+}
+
+// denialFor is the redirect a provider would send for landed's authorization had the user refused.
+func denialFor(t *testing.T, landed string) string {
+	u, err := url.Parse(landed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.RawQuery = url.Values{"state": {u.Query().Get("state")}, "error": {"access_denied"}}.Encode()
+	return u.String()
+}
+
+func TestDenialLeavesAClaimedAuthorizationAlone(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	arrived, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	h.google.onToken = func() {
+		once.Do(func() { close(arrived) })
+		<-release
+	}
+	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+
+	completion := make(chan result, 1)
+	go func() { completion <- h.run("connect", "--complete", landed) }()
+	<-arrived
+	denied := h.run("connect", "--complete", denialFor(t, landed))
+	close(release)
+	h.wantError(denied, ExitUsage, "authorization-in-progress")
+
+	if r := <-completion; r.code != ExitOK {
+		t.Fatalf("the held completion: exit %d, stderr %s", r.code, r.stderr)
+	}
+	h.wantAccounts(1)
 }
 
 func TestCompleteWhileAnotherCompletionIsInProgress(t *testing.T) {
@@ -195,7 +266,7 @@ func TestProviderDiagnosticsNeverEchoWhatAddnSent(t *testing.T) {
 	t.Run("token transport", func(t *testing.T) {
 		h := newHarness(t)
 		h.addClient()
-		h.failTokenRequests(func(int) failure { return failBeforeSending })
+		h.failTokenRequests(func(int) failure { return failEchoing })
 		h.wantError(h.run("connect", "google", "--as", "work"), ExitUpstreamServer, "network")
 	})
 	t.Run("userinfo", func(t *testing.T) {

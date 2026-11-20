@@ -145,7 +145,8 @@ func TestParseCallback(t *testing.T) {
 		t.Errorf("callback = %+v", cb)
 	}
 
-	for _, bad := range []string{"", "not a url", "http://127.0.0.1:5555/callback", "code=x&state=y", "http://127.0.0.1/callback?code=x"} {
+	for _, bad := range []string{"", "not a url", "http://127.0.0.1:5555/callback", "code=x&state=y", "http://127.0.0.1/callback?code=x",
+		"http://127.0.0.1/callback?code=x&error=access_denied&state=y"} {
 		if _, err := oauth.ParseCallback(bad); !errors.Is(err, oauth.ErrBadRedirect) {
 			t.Errorf("ParseCallback(%q) err = %v, want ErrBadRedirect", bad, err)
 		}
@@ -173,6 +174,9 @@ func TestCallbackVerify(t *testing.T) {
 	}
 	if _, err := (oauth.Callback{State: "s"}).Verify("s"); !errors.Is(err, oauth.ErrBadRedirect) {
 		t.Errorf("missing code err = %v, want ErrBadRedirect", err)
+	}
+	if _, err := (oauth.Callback{State: "s", Code: "c", Error: "access_denied"}).Verify("s"); !errors.Is(err, oauth.ErrBadRedirect) {
+		t.Errorf("a code with an error = %v, want ErrBadRedirect", err)
 	}
 }
 
@@ -391,6 +395,7 @@ func TestExchangeScopeField(t *testing.T) {
 		{"empty means none granted", `{"access_token":"a","scope":""}`, []string{}, false},
 		{"listed", `{"access_token":"a","scope":"openid email"}`, []string{"openid", "email"}, false},
 		{"not a string", `{"access_token":"a","scope":["openid"]}`, nil, true},
+		{"null", `{"access_token":"a","scope":null}`, nil, true},
 		{"a number", `{"access_token":"a","scope":7}`, nil, true},
 	}
 	for _, tc := range cases {
@@ -497,6 +502,9 @@ func TestLoopbackAcceptsOnlyTheVerifiedCallback(t *testing.T) {
 	}
 	if !errors.Is(lb.LastRejection(), oauth.ErrBadRedirect) {
 		t.Errorf("last rejection = %v, want ErrBadRedirect", lb.LastRejection())
+	}
+	if status, _ := get(t, lb.RedirectURI()+"?code=c0&error=access_denied&state=s1"); status != 400 {
+		t.Errorf("a code with an error: %d", status)
 	}
 	if _, ok := received(lb); ok {
 		t.Fatal("an invalid callback was delivered")
