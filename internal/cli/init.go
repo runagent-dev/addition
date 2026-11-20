@@ -1,0 +1,56 @@
+package cli
+
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+
+	"github.com/runagent-dev/addition/internal/crypto"
+	"github.com/runagent-dev/addition/internal/vault"
+)
+
+func newInitCmd() *cobra.Command {
+	var opts vault.InitOptions
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Create the local vault and its master key",
+		Long: "Create the data dir, the vault database and a master key stored in the OS keychain.\n" +
+			"With --key-file the key goes to $ADDN_HOME/master.key (mode 0600) instead; with\n" +
+			"ADDN_MASTER_KEY set, that key is used. Re-running never replaces an existing key.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			res, err := vault.Init(cmd.Context(), vault.OSEnv(), opts)
+			if err != nil {
+				return vaultError(err)
+			}
+			return writeJSON(cmd.OutOrStdout(), res)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.KeyFile, "key-file", false, "keep the master key in a 0600 file instead of the OS keychain")
+	return cmd
+}
+
+var vaultErrorCodes = []struct {
+	err  error
+	code string
+}{
+	{vault.ErrKeychainUnavailable, "keychain-unavailable"},
+	{vault.ErrNoMasterKey, "no-master-key"},
+	{vault.ErrWrongMasterKey, "wrong-master-key"},
+	{crypto.ErrInvalidKey, "invalid-master-key"},
+	{vault.ErrInsecureKeyFile, "insecure-key-file"},
+	{vault.ErrSchemaTooNew, "schema-too-new"},
+	{vault.ErrNotInitialized, "not-initialized"},
+}
+
+// vaultError maps vault failures to the envelope; all are local setup problems, so exit 2.
+func vaultError(err error) *Error {
+	code := "vault"
+	for _, c := range vaultErrorCodes {
+		if errors.Is(err, c.err) {
+			code = c.code
+			break
+		}
+	}
+	return &Error{Code: code, Message: err.Error(), Exit: ExitUsage}
+}
