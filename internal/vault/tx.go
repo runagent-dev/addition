@@ -10,7 +10,7 @@ type Tx struct {
 // WithImmediateTx runs fn inside BEGIN IMMEDIATE, so concurrent writers, in this or
 // other processes, run one at a time. fn's error rolls the transaction back.
 func (s *Store) WithImmediateTx(ctx context.Context, fn func(*Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginWriterTx(ctx, s.db)
 	if err != nil {
 		return err
 	}

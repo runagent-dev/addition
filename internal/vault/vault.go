@@ -50,9 +50,6 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 		return InitResult{}, err
 	}
 	defer home.Close()
-	if err := home.removeKeyTemps(); err != nil {
-		return InitResult{}, err
-	}
 	if err := prepareDBFiles(home); err != nil {
 		return InitResult{}, err
 	}
@@ -63,11 +60,14 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	defer db.Close()
 
 	result := InitResult{Home: home.path, SchemaVersion: SchemaVersion}
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := beginWriterTx(ctx, db)
 	if err != nil {
 		return InitResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := home.removeKeyTemps(); err != nil {
+		return InitResult{}, err
+	}
 
 	rec, found, err := loadInitRecords(ctx, tx)
 	if err != nil {
@@ -160,9 +160,6 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 		return nil, err
 	}
 	defer home.Close()
-	if err := home.removeKeyTemps(); err != nil {
-		return nil, err
-	}
 	if err := checkDBFiles(home); errors.Is(err, fs.ErrNotExist) {
 		return nil, notInitializedAt(home.path)
 	} else if err != nil {
@@ -172,7 +169,12 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	rec, found, err := loadInitRecordsSnapshot(ctx, db)
+	err = withWriterLock(ctx, db, home.removeKeyTemps)
+	var rec initRecords
+	var found bool
+	if err == nil {
+		rec, found, err = loadInitRecordsSnapshot(ctx, db)
+	}
 	if err == nil && !found {
 		err = notInitializedAt(home.path)
 	}

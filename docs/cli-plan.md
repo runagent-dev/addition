@@ -124,7 +124,8 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   regular, the user's and 0600 or stricter. Otherwise addn refuses with
   `insecure-home`. SQLite opens the resolved path; key-file reads and writes
   go through one directory fd, and the key is published with an atomic
-  no-replace rename (link fallback), leftover `.master.key-*` names removed.
+  no-replace rename (link fallback) under the SQLite writer lock, which is
+  also held while leftover `.master.key-*` names are removed.
 - Windows (v0.1): the key lives in Credential Manager or `ADDN_MASTER_KEY`;
   `--key-file` and file-backed vaults are refused. The data dir must be
   inside `%USERPROFILE%` and relies on the profile's inherited ACLs. Private

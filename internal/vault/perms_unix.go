@@ -211,6 +211,7 @@ func (h *homeDir) linkNoReplace(oldName, newName string) error {
 }
 
 // removeKeyTemps drops temporary key names an interrupted publication left, keeping anything not ours.
+// Callers hold the writer lock, so no publication is in flight.
 func (h *homeDir) removeKeyTemps() error {
 	dir, err := unix.Openat(h.fd, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
