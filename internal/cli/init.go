@@ -44,6 +44,7 @@ var vaultErrorCodes = []struct {
 	{vault.ErrInsecureHome, "insecure-home"},
 	{vault.ErrSchemaTooNew, "schema-too-new"},
 	{vault.ErrNotInitialized, "not-initialized"},
+	{vault.ErrRelativePath, "relative-path"},
 }
 
 // vaultError maps known setup problems to exit 2; anything else is a failure of addn itself.

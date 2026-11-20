@@ -2,6 +2,7 @@ package vault
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -41,11 +42,14 @@ func (e Env) withDefaults() Env {
 
 const appDir = "addition"
 
+// ErrRelativePath rejects a relative data-dir base, which would make the vault depend on the working directory.
+var ErrRelativePath = errors.New("the data dir must be an absolute path")
+
 // ResolveHome returns the absolute data dir: $ADDN_HOME, else the platform's user data dir.
 func ResolveHome(env Env) (string, error) {
 	env = env.withDefaults()
 	if home := env.getenv("ADDN_HOME"); home != "" {
-		return filepath.Abs(home)
+		return absoluteBase("ADDN_HOME", home)
 	}
 	switch env.GOOS {
 	case "windows":
@@ -53,23 +57,37 @@ func ResolveHome(env Env) (string, error) {
 		if base == "" {
 			return "", errors.New("cannot locate the data dir: set ADDN_HOME or LOCALAPPDATA")
 		}
-		return filepath.Join(base, appDir), nil
+		return joinBase("LOCALAPPDATA", base, appDir)
 	case "darwin":
 		home, err := userHome(env)
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(home, "Library", "Application Support", appDir), nil
+		return joinBase("HOME", home, "Library", "Application Support", appDir)
 	default:
-		if xdg := env.getenv("XDG_DATA_HOME"); filepath.IsAbs(xdg) {
-			return filepath.Join(xdg, appDir), nil
+		if xdg := env.getenv("XDG_DATA_HOME"); xdg != "" {
+			return joinBase("XDG_DATA_HOME", xdg, appDir)
 		}
 		home, err := userHome(env)
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(home, ".local", "share", appDir), nil
+		return joinBase("HOME", home, ".local", "share", appDir)
 	}
+}
+
+func joinBase(name, base string, elem ...string) (string, error) {
+	if _, err := absoluteBase(name, base); err != nil {
+		return "", err
+	}
+	return filepath.Join(append([]string{base}, elem...)...), nil
+}
+
+func absoluteBase(name, base string) (string, error) {
+	if !filepath.IsAbs(base) {
+		return "", fmt.Errorf("%w: %s is %q; set it to an absolute path", ErrRelativePath, name, base)
+	}
+	return filepath.Clean(base), nil
 }
 
 func userHome(env Env) (string, error) {
