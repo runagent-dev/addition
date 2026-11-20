@@ -3,7 +3,7 @@ package cli
 // Exit codes are part of the agent-facing contract (docs/cli-plan.md §2.5).
 const (
 	ExitOK             = 0
-	ExitOutput         = 1
+	ExitInternal       = 1
 	ExitUsage          = 2
 	ExitNeedsConnect   = 3
 	ExitUpstreamClient = 4

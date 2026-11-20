@@ -28,7 +28,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	err := root.Execute()
 	if out.err != nil {
-		err = &Error{Code: "output", Message: "writing output: " + out.err.Error(), Exit: ExitOutput}
+		err = &Error{Code: "output", Message: "writing output: " + out.err.Error(), Exit: ExitInternal}
 	}
 	if err != nil {
 		failure := asError(err)

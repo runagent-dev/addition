@@ -145,7 +145,7 @@ addn tools [--provider p] [--json]            addn skill install [--harness …]
 - Tool commands are **generated at runtime** from embedded toolkit YAML;
   `snake_case` ids become `kebab-case` commands, params become flags.
 - `-a` is optional when a provider has exactly one account or a default is set.
-- Exit codes: `0` ok · `1` output (stdout not writable) · `2` usage/validation ·
+- Exit codes: `0` ok · `1` internal (addn itself failed: stdout not writable, broken embedded data) · `2` usage/validation ·
   `3` not connected / needs reauth · `4` upstream 4xx · `5` upstream 5xx/network ·
   `6` policy denied (Phase 2).
 - Help text is human-readable; JSON is the contract for tool and data commands.

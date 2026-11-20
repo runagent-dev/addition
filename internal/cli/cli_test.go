@@ -84,10 +84,10 @@ func TestUsageErrorsUseEnvelopeAndExitCode(t *testing.T) {
 
 func TestExitCodesMatchThePlan(t *testing.T) {
 	want := map[string]int{
-		"ok": 0, "output": 1, "usage": 2, "needs-connect": 3, "upstream-4xx": 4, "upstream-5xx": 5, "policy-denied": 6,
+		"ok": 0, "internal": 1, "usage": 2, "needs-connect": 3, "upstream-4xx": 4, "upstream-5xx": 5, "policy-denied": 6,
 	}
 	got := map[string]int{
-		"ok": ExitOK, "output": ExitOutput, "usage": ExitUsage, "needs-connect": ExitNeedsConnect,
+		"ok": ExitOK, "internal": ExitInternal, "usage": ExitUsage, "needs-connect": ExitNeedsConnect,
 		"upstream-4xx": ExitUpstreamClient, "upstream-5xx": ExitUpstreamServer, "policy-denied": ExitPolicyDenied,
 	}
 	for name, code := range want {
@@ -153,8 +153,8 @@ func TestStdoutWriteFailureIsAnOutputError(t *testing.T) {
 		var stderr bytes.Buffer
 		code := Run(args, brokenWriter{}, &stderr)
 
-		if code != ExitOutput {
-			t.Errorf("%v: exit code = %d, want %d", args, code, ExitOutput)
+		if code != ExitInternal {
+			t.Errorf("%v: exit code = %d, want %d", args, code, ExitInternal)
 		}
 		if env := decodeError(t, stderr.String()); env.Error.Code != "output" {
 			t.Errorf("%v: error.code = %q, want output", args, env.Error.Code)

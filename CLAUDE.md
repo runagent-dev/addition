@@ -126,7 +126,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
 10. **Token extraction is data:** `oauth2.token_response_mapping` dot-paths, else the standard OAuth2 layout. Adapters may reject error shapes but never extract tokens.
 11. **Audit log:** connect / refresh / revoke / tool-call events write a row; never token values.
-12. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` output · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
+12. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
 
 ---
 
