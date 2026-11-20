@@ -87,8 +87,17 @@ func TestWindowsRejectsAProfileLinkThatLeavesIt(t *testing.T) {
 		t.Skipf("cannot create a symlink here: %v", err)
 	}
 
-	_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{})
-	if !errors.Is(err, vault.ErrInsecureHome) {
-		t.Fatalf("err = %v, want ErrInsecureHome", err)
+	for _, child := range []string{"", "new-vault"} {
+		t.Run("child "+child, func(t *testing.T) {
+			f.set("ADDN_HOME", filepath.Join(f.home, child))
+
+			_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{})
+			if !errors.Is(err, vault.ErrInsecureHome) {
+				t.Fatalf("err = %v, want ErrInsecureHome", err)
+			}
+			if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+				t.Errorf("rejection created %v outside the profile", entries)
+			}
+		})
 	}
 }

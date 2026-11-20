@@ -22,21 +22,14 @@ func bothErrors(t *testing.T, f *fakeEnv) map[string]error {
 }
 
 func TestRejectsAHomeUnderAnAncestorOthersCanWrite(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root owns every directory, so the ownership rules cannot be exercised")
-	}
 	for _, mode := range []os.FileMode{0o777, 0o775, 0o757, os.ModeSticky | 0o777} {
 		t.Run(mode.String(), func(t *testing.T) {
+			if mode&os.ModeSticky != 0 && os.Geteuid() == 0 {
+				t.Skip("as root the sticky dir is root-owned, which the rule allows; this case needs a non-root owner")
+			}
 			f := newFakeEnv(t)
-			shared := filepath.Join(privateTempDir(t), "shared")
-			if err := os.Mkdir(shared, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(shared, mode); err != nil {
-				t.Fatal(err)
-			}
+			shared := groupWritableHome(t, f, mode, accountFixture{groupMembers: "bob"})
 			home := filepath.Join(shared, "home")
-			f.set("ADDN_HOME", home)
 
 			for op, err := range bothErrors(t, f) {
 				if !errors.Is(err, vault.ErrInsecureHome) || !strings.Contains(err.Error(), shared) {
@@ -102,9 +95,6 @@ func TestResolvesAHomeBehindASymlink(t *testing.T) {
 }
 
 func TestValidatesTheAncestorsOfASymlinkTarget(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root owns every directory, so the ownership rules cannot be exercised")
-	}
 	f := newFakeEnv(t)
 	shared := filepath.Join(privateTempDir(t), "shared")
 	if err := os.MkdirAll(filepath.Join(shared, "home"), 0o700); err != nil {

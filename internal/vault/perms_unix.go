@@ -168,6 +168,9 @@ func (h *homeDir) openKeyFile() (*os.File, error) {
 	return f, nil
 }
 
+// beforeKeyPublish lets tests hold a written key file just before it is published.
+var beforeKeyPublish = func() {}
+
 const keyTempPrefix = "." + keyFileName + "-"
 
 // writeKeyFile publishes a complete, synced key file under its final name, never replacing one.
@@ -192,6 +195,7 @@ func (h *homeDir) writeKeyFile(content string) error {
 	if err != nil {
 		return fmt.Errorf("write key file: %w", err)
 	}
+	beforeKeyPublish()
 	if err := h.renameNoReplace(tmp, keyFileName); err != nil {
 		return fmt.Errorf("publish key file: %w", &fs.PathError{Op: "rename", Path: h.join(keyFileName), Err: err})
 	}

@@ -87,8 +87,12 @@ func openDB(ctx context.Context, home string) (*sql.DB, error) {
 	return db, nil
 }
 
+// beforeWriterLock lets tests act just before a process waits for the SQLite writer lock.
+var beforeWriterLock = func() {}
+
 // migrate applies pending migrations forward-only, inside one immediate transaction.
 func migrate(ctx context.Context, db *sql.DB) error {
+	beforeWriterLock()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("open vault database: %w", err)
