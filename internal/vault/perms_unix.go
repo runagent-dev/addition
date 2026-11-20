@@ -92,9 +92,17 @@ func checkAncestor(dir string) error {
 	if !rootOwned && int(st.Uid) != os.Geteuid() {
 		return fmt.Errorf("%w: %s is owned by another user, who could replace the data dir", ErrInsecureHome, dir)
 	}
-	stickyRoot := rootOwned && st.Mode&unix.S_ISVTX != 0
-	if st.Mode&0o022 != 0 && !stickyRoot {
+	if st.Mode&0o022 == 0 || rootOwned && st.Mode&unix.S_ISVTX != 0 {
+		return nil
+	}
+	if st.Mode&0o002 != 0 {
 		return fmt.Errorf("%w: %s is writable by other users, who could replace the data dir; move ADDN_HOME or run chmod go-w %s", ErrInsecureHome, dir, dir)
+	}
+	if int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%w: %s is writable by its group, whose members could replace the data dir; move ADDN_HOME or run chmod g-w %s", ErrInsecureHome, dir, dir)
+	}
+	if err := accounts.checkPrivateGroup(st.Gid); err != nil {
+		return fmt.Errorf("%w: %s is writable by its group (gid %d), which is allowed only for your user private group, and %v; move ADDN_HOME or run chmod g-w %s", ErrInsecureHome, dir, st.Gid, err, dir)
 	}
 	return nil
 }

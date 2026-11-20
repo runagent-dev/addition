@@ -119,7 +119,11 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   `XDG_DATA_HOME` or `HOME` is a usage error) and is resolved to a
   symlink-free path before use. Every ancestor from `/` must be owned by root
   or the user and not group- or world-writable, except a root-owned sticky
-  dir such as `/tmp` (OpenSSH StrictModes). The dir itself must be the user's
+  dir such as `/tmp` (OpenSSH StrictModes). A user-owned ancestor may be
+  group-writable (never world-writable) when its group is the user's private
+  group: their primary gid, named after them, with no other member in
+  `/etc/group` or `/etc/passwd`; if that cannot be read or verified (e.g.
+  NSS-only accounts), addn refuses. The dir itself must be the user's
   and 0700; the DB, any `-wal`/`-shm`/`-journal` and the key file must be
   regular, the user's and 0600 or stricter. Otherwise addn refuses with
   `insecure-home`. SQLite opens the resolved path; key-file reads and writes
