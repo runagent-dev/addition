@@ -96,10 +96,12 @@ func readRawProviders(fsys fs.FS) (map[string]*rawProvider, error) {
 			return nil, fmt.Errorf("%s: duplicate provider id %q (also in %s)", file, id, prev.file)
 		}
 		raw := &rawProvider{file: file, fields: fields}
-		if v, ok := fields["extends"]; ok {
-			if raw.extends, _ = v.(string); raw.extends == "" {
-				return nil, fmt.Errorf("%s: provider %q: 'extends' must be a non-empty provider id", file, id)
+		if v := fields["extends"]; v != nil {
+			parent, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s: provider %q: 'extends' must be a provider id", file, id)
 			}
+			raw.extends = parent
 		}
 		raws[id] = raw
 	}

@@ -3,6 +3,7 @@ package catalog
 import (
 	"fmt"
 	"io/fs"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -57,33 +58,12 @@ func (t Tool) CLIName() string {
 }
 
 type Param struct {
-	Name        string
-	Type        string
-	Required    bool
-	Default     any
-	Enum        []any
-	Description string
-
-	requiredDeclared bool
-}
-
-func (p *Param) UnmarshalYAML(node *yaml.Node) error {
-	var raw struct {
-		Name        string `yaml:"name"`
-		Type        string `yaml:"type"`
-		Required    *bool  `yaml:"required"`
-		Default     any    `yaml:"default"`
-		Enum        []any  `yaml:"enum"`
-		Description string `yaml:"description"`
-	}
-	if err := node.Decode(&raw); err != nil {
-		return err
-	}
-	*p = Param{
-		Name: raw.Name, Type: raw.Type, Default: raw.Default, Enum: raw.Enum, Description: raw.Description,
-		Required: raw.Required != nil && *raw.Required, requiredDeclared: raw.Required != nil,
-	}
-	return nil
+	Name        string `yaml:"name"`
+	Type        string `yaml:"type"`
+	Required    bool   `yaml:"required"`
+	Default     any    `yaml:"default"`
+	Enum        []any  `yaml:"enum"`
+	Description string `yaml:"description"`
 }
 
 type Pagination struct {
@@ -106,11 +86,11 @@ func loadToolkits(fsys fs.FS, providers map[string]*Provider) (map[string]*Toolk
 	fileOf := map[string]string{}
 	commandOwner := map[string]string{}
 	for _, file := range files {
-		var tk Toolkit
-		if err := decodeFile(fsys, file, &tk); err != nil {
-			return nil, err
+		tk, err := decodeToolkit(fsys, file)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", file, err)
 		}
-		if err := validateToolkit(&tk, providers); err != nil {
+		if err := validateToolkit(tk, providers); err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		if prev, dup := fileOf[tk.Provider]; dup {
@@ -119,11 +99,34 @@ func loadToolkits(fsys fs.FS, providers map[string]*Provider) (map[string]*Toolk
 		if owner, taken := commandOwner[tk.Command]; taken {
 			return nil, fmt.Errorf("%s: command %q is already used by the %s toolkit", file, tk.Command, owner)
 		}
-		toolkits[tk.Provider] = &tk
+		toolkits[tk.Provider] = tk
 		fileOf[tk.Provider] = file
 		commandOwner[tk.Command] = tk.Provider
 	}
 	return toolkits, nil
+}
+
+// decodeToolkit checks the YAML against toolkitShape before decoding, so typos and wrong types fail loudly.
+func decodeToolkit(fsys fs.FS, file string) (*Toolkit, error) {
+	data, err := fs.ReadFile(fsys, file)
+	if err != nil {
+		return nil, err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return nil, fmt.Errorf("empty toolkit file")
+	}
+	if err := toolkitShape.check(doc.Content[0], nil, "toolkit"); err != nil {
+		return nil, err
+	}
+	var tk Toolkit
+	if err := doc.Content[0].Decode(&tk); err != nil {
+		return nil, err
+	}
+	return &tk, nil
 }
 
 func validateToolkit(tk *Toolkit, providers map[string]*Provider) error {
@@ -146,16 +149,19 @@ func validateToolkit(tk *Toolkit, providers map[string]*Provider) error {
 		return fmt.Errorf("'tools' must be a list")
 	}
 
-	seen := map[string]bool{}
+	idOf := map[string]string{}
 	for i := range tk.Tools {
 		tool := &tk.Tools[i]
 		if tool.ID == "" {
 			return fmt.Errorf("tool #%d: missing required field 'id'", i+1)
 		}
-		if seen[tool.ID] {
-			return fmt.Errorf("tool %q: duplicate tool id", tool.ID)
+		if other, taken := idOf[tool.CLIName()]; taken {
+			if other == tool.ID {
+				return fmt.Errorf("tool %q: duplicate tool id", tool.ID)
+			}
+			return fmt.Errorf("tool %q: command name %q is already used by tool %q", tool.ID, tool.CLIName(), other)
 		}
-		seen[tool.ID] = true
+		idOf[tool.CLIName()] = tool.ID
 		if err := validateTool(tool); err != nil {
 			return fmt.Errorf("tool %q: %w", tool.ID, err)
 		}
@@ -186,17 +192,19 @@ func validateTool(tool *Tool) error {
 		}
 	}
 
-	declared := map[string]bool{}
-	for _, p := range tool.Params {
+	declared := map[string]*Param{}
+	for i := range tool.Params {
+		p := &tool.Params[i]
 		if err := validateParam(p); err != nil {
 			return err
 		}
-		declared[p.Name] = true
-	}
-	for _, m := range placeholderRE.FindAllStringSubmatch(tool.Path, -1) {
-		if !declared[m[1]] {
-			return fmt.Errorf("path placeholder {%s} is not declared as a param", m[1])
+		if declared[p.Name] != nil {
+			return fmt.Errorf("param %q: duplicate param name", p.Name)
 		}
+		declared[p.Name] = p
+	}
+	if err := validatePlaceholders(tool.Path, declared); err != nil {
+		return err
 	}
 
 	if p := tool.Pagination; p != nil {
@@ -213,7 +221,23 @@ func validateTool(tool *Tool) error {
 	return nil
 }
 
-func validateParam(p Param) error {
+func validatePlaceholders(path string, declared map[string]*Param) error {
+	if strings.ContainsAny(placeholderRE.ReplaceAllString(path, ""), "{}") {
+		return fmt.Errorf("path %q has unbalanced '{' or '}'", path)
+	}
+	for _, m := range placeholderRE.FindAllStringSubmatch(path, -1) {
+		p := declared[m[1]]
+		if p == nil {
+			return fmt.Errorf("path placeholder {%s} is not declared as a param", m[1])
+		}
+		if !p.Required && p.Default == nil {
+			return fmt.Errorf("path placeholder {%s} must be a required param or have a default", m[1])
+		}
+	}
+	return nil
+}
+
+func validateParam(p *Param) error {
 	if p.Name == "" {
 		return fmt.Errorf("param without a 'name'")
 	}
@@ -223,28 +247,40 @@ func validateParam(p Param) error {
 	if !slices.Contains(paramTypes, p.Type) {
 		return fail("type %q must be one of %s", p.Type, strings.Join(paramTypes, ", "))
 	}
-	if !p.requiredDeclared {
-		return fail("'required' must be set to true or false")
-	}
 	if p.Description == "" {
 		return fail("missing required field 'description'")
 	}
 	if p.Enum == nil {
 		return nil
 	}
-	var matchesType func(any) bool
+	var normalize func(any) (any, bool)
 	switch p.Type {
 	case "string":
-		matchesType = func(v any) bool { _, ok := v.(string); return ok }
+		normalize = func(v any) (any, bool) { _, ok := v.(string); return v, ok }
 	case "integer":
-		matchesType = func(v any) bool { _, ok := v.(int); return ok }
+		normalize = asInteger
 	default:
 		return fail("'enum' is only allowed on string or integer params, not %s", p.Type)
 	}
-	for _, v := range p.Enum {
-		if !matchesType(v) {
+	for i, v := range p.Enum {
+		n, ok := normalize(v)
+		if !ok {
 			return fail("enum value %#v is not a %s", v, p.Type)
 		}
+		p.Enum[i] = n
 	}
 	return nil
+}
+
+// asInteger accepts integral floats such as 1.0 and 2e0, matching the SDK's Number.isInteger.
+func asInteger(v any) (any, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		if n == math.Trunc(n) && math.Abs(n) <= 1<<53 {
+			return int(n), true
+		}
+	}
+	return nil, false
 }

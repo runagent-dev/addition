@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 )
@@ -43,6 +45,9 @@ func newToolsCmd() *cobra.Command {
 					})
 				}
 			}
+			slices.SortFunc(rows, func(a, b toolListing) int {
+				return cmp.Or(cmp.Compare(a.Provider, b.Provider), cmp.Compare(a.Tool, b.Tool))
+			})
 			return writeJSON(cmd.OutOrStdout(), rows)
 		},
 	}
