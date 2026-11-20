@@ -92,7 +92,7 @@ From the market research (Nov 2026):
 | `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
 | `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), granted scopes, status |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
-| `audit_log` | connect / refresh / revoke / tool-call events; never token values |
+| `audit_log` | connect / refresh / revoke / tool-call events by account id and provider id; never token values or aliases |
 
 The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
@@ -115,9 +115,20 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 - Vault secrets are sealed with versioned AAD naming the vault ID, table, row
   and column, so a blob copied to another account or column fails to decrypt.
   The nil-AAD helpers stay for SDK interop and the fixture.
-- The data dir must be owned by the user and 0700, and the DB and key file
-  0600, before either is opened; otherwise addn refuses. Windows relies on the
-  per-user profile's ACLs.
+- Safe path (Unix): the data dir must be absolute (relative `ADDN_HOME`,
+  `XDG_DATA_HOME` or `HOME` is a usage error) and is resolved to a
+  symlink-free path before use. Every ancestor from `/` must be owned by root
+  or the user and not group- or world-writable, except a root-owned sticky
+  dir such as `/tmp` (OpenSSH StrictModes). The dir itself must be the user's
+  and 0700; the DB, any `-wal`/`-shm`/`-journal` and the key file must be
+  regular, the user's and 0600 or stricter. Otherwise addn refuses with
+  `insecure-home`. SQLite opens the resolved path; key-file reads and writes
+  go through one directory fd, and the key is published with an atomic
+  no-replace rename (link fallback), leftover `.master.key-*` names removed.
+- Windows (v0.1): the key lives in Credential Manager or `ADDN_MASTER_KEY`;
+  `--key-file` and file-backed vaults are refused. The data dir must be
+  inside `%USERPROFILE%` and relies on the profile's inherited ACLs. Private
+  DACLs, and with them key files, are a follow-up.
 
 ### 2.3 OAuth on any machine
 
