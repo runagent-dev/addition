@@ -19,6 +19,7 @@ var (
 	ErrWrongMasterKey      = errors.New("the master key does not match this vault")
 	ErrInsecureKeyFile     = errors.New("the key file is not a private regular file")
 	ErrInsecureHome        = errors.New("the data dir is not private to this user")
+	ErrKeyFileUnsupported  = errors.New("key files are not supported on Windows yet; use the Windows Credential Manager (the default keychain source) or set ADDN_MASTER_KEY")
 	ErrSchemaTooNew        = errors.New("the vault was written by a newer addn")
 	ErrCorrupt             = errors.New("the vault database is corrupt")
 	ErrNotFound            = errors.New("not found")
@@ -41,6 +42,9 @@ type InitResult struct {
 // Init creates the vault, or verifies an existing one; it never replaces a key.
 func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	env = env.withDefaults()
+	if opts.KeyFile && env.GOOS == "windows" {
+		return InitResult{}, ErrKeyFileUnsupported
+	}
 	home, err := openHome(env, true)
 	if err != nil {
 		return InitResult{}, err

@@ -47,6 +47,9 @@ func resolveKey(env Env, home *homeDir, rec initRecords) (crypto.Key, error) {
 	case KeySourceKeychain:
 		return keychainKey(rec.vaultID)
 	case KeySourceFile:
+		if env.GOOS == "windows" {
+			return crypto.Key{}, ErrKeyFileUnsupported
+		}
 		key, err := readKeyFile(home)
 		if errors.Is(err, fs.ErrNotExist) {
 			return crypto.Key{}, fmt.Errorf("%w: key file %s is missing; restore it or set %s", ErrNoMasterKey, home.join(keyFileName), envMasterKey)

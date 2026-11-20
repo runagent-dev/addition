@@ -28,6 +28,9 @@ func openHome(env Env, create bool) (*homeDir, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkInsideProfile(env, home); err != nil {
+		return nil, err
+	}
 	if create {
 		if err := os.MkdirAll(home, 0o700); err != nil {
 			return nil, fmt.Errorf("create data dir: %w", err)
@@ -39,6 +42,9 @@ func openHome(env Env, create bool) (*homeDir, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve data dir: %w", err)
+	}
+	if err := checkInsideProfile(env, resolved); err != nil {
+		return nil, err
 	}
 	if err := checkAncestors(resolved); err != nil {
 		return nil, err

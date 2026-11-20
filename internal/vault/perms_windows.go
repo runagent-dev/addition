@@ -10,12 +10,15 @@ import (
 	"path/filepath"
 )
 
-// homeDir is the data dir, which on Windows relies on the user profile's inherited ACLs.
+// homeDir is the data dir, which on Windows must sit in the user profile and rely on its inherited ACLs.
 type homeDir struct{ path string }
 
 func openHome(env Env, create bool) (*homeDir, error) {
 	home, err := ResolveHome(env)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkInsideProfile(env, home); err != nil {
 		return nil, err
 	}
 	if create {
@@ -29,6 +32,9 @@ func openHome(env Env, create bool) (*homeDir, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve data dir: %w", err)
+	}
+	if err := checkInsideProfile(env, resolved); err != nil {
+		return nil, err
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
@@ -59,24 +65,8 @@ func (h *homeDir) createPrivateFile(name string) (*os.File, error) {
 	return os.OpenFile(h.join(name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 }
 
-func (h *homeDir) openKeyFile() (*os.File, error) {
-	path := h.join(keyFileName)
-	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: %s is not a regular file", ErrInsecureKeyFile, path)
-	}
-	return os.Open(path)
-}
+func (h *homeDir) openKeyFile() (*os.File, error) { return nil, ErrKeyFileUnsupported }
 
-func (h *homeDir) writeKeyFile(content string) error {
-	f, err := h.createPrivateFile(keyFileName)
-	if err != nil {
-		return fmt.Errorf("create key file: %w", err)
-	}
-	_, err = f.WriteString(content)
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	return err
-}
+func (h *homeDir) writeKeyFile(string) error { return ErrKeyFileUnsupported }
 
 func (h *homeDir) removeKeyTemps() error { return nil }

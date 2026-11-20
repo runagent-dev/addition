@@ -28,7 +28,7 @@ func newInitCmd() *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), res)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.KeyFile, "key-file", false, "keep the master key in a 0600 file instead of the OS keychain")
+	cmd.Flags().BoolVar(&opts.KeyFile, "key-file", false, "keep the master key in a 0600 file instead of the OS keychain (not on Windows)")
 	return cmd
 }
 
@@ -42,6 +42,7 @@ var vaultErrorCodes = []struct {
 	{crypto.ErrInvalidKey, "invalid-master-key"},
 	{vault.ErrInsecureKeyFile, "insecure-key-file"},
 	{vault.ErrInsecureHome, "insecure-home"},
+	{vault.ErrKeyFileUnsupported, "key-file-unsupported"},
 	{vault.ErrSchemaTooNew, "schema-too-new"},
 	{vault.ErrNotInitialized, "not-initialized"},
 	{vault.ErrRelativePath, "relative-path"},

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -88,6 +89,30 @@ func absoluteBase(name, base string) (string, error) {
 		return "", fmt.Errorf("%w: %s is %q; set it to an absolute path", ErrRelativePath, name, base)
 	}
 	return filepath.Clean(base), nil
+}
+
+// checkInsideProfile keeps a Windows home under %USERPROFILE%, whose ACLs are the only protection in v0.1.
+func checkInsideProfile(env Env, home string) error {
+	if env.GOOS != "windows" {
+		return nil
+	}
+	profile := env.getenv("USERPROFILE")
+	if !filepath.IsAbs(profile) {
+		return fmt.Errorf("%w: USERPROFILE is not an absolute path, so %s cannot be checked", ErrInsecureHome, home)
+	}
+	resolvedProfile, err := filepath.EvalSymlinks(profile)
+	if err != nil {
+		resolvedProfile = profile
+	}
+	if !isWithin(profile, home) && !isWithin(resolvedProfile, home) {
+		return fmt.Errorf("%w: %s is outside USERPROFILE (%s); on Windows ADDN_HOME must be inside your profile", ErrInsecureHome, home, profile)
+	}
+	return nil
+}
+
+func isWithin(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func userHome(env Env) (string, error) {
