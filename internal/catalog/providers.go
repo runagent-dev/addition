@@ -84,9 +84,13 @@ func readRawProviders(fsys fs.FS) (map[string]*rawProvider, error) {
 	}
 	raws := map[string]*rawProvider{}
 	for _, file := range files {
-		var fields map[string]any
-		if err := decodeFile(fsys, file, &fields); err != nil {
+		doc, err := decodeDocument(fsys, file)
+		if err != nil {
 			return nil, err
+		}
+		var fields map[string]any
+		if err := doc.Decode(&fields); err != nil {
+			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		id, _ := fields["id"].(string)
 		if id == "" {

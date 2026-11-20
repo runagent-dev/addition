@@ -8,8 +8,6 @@ import (
 	"path"
 	"slices"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Catalog is the validated set of providers and the toolkits built on them.
@@ -97,15 +95,4 @@ func yamlFiles(fsys fs.FS, dir string) ([]string, error) {
 		files = append(files, path.Join(dir, name))
 	}
 	return files, nil
-}
-
-func decodeFile(fsys fs.FS, file string, out any) error {
-	data, err := fs.ReadFile(fsys, file)
-	if err != nil {
-		return err
-	}
-	if err := yaml.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("%s: %w", file, err)
-	}
-	return nil
 }

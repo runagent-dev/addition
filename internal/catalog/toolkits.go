@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Effect says what a tool does to the account; policies key off it.
@@ -25,7 +23,7 @@ var (
 	paramTypes    = []string{"string", "integer", "boolean", "string[]", "object"}
 	operationRE   = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE) (/\S*)$`)
 	placeholderRE = regexp.MustCompile(`\{([^{}]*)\}`)
-	commandRE     = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	commandRE     = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
 )
 
 // Toolkit is the curated tool set for one provider.
@@ -88,7 +86,7 @@ func loadToolkits(fsys fs.FS, providers map[string]*Provider) (map[string]*Toolk
 	for _, file := range files {
 		tk, err := decodeToolkit(fsys, file)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", file, err)
+			return nil, err
 		}
 		if err := validateToolkit(tk, providers); err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
@@ -108,23 +106,16 @@ func loadToolkits(fsys fs.FS, providers map[string]*Provider) (map[string]*Toolk
 
 // decodeToolkit checks the YAML against toolkitShape before decoding, so typos and wrong types fail loudly.
 func decodeToolkit(fsys fs.FS, file string) (*Toolkit, error) {
-	data, err := fs.ReadFile(fsys, file)
+	doc, err := decodeDocument(fsys, file)
 	if err != nil {
 		return nil, err
 	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, err
-	}
-	if len(doc.Content) == 0 {
-		return nil, fmt.Errorf("empty toolkit file")
-	}
-	if err := toolkitShape.check(doc.Content[0], nil, "toolkit"); err != nil {
-		return nil, err
+	if err := toolkitShape.check(doc, nil, "toolkit"); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	var tk Toolkit
-	if err := doc.Content[0].Decode(&tk); err != nil {
-		return nil, err
+	if err := doc.Decode(&tk); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
 	}
 	return &tk, nil
 }
@@ -143,7 +134,7 @@ func validateToolkit(tk *Toolkit, providers map[string]*Provider) error {
 		tk.Command = tk.Provider
 	}
 	if !commandRE.MatchString(tk.Command) {
-		return fmt.Errorf("command %q must be lowercase letters, digits and dashes", tk.Command)
+		return fmt.Errorf("command %q must be lowercase letters and digits in dash-separated words", tk.Command)
 	}
 	if tk.Tools == nil {
 		return fmt.Errorf("'tools' must be a list")
@@ -154,6 +145,9 @@ func validateToolkit(tk *Toolkit, providers map[string]*Provider) error {
 		tool := &tk.Tools[i]
 		if tool.ID == "" {
 			return fmt.Errorf("tool #%d: missing required field 'id'", i+1)
+		}
+		if !commandRE.MatchString(tool.CLIName()) {
+			return fmt.Errorf("tool %q: command name %q must be lowercase letters and digits in dash-separated words", tool.ID, tool.CLIName())
 		}
 		if other, taken := idOf[tool.CLIName()]; taken {
 			if other == tool.ID {
@@ -230,8 +224,8 @@ func validatePlaceholders(path string, declared map[string]*Param) error {
 		if p == nil {
 			return fmt.Errorf("path placeholder {%s} is not declared as a param", m[1])
 		}
-		if !p.Required && p.Default == nil {
-			return fmt.Errorf("path placeholder {%s} must be a required param or have a default", m[1])
+		if !p.Required && (p.Default == nil || p.Default == "") {
+			return fmt.Errorf("path placeholder {%s} must be a required param or have a non-empty default", m[1])
 		}
 	}
 	return nil

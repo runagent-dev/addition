@@ -60,7 +60,7 @@ var (
 		}},
 		"response": {kind: kindObject, nullable: true, fields: map[string]shape{
 			"type":   optionalString,
-			"fields": {kind: kindStringMap},
+			"fields": {kind: kindStringMap, nullable: true},
 		}},
 	}}
 
