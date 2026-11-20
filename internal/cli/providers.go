@@ -10,13 +10,13 @@ type providerListing struct {
 	IdentityRoot string  `json:"identity_root"`
 }
 
-func newProvidersCmd() *cobra.Command {
+func newProvidersCmd(d deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "providers",
 		Short: "List known providers as JSON",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := loadCatalog()
+			c, err := d.loadCatalog()
 			if err != nil {
 				return err
 			}

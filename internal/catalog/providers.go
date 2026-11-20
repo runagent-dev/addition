@@ -36,6 +36,13 @@ type OAuth2 struct {
 	TokenResponseFormat  string                `yaml:"token_response_format"`
 	ClientAuthMethod     string                `yaml:"client_auth_method"`
 	TokenResponseMapping *TokenResponseMapping `yaml:"token_response_mapping"`
+	Identity             *Identity             `yaml:"identity"`
+}
+
+// Identity names the endpoint that tells who an access token belongs to, and the dot-path to read.
+type Identity struct {
+	URL   string `yaml:"url"`
+	Field string `yaml:"field"`
 }
 
 // TokenResponseMapping holds dot-paths into a non-standard token response.

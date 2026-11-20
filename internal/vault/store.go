@@ -170,7 +170,8 @@ var (
 	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 )
 
-func validateAccountName(provider, alias string) error {
+// ValidateAccountName checks a provider id and alias before anything is stored under them.
+func ValidateAccountName(provider, alias string) error {
 	if !providerIDPattern.MatchString(provider) {
 		return fmt.Errorf("%w: provider must match %s", ErrInvalidAccount, providerIDPattern)
 	}
@@ -182,7 +183,7 @@ func validateAccountName(provider, alias string) error {
 
 // CreateAccount inserts a; an empty Status becomes AccountActive.
 func (o ops) CreateAccount(ctx context.Context, a Account) (Account, error) {
-	if err := validateAccountName(a.Provider, a.Alias); err != nil {
+	if err := ValidateAccountName(a.Provider, a.Alias); err != nil {
 		return Account{}, err
 	}
 	if a.Status == "" {
@@ -244,9 +245,34 @@ func (o ops) ListAccounts(ctx context.Context, provider string) ([]Account, erro
 	return out, rows.Err()
 }
 
-// RemoveAccount deletes the account and, by cascade, its credential.
+// UpdateAccount stores a's identity, scopes and status on the account named by its provider and alias.
+func (o ops) UpdateAccount(ctx context.Context, a Account) (Account, error) {
+	scopes, err := json.Marshal(nonNil(a.Scopes))
+	if err != nil {
+		return Account{}, err
+	}
+	now := o.now().UTC()
+	res, err := o.q.ExecContext(ctx, `
+		UPDATE accounts SET identity = ?, scopes = ?, status = ?, updated_at = ?
+		WHERE provider = ? AND alias = ?`,
+		a.Identity, string(scopes), a.Status, formatTime(now), a.Provider, a.Alias)
+	if err := requireOneRow(res, err, a.Provider, a.Alias); err != nil {
+		return Account{}, err
+	}
+	return o.GetAccount(ctx, a.Provider, a.Alias)
+}
+
+// RemoveAccount deletes the account, by cascade its credential, and its default marker.
 func (o ops) RemoveAccount(ctx context.Context, provider, alias string) error {
 	res, err := o.q.ExecContext(ctx, `DELETE FROM accounts WHERE provider = ? AND alias = ?`, provider, alias)
+	if err := requireOneRow(res, err, provider, alias); err != nil {
+		return err
+	}
+	_, err = o.q.ExecContext(ctx, `DELETE FROM meta WHERE key = ? AND value = ?`, defaultAccountKey(provider), alias)
+	return err
+}
+
+func requireOneRow(res sql.Result, err error, provider, alias string) error {
 	if err != nil {
 		return err
 	}
@@ -256,6 +282,25 @@ func (o ops) RemoveAccount(ctx context.Context, provider, alias string) error {
 		return fmt.Errorf("account %s/%s: %w", provider, alias, ErrNotFound)
 	}
 	return nil
+}
+
+func defaultAccountKey(provider string) string { return "default_account:" + provider }
+
+// SetDefaultAccount makes alias the account used for provider when none is named.
+func (o ops) SetDefaultAccount(ctx context.Context, provider, alias string) error {
+	if _, err := o.GetAccount(ctx, provider, alias); err != nil {
+		return err
+	}
+	return setMeta(ctx, o.q, defaultAccountKey(provider), alias)
+}
+
+// DefaultAccount returns provider's default alias, or ErrNotFound.
+func (o ops) DefaultAccount(ctx context.Context, provider string) (string, error) {
+	alias, err := getMeta(ctx, o.q, defaultAccountKey(provider))
+	if errors.Is(err, ErrNotFound) {
+		return "", fmt.Errorf("default account for %s: %w", provider, ErrNotFound)
+	}
+	return alias, err
 }
 
 func scanAccount(row scanner) (Account, error) {

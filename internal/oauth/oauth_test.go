@@ -402,6 +402,9 @@ func TestLoopbackReceivesTheCallback(t *testing.T) {
 	if resp, err := http.Get(base + "/favicon.ico"); err != nil || resp.StatusCode != 404 {
 		t.Errorf("other path: %v %v", resp, err)
 	}
+	if resp, err := http.Get(lb.RedirectURI()); err != nil || resp.StatusCode != 400 {
+		t.Errorf("a callback without state: %v %v", resp, err)
+	}
 	resp, err := http.Get(lb.RedirectURI() + "?code=c1&state=s1")
 	if err != nil {
 		t.Fatal(err)

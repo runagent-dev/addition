@@ -29,6 +29,11 @@ oauth2:
     refresh_token: "refresh_token"
     expires_in: "expires_in"
 
+  # Optional. After connecting, GET url with the new token and store the value at field (dot-path).
+  identity:
+    url: ""
+    field: ""
+
 api:
   base_url: ""
   auth_header: "Authorization"

@@ -92,6 +92,7 @@ From the market research (Nov 2026):
 | `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
 | `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), granted scopes, status |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
+| `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, redirect URI, expiry |
 | `audit_log` | connect / refresh / revoke / tool-call events by account id and provider id; never token values or aliases |
 
 The `user_id` multi-tenancy column from the SDK becomes the account alias.
@@ -141,10 +142,21 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
 - **Default:** RFC 8252 loopback redirect on `127.0.0.1:<random port>`, PKCE S256,
   `state` validated and discarded.
-- **Headless / SSH:** `addn connect … --no-browser` prints the authorize URL. The
-  user opens it on any device, approves, and pastes back the URL the browser
-  landed on (the localhost page fails to load; the URL in the address bar still
-  carries `code` + `state`). No port forwarding needed.
+- **Headless / SSH, in two steps:** `addn connect … --no-browser` stores a pending
+  authorization in the vault (state, sealed PKCE verifier, alias, scopes, redirect
+  URI; 10-minute expiry) and prints `{authorize_url, expires_at, next}`. The user
+  opens the URL on any device, approves, and runs `addn connect --complete '<url>'`
+  with the URL the browser landed on (the localhost page fails to load; the address
+  bar still carries `code` + `state`). `--complete` takes the pending row by `state`
+  and deletes it in one statement, so each authorization works once. No port
+  forwarding needed, and the agent never holds the flow open.
+- **Identity is data:** `oauth2.identity: {url, field}` in the provider YAML names
+  the endpoint read with the new token and the dot-path of the identity (Google:
+  OpenID `userinfo`, `email`). Reconnecting an alias as a different identity is refused.
+- **Exit codes for connect:** `2` for a bad or mismatched paste, a state mismatch,
+  an unknown, used or expired authorization, or a timeout; `3` when the account was
+  saved but some requested scopes were not granted (`scopes-not-granted`); `4` for a
+  provider refusal (`access_denied`, a 4xx on exchange); `5` for the network or a 5xx.
 - **Bring your own OAuth client** (v0.1): `addn client add google --file client_secret.json`.
   `addn doctor google` walks through the Google Cloud setup and warns about the
   7-day refresh-token expiry for apps left in "Testing".
@@ -203,7 +215,7 @@ can use the same day.
 | M0 | Repo reshape | TS/Python removed from `main`, this plan adopted, CLAUDE.md + README rewritten, Go module + cobra root with `addn version` and the JSON error envelope, CI | — |
 | M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; identity root of each provider; `effect:` tag and CLI `command:` name per toolkit; Google Drive provider + metadata toolkit; `addn providers`, `addn tools` | browse only |
 | M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
-| M3 | Connect | `addn client add/list`, loopback + paste-back OAuth, PKCE, state, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` | accounts connected |
+| M3 | Connect | `addn client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` (local status only) | accounts connected |
 | **M4** | **Raw call** | `addn call`: token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming | **✅ agents can hit any Google API** |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |

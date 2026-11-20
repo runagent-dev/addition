@@ -20,6 +20,9 @@ oauth2:
   token_params: {}
   token_response_format: "json"
   client_auth_method: "body"
+  identity:
+    url: "https://openidconnect.googleapis.com/v1/userinfo"
+    field: "email"
 
 api:
   base_url: "https://www.googleapis.com"
