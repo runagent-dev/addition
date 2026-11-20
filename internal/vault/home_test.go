@@ -1,8 +1,13 @@
 package vault_test
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 
 	"github.com/runagent-dev/addition/internal/vault"
 )
@@ -21,9 +26,6 @@ func TestResolveHome(t *testing.T) {
 		},
 		"linux XDG_DATA_HOME": {
 			"linux", map[string]string{"XDG_DATA_HOME": "/xdg", "HOME": "/home/u"}, "/xdg/addition",
-		},
-		"linux relative XDG_DATA_HOME is ignored": {
-			"linux", map[string]string{"XDG_DATA_HOME": "rel/xdg", "HOME": "/home/u"}, "/home/u/.local/share/addition",
 		},
 		"linux default": {
 			"linux", map[string]string{"HOME": "/home/u"}, "/home/u/.local/share/addition",
@@ -61,15 +63,37 @@ func TestResolveHomeFailsWithoutABase(t *testing.T) {
 	}
 }
 
-func TestResolveHomeMakesADDNHomeAbsolute(t *testing.T) {
-	env := vault.Env{GOOS: "linux", LookupEnv: func(k string) (string, bool) {
-		return "relative/home", k == "ADDN_HOME"
-	}}
-	got, err := vault.ResolveHome(env)
-	if err != nil {
-		t.Fatalf("ResolveHome: %v", err)
+func TestResolveHomeRejectsRelativeBases(t *testing.T) {
+	cases := map[string]struct {
+		goos string
+		vars map[string]string
+	}{
+		"ADDN_HOME":     {"linux", map[string]string{"ADDN_HOME": "relative/home", "HOME": "/home/u"}},
+		"XDG_DATA_HOME": {"linux", map[string]string{"XDG_DATA_HOME": "rel/xdg", "HOME": "/home/u"}},
+		"linux HOME":    {"linux", map[string]string{"HOME": "relative"}},
+		"darwin HOME":   {"darwin", map[string]string{"HOME": "relative"}},
+		"LOCALAPPDATA":  {"windows", map[string]string{"LOCALAPPDATA": "relative"}},
 	}
-	if !filepath.IsAbs(got) {
-		t.Errorf("home = %q, want an absolute path", got)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := vault.Env{GOOS: tc.goos, LookupEnv: func(k string) (string, bool) { v, ok := tc.vars[k]; return v, ok }}
+			if got, err := vault.ResolveHome(env); !errors.Is(err, vault.ErrRelativePath) {
+				t.Errorf("ResolveHome = %q, %v; want ErrRelativePath", got, err)
+			}
+		})
+	}
+}
+
+func TestInitWithARelativeHomeCreatesNothing(t *testing.T) {
+	keyring.MockInit()
+	t.Chdir(t.TempDir())
+	vars := map[string]string{"HOME": "relative"}
+	env := vault.Env{GOOS: "linux", LookupEnv: func(k string) (string, bool) { v, ok := vars[k]; return v, ok }}
+
+	if _, err := vault.Init(context.Background(), env, vault.InitOptions{KeyFile: true}); !errors.Is(err, vault.ErrRelativePath) {
+		t.Fatalf("Init err = %v, want ErrRelativePath", err)
+	}
+	if entries, _ := os.ReadDir("."); len(entries) != 0 {
+		t.Errorf("Init created %v in the working directory", entries)
 	}
 }

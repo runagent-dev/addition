@@ -260,3 +260,24 @@ func TestUnexpectedVaultFailureIsInternal(t *testing.T) {
 		t.Errorf("got exit %d code %q, want exit %d code vault", failure.Exit, failure.Code, ExitInternal)
 	}
 }
+
+func TestInitRejectsARelativeHome(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("ADDN_HOME", "")
+	_ = os.Unsetenv("ADDN_HOME")
+	_ = os.Unsetenv("XDG_DATA_HOME")
+	t.Setenv("HOME", "relative")
+	t.Chdir(t.TempDir())
+
+	r := run("init", "--key-file")
+
+	if r.code != ExitUsage {
+		t.Fatalf("exit code = %d, want %d (stderr %q)", r.code, ExitUsage, r.stderr)
+	}
+	if env := decodeError(t, r.stderr); env.Error.Code != "relative-path" {
+		t.Errorf("error.code = %q, want relative-path", env.Error.Code)
+	}
+	if entries, _ := os.ReadDir("."); len(entries) != 0 {
+		t.Errorf("init created %v in the working directory", entries)
+	}
+}
