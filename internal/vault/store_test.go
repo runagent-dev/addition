@@ -179,11 +179,15 @@ func TestCredentials(t *testing.T) {
 	}
 }
 
-type auditRow struct{ event, provider, alias, details, at string }
+type auditRow struct {
+	event, provider string
+	accountID       int64
+	details, at     string
+}
 
 func auditRows(t *testing.T, home string) []auditRow {
 	t.Helper()
-	rows, err := rawDB(t, home).Query(`SELECT event, COALESCE(provider,''), COALESCE(alias,''), details, created_at FROM audit_log WHERE event != 'init' ORDER BY id`)
+	rows, err := rawDB(t, home).Query(`SELECT event, COALESCE(provider,''), COALESCE(account_id,0), details, created_at FROM audit_log WHERE event != 'init' ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +195,7 @@ func auditRows(t *testing.T, home string) []auditRow {
 	var got []auditRow
 	for rows.Next() {
 		var r auditRow
-		if err := rows.Scan(&r.event, &r.provider, &r.alias, &r.details, &r.at); err != nil {
+		if err := rows.Scan(&r.event, &r.provider, &r.accountID, &r.details, &r.at); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, r)
@@ -218,9 +222,9 @@ func TestAudit(t *testing.T) {
 
 	got := auditRows(t, f.home)
 	want := []auditRow{
-		{"connect", "google", "work", "{}", ""},
-		{"refresh", "google", "work", `{"outcome":"needs-reauth"}`, ""},
-		{"revoke", "google", "work", "{}", ""},
+		{"connect", "google", acct.ID, "{}", ""},
+		{"refresh", "google", acct.ID, `{"outcome":"needs-reauth"}`, ""},
+		{"revoke", "google", acct.ID, "{}", ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("audit rows = %+v, want %d", got, len(want))
@@ -276,12 +280,97 @@ func TestAuditNeverPersistsCallerStrings(t *testing.T) {
 		_ = s.WithImmediateTx(ctx, func(tx *vault.Tx) error { return tx.Audit(ctx, ev) })
 	}
 
+	for _, a := range []vault.Account{{Provider: marker, Alias: "work"}, {Provider: "google", Alias: marker}} {
+		if _, err := s.CreateAccount(ctx, a); !errors.Is(err, vault.ErrInvalidAccount) {
+			t.Errorf("CreateAccount(%+v) err = %v, want ErrInvalidAccount", a, err)
+		}
+	}
+
+	if n := auditRowsContaining(t, f.home, marker); n != 0 {
+		t.Errorf("%d audit rows contain the marker", n)
+	}
+	if strings.Contains(dumpAllText(t, f.home), marker) {
+		t.Error("the marker reached the database")
+	}
+}
+
+func auditRowsContaining(t *testing.T, home, needle string) int {
+	t.Helper()
 	var n int
-	if err := rawDB(t, f.home).QueryRow(`SELECT count(*) FROM audit_log WHERE instr(event || COALESCE(provider,'') || COALESCE(alias,'') || details || created_at, ?) > 0`, marker).Scan(&n); err != nil {
+	if err := rawDB(t, home).QueryRow(`SELECT count(*) FROM audit_log WHERE instr(event || COALESCE(provider,'') || COALESCE(account_id,'') || details || created_at, ?) > 0`, needle).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Errorf("%d audit rows contain the marker", n)
+	return n
+}
+
+func TestAuditNeverStoresTheAlias(t *testing.T) {
+	const alias = "alias-canary-7"
+	ctx := context.Background()
+	s, f := newStore(t)
+	acct, err := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: alias})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
+		for _, ev := range []vault.AuditEvent{vault.ConnectEvent{AccountID: acct.ID}, vault.RevokeEvent{AccountID: acct.ID}} {
+			if err := tx.Audit(ctx, ev); err != nil {
+				return err
+			}
+		}
+		return tx.RemoveAccount(ctx, "google", alias)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := auditRows(t, f.home)
+	if len(rows) != 2 || rows[1].accountID != acct.ID || rows[1].provider != "google" {
+		t.Errorf("audit rows = %+v, want connect and revoke keyed by account %d", rows, acct.ID)
+	}
+	if n := auditRowsContaining(t, f.home, alias); n != 0 {
+		t.Errorf("%d audit rows contain the alias", n)
+	}
+}
+
+func TestCreateAccountValidatesProviderAndAlias(t *testing.T) {
+	const marker = "ya29.SYNTHETIC-TOKEN-MARKER"
+	ctx := context.Background()
+	s, f := newStore(t)
+	long := strings.Repeat("a", 65)
+
+	bad := []vault.Account{
+		{Provider: marker, Alias: "work"},
+		{Provider: "google", Alias: marker},
+		{Provider: "", Alias: "work"},
+		{Provider: "Google", Alias: "work"},
+		{Provider: "9lives", Alias: "work"},
+		{Provider: "google-", Alias: "work"},
+		{Provider: "goo--gle", Alias: "work"},
+		{Provider: "google", Alias: ""},
+		{Provider: "google", Alias: "-work"},
+		{Provider: "google", Alias: "Work"},
+		{Provider: "google", Alias: "work mail"},
+		{Provider: "google", Alias: long},
+	}
+	for _, a := range bad {
+		_, err := s.CreateAccount(ctx, a)
+		if !errors.Is(err, vault.ErrInvalidAccount) {
+			t.Errorf("CreateAccount(%q, %q) err = %v, want ErrInvalidAccount", a.Provider, a.Alias, err)
+		}
+		if err != nil && strings.Contains(err.Error(), marker) {
+			t.Errorf("error echoes the rejected value: %v", err)
+		}
+	}
+	good := []vault.Account{
+		{Provider: "google", Alias: "work"},
+		{Provider: "google-workspace", Alias: "0_personal-2"},
+		{Provider: "x1", Alias: long[:64]},
+	}
+	for _, a := range good {
+		if _, err := s.CreateAccount(ctx, a); err != nil {
+			t.Errorf("CreateAccount(%q, %q): %v", a.Provider, a.Alias, err)
+		}
 	}
 	if strings.Contains(dumpAllText(t, f.home), marker) {
 		t.Error("the marker reached the database")
