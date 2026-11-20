@@ -74,21 +74,24 @@ func accountEntry(event string, accountID int64, details map[string]string) (aud
 	return auditEntry{event: event, accountID: accountID, details: details}, nil
 }
 
-// Audit records ev. Provider and alias are copied from the accounts table so history survives removal.
+// Audit records ev. A row names its account by opaque id and provider id only, so it survives removal.
 func (o ops) Audit(ctx context.Context, ev AuditEvent) error {
 	entry, err := ev.auditEntry()
 	if err != nil {
 		return err
 	}
-	var id sql.NullInt64
-	var provider, alias sql.NullString
+	var accountID sql.NullInt64
+	var provider sql.NullString
 	if entry.accountID != 0 {
-		err := o.q.QueryRowContext(ctx, `SELECT id, provider, alias FROM accounts WHERE id = ?`, entry.accountID).Scan(&id, &provider, &alias)
+		err := o.q.QueryRowContext(ctx, `SELECT id, provider FROM accounts WHERE id = ?`, entry.accountID).Scan(&accountID, &provider)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("audit %s: account %d: %w", entry.event, entry.accountID, ErrNotFound)
 		}
 		if err != nil {
 			return err
+		}
+		if !providerIDPattern.MatchString(provider.String) {
+			return fmt.Errorf("%w: account %d has a malformed provider id", ErrInvalidAuditEvent, entry.accountID)
 		}
 	}
 	if entry.details == nil {
@@ -99,8 +102,8 @@ func (o ops) Audit(ctx context.Context, ev AuditEvent) error {
 		return err
 	}
 	_, err = o.q.ExecContext(ctx, `
-		INSERT INTO audit_log (event, account_id, provider, alias, details, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		entry.event, id, provider, alias, string(details), o.timestamp())
+		INSERT INTO audit_log (event, account_id, provider, details, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		entry.event, accountID, provider, string(details), o.timestamp())
 	return err
 }

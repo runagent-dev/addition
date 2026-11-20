@@ -31,15 +31,14 @@ CREATE TABLE credentials (
     updated_at              TEXT NOT NULL
 );
 
--- provider and alias are copied so history survives account removal.
+-- account_id is a plain, never-reused id, so history survives account removal; no alias is kept.
 CREATE TABLE audit_log (
     id         INTEGER PRIMARY KEY,
     event      TEXT NOT NULL,
-    account_id INTEGER REFERENCES accounts (id) ON DELETE SET NULL,
+    account_id INTEGER,
     provider   TEXT,
-    alias      TEXT,
     details    TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
 
-CREATE INDEX audit_log_by_account ON audit_log (provider, alias, created_at);
+CREATE INDEX audit_log_by_account ON audit_log (account_id, created_at);

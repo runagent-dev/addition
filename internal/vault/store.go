@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -161,8 +162,29 @@ func (o ops) scanOAuthClient(row scanner) (OAuthClient, error) {
 	return c, nil
 }
 
+// ErrInvalidAccount rejects a malformed provider id or alias; it never echoes the bad value.
+var ErrInvalidAccount = errors.New("invalid account")
+
+var (
+	providerIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+)
+
+func validateAccountName(provider, alias string) error {
+	if !providerIDPattern.MatchString(provider) {
+		return fmt.Errorf("%w: provider must match %s", ErrInvalidAccount, providerIDPattern)
+	}
+	if !aliasPattern.MatchString(alias) {
+		return fmt.Errorf("%w: alias must match %s", ErrInvalidAccount, aliasPattern)
+	}
+	return nil
+}
+
 // CreateAccount inserts a; an empty Status becomes AccountActive.
 func (o ops) CreateAccount(ctx context.Context, a Account) (Account, error) {
+	if err := validateAccountName(a.Provider, a.Alias); err != nil {
+		return Account{}, err
+	}
 	if a.Status == "" {
 		a.Status = AccountActive
 	}
