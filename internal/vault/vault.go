@@ -192,10 +192,16 @@ type initRecords struct {
 	canary  string
 }
 
+// afterFirstInitRecord lets tests commit a concurrent init between the init-record reads.
+var afterFirstInitRecord = func() {}
+
 // loadInitRecords reports found=false only for a vault with no init records and no data.
 func loadInitRecords(ctx context.Context, q querier) (initRecords, bool, error) {
 	values := map[string]string{}
-	for _, k := range []string{metaVaultID, metaKeySource, metaKeyCanary} {
+	for i, k := range []string{metaVaultID, metaKeySource, metaKeyCanary} {
+		if i == 1 {
+			afterFirstInitRecord()
+		}
 		v, err := getMeta(ctx, q, k)
 		if errors.Is(err, ErrNotFound) {
 			continue
