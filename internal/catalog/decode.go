@@ -12,7 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var decimalRE = regexp.MustCompile(`^[-+]?[0-9]+$`)
+var (
+	decimalRE   = regexp.MustCompile(`^[-+]?[0-9]+$`)
+	coreIntRE   = regexp.MustCompile(`^(0o[0-7]+|0x[0-9a-fA-F]+)$`)
+	coreFloatRE = regexp.MustCompile(`^([-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?|[-+]?\.(inf|Inf|INF)|\.(nan|NaN|NAN))$`)
+)
 
 // decodeDocument reads file as exactly one YAML document with plain string keys and YAML 1.2 core scalars.
 func decodeDocument(fsys fs.FS, file string) (*yaml.Node, error) {
@@ -73,19 +77,29 @@ func checkKey(key *yaml.Node) error {
 	return nil
 }
 
-// resolveCoreScalar reads plain dates as strings and plain digit runs as base-10 integers, so 010 is 10.
+// resolveCoreScalar applies YAML 1.2 core rules: decimal ints are base 10, and plain
+// scalars yaml.v3 reads as YAML 1.1 numbers or dates (0b10, 1_000, 2026-02-01) stay strings.
 func resolveCoreScalar(n *yaml.Node) {
-	if n.Style != 0 {
+	if n.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
 		return
 	}
-	if n.ShortTag() == "!!timestamp" {
-		n.Tag = "!!str"
-		return
-	}
-	if !decimalRE.MatchString(n.Value) {
-		return
-	}
-	if v, err := strconv.ParseInt(n.Value, 10, 64); err == nil {
-		n.Tag, n.Value = "!!int", strconv.FormatInt(v, 10)
+	explicit := n.Style&yaml.TaggedStyle != 0
+	switch n.ShortTag() {
+	case "!!int":
+		if decimalRE.MatchString(n.Value) {
+			if v, err := strconv.ParseInt(n.Value, 10, 64); err == nil {
+				n.Tag, n.Value = "!!int", strconv.FormatInt(v, 10)
+			}
+		} else if !explicit && !coreIntRE.MatchString(n.Value) {
+			n.Tag = "!!str"
+		}
+	case "!!float":
+		if !explicit && !coreFloatRE.MatchString(n.Value) {
+			n.Tag = "!!str"
+		}
+	case "!!timestamp":
+		if !explicit {
+			n.Tag = "!!str"
+		}
 	}
 }
