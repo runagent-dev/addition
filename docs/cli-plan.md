@@ -130,6 +130,8 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   go through one directory fd, and the key is published with an atomic
   no-replace rename (link fallback) under the SQLite writer lock, which is
   also held while leftover `.master.key-*` names are removed.
+  On Windows the profile check runs on the nearest existing ancestor's
+  resolved path before any directory is created.
 - Windows (v0.1): the key lives in Credential Manager or `ADDN_MASTER_KEY`;
   `--key-file` and file-backed vaults are refused. The data dir must be
   inside `%USERPROFILE%` and relies on the profile's inherited ACLs. Private

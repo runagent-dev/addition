@@ -104,10 +104,25 @@ func checkInsideProfile(env Env, home string) error {
 	if err != nil {
 		resolvedProfile = profile
 	}
-	if !isWithin(profile, home) && !isWithin(resolvedProfile, home) {
-		return fmt.Errorf("%w: %s is outside USERPROFILE (%s); on Windows ADDN_HOME must be inside your profile", ErrInsecureHome, home, profile)
+	for _, path := range []string{home, resolveExisting(home)} {
+		if !isWithin(profile, path) && !isWithin(resolvedProfile, path) {
+			return fmt.Errorf("%w: %s is outside USERPROFILE (%s); on Windows ADDN_HOME must be inside your profile", ErrInsecureHome, path, profile)
+		}
 	}
 	return nil
+}
+
+// resolveExisting resolves the symlinks in path's longest existing prefix, so a path not yet created can be checked.
+func resolveExisting(path string) string {
+	for prefix := path; ; prefix = filepath.Dir(prefix) {
+		if resolved, err := filepath.EvalSymlinks(prefix); err == nil {
+			rest, _ := filepath.Rel(prefix, path)
+			return filepath.Join(resolved, rest)
+		}
+		if prefix == filepath.Dir(prefix) {
+			return path
+		}
+	}
 }
 
 func isWithin(dir, path string) bool {
