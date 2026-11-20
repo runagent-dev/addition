@@ -26,11 +26,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	if len(args) > 0 && strings.HasPrefix(args[0], cobra.ShellCompRequestCmd) {
-		failure := usageError(fmt.Sprintf("unknown command %q for \"addn\"", args[0]))
-		writeErrorEnvelope(stderr, failure)
-		return failure.Exit
-	}
 	out := &trackingWriter{w: stdout}
 
 	root := newRoot()
@@ -60,6 +55,7 @@ func newRoot() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
+		PersistentPreRunE: rejectHiddenCompletion,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpCommand(newHelpCmd(root))
@@ -82,6 +78,14 @@ func newHelpCmd(root *cobra.Command) *cobra.Command {
 			return target.Help()
 		},
 	}
+}
+
+// rejectHiddenCompletion blocks cobra's __complete command, which bypasses DisableDefaultCmd.
+func rejectHiddenCompletion(cmd *cobra.Command, _ []string) error {
+	if cmd.Name() == cobra.ShellCompRequestCmd {
+		return usageError(fmt.Sprintf("unknown command %q for \"addn\"", cmd.CalledAs()))
+	}
+	return nil
 }
 
 // asError keeps typed failures; anything else came from cobra's argument parsing.
