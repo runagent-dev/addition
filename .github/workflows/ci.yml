@@ -14,17 +14,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-      - name: gofmt
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - name: vet
-        run: go vet ./...
-      - name: test
-        run: go test ./...
-      # The runner has no C toolchain, so the race detector runs in the golang image.
-      - name: test (race)
-        run: docker run --rm -v "$PWD":/src -w /src golang:1.27 go test -race ./...
-      - name: build
-        run: CGO_ENABLED=0 go build ./cmd/addn
+          persist-credentials: false
+      # Everything runs in one pinned image: the runner has no C toolchain, mounts
+      # /tmp noexec, and its Docker daemon may not see the workspace path.
+      - name: check
+        run: |
+          git archive HEAD | docker run -i --rm golang:1.27.4 sh -euc '
+            mkdir /src && cd /src && tar -x
+            unformatted="$(gofmt -l .)"
+            if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+            go vet ./...
+            go test ./...
+            go test -race ./...
+            CGO_ENABLED=0 go build ./cmd/addn
+          '
