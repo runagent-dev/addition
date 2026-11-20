@@ -15,8 +15,8 @@ addn call -a work GET /calendar/v3/calendars/primary/events
 - **Local only.** Credentials live in one encrypted SQLite file on your machine.
   No server, no account, no telemetry.
 - **One binary.** Static Go build for Linux, macOS and Windows.
-- **Built for agents.** JSON on stdout, structured errors on stderr, stable exit
-  codes, files in and out.
+- **Built for agents.** Tool commands print JSON on stdout, errors are
+  structured JSON on stderr, exit codes are stable, and files go in and out.
 
 > **Status:** early development. Nothing is usable yet; the first usable
 > release is `v0.1.0` ("Google for my agents"). See

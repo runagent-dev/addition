@@ -24,11 +24,11 @@ It is a tool, not a platform: no server of ours, no account with us, no telemetr
 ## 2. Architecture principles (don't violate these)
 
 1. **Local only.** No hosted component, no phoning home, no telemetry.
-2. **One static binary, one data dir.** Go, pure-Go SQLite, no cgo, no runtime. All state under `$ADDN_HOME` (default XDG data dir) in one `addition.db`.
+2. **One static binary, one data dir.** Go, pure-Go SQLite, no cgo, no runtime. All state under `$ADDN_HOME` (default XDG data dir) in one `addition.db`. The only exception is the master key: OS keychain, env, or an opted-in `master.key`.
 3. **Agent-first output.** Tool commands print JSON on stdout. Errors print `{"error":{"code","message"}}` on stderr with a stable exit code. Never prompt unless stdin is a TTY.
 4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, or test snapshots. There is no command that prints a token; agents reach APIs through `addn call`.
 5. **Provider config is data (YAML), provider quirks are code (adapters).** Keep `if provider == "slack"` out of the core engine.
-6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; more services means incremental consent, not a new account.
+6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; more services means re-consent for the union of granted and requested scopes, not a new account.
 7. **Tools as curated data.** Toolkit YAML is the source for generated commands, JSON schemas and (later) MCP tools. Commands are generated at runtime, not code-generated.
 
 ---
@@ -120,13 +120,13 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 3. **`extends` merge semantics:** scalars override, arrays **replace**, `id` and `name` come from the child.
 4. **Path interpolation:** params named in `{}` are **consumed** — stripped from body/query.
 5. **401 retry:** exactly once, and only when a refresh token exists. Never loop.
-6. **Refresh under lock:** concurrent `addn` processes refreshing one account hit the token endpoint once (SQLite `BEGIN IMMEDIATE`, re-read before refresh).
+6. **Refresh under lock:** concurrent `addn` processes refreshing one account hit the token endpoint once (SQLite `BEGIN IMMEDIATE`, re-read before refresh). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop.
 7. **OAuth:** PKCE S256, `state` validated and discarded after use; loopback redirect on `127.0.0.1`, with a paste-back path for headless machines.
 8. **Slack non-standard errors:** HTTP 200 with `ok: false` is a failure, detected by the Slack adapter, not core.
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
 10. **Token extraction is data:** `oauth2.token_response_mapping` dot-paths, else the standard OAuth2 layout. Adapters may reject error shapes but never extract tokens.
 11. **Audit log:** connect / refresh / revoke / tool-call events write a row; never token values.
-12. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
+12. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` output · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
 
 ---
 

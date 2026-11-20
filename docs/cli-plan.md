@@ -57,7 +57,7 @@ From the market research (Nov 2026):
 3. **Agent-first output.** Tool commands print JSON on stdout; errors print a JSON envelope on stderr with a stable exit code. Never interactive unless a human is at a TTY.
 4. **Tokens never leave the vault in plaintext.** Not in stdout, logs, errors, or `--debug` output. No `addn token print` command. Agents get API access through `addn call`, not raw tokens.
 5. **Provider config is data, quirks are code.** Kept from the SDK era: provider + toolkit YAML, adapters for quirks.
-6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; adding a service later is an incremental consent, not a new account.
+6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; adding a service later re-consents the same account for the union of its granted and requested scopes, not a new account.
 7. **Every user-visible phase ships a usable release.**
 
 ---
@@ -127,6 +127,11 @@ refresh runs inside a SQLite `BEGIN IMMEDIATE` transaction that re-reads the
 credential before refreshing, so two processes never burn the same refresh
 token.
 
+The guarantee covers refreshes that commit. If the process dies after the
+provider rotated the refresh token but before the commit, the stored token is
+stale: the next refresh gets `invalid_grant`, and the account is marked
+`needs-reauth` (exit 3). It never retries in a loop.
+
 ### 2.5 Command grammar
 
 ```
@@ -140,8 +145,11 @@ addn tools [--provider p] [--json]            addn skill install [--harness …]
 - Tool commands are **generated at runtime** from embedded toolkit YAML;
   `snake_case` ids become `kebab-case` commands, params become flags.
 - `-a` is optional when a provider has exactly one account or a default is set.
-- Exit codes: `0` ok · `2` usage/validation · `3` not connected / needs reauth ·
-  `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied (Phase 2).
+- Exit codes: `0` ok · `1` output (stdout not writable) · `2` usage/validation ·
+  `3` not connected / needs reauth · `4` upstream 4xx · `5` upstream 5xx/network ·
+  `6` policy denied (Phase 2).
+- Help text is human-readable; JSON is the contract for tool and data commands.
+- A closed stdout pipe ends the process with SIGPIPE, like standard Unix tools.
 
 ---
 
@@ -166,7 +174,7 @@ can use the same day.
 | M0 | Repo reshape | TS/Python removed from `main`, this plan adopted, CLAUDE.md + README rewritten, Go module + cobra root with `addn version` and the JSON error envelope, CI | — |
 | M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; identity root of each provider; `effect:` tag and CLI `command:` name per toolkit; Google Drive provider + metadata toolkit; `addn providers`, `addn tools` | browse only |
 | M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
-| M3 | Connect | `addn client add/list`, loopback + paste-back OAuth, PKCE, state, Google incremental scopes, `addn connect / accounts / auth check` | accounts connected |
+| M3 | Connect | `addn client add/list`, loopback + paste-back OAuth, PKCE, state, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` | accounts connected |
 | **M4** | **Raw call** | `addn call`: token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming | **✅ agents can hit any Google API** |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
