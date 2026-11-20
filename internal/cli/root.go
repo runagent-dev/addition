@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,17 @@ var Version = "dev"
 func Run(args []string, stdout, stderr io.Writer) int {
 	if args == nil {
 		args = []string{} // cobra falls back to os.Args on nil
+	}
+	if stdout == nil {
+		stdout = os.Stdout
+	}
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	if len(args) > 0 && strings.HasPrefix(args[0], cobra.ShellCompRequestCmd) {
+		failure := usageError(fmt.Sprintf("unknown command %q for \"addn\"", args[0]))
+		writeErrorEnvelope(stderr, failure)
+		return failure.Exit
 	}
 	out := &trackingWriter{w: stdout}
 
@@ -65,6 +77,8 @@ func newHelpCmd(root *cobra.Command) *cobra.Command {
 			if err != nil || len(rest) > 0 {
 				return usageError(fmt.Sprintf("unknown help topic %q", strings.Join(args, " ")))
 			}
+			target.InitDefaultHelpFlag()
+			target.InitDefaultVersionFlag()
 			return target.Help()
 		},
 	}
