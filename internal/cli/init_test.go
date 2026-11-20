@@ -175,3 +175,11 @@ func TestInitRejectsArguments(t *testing.T) {
 		t.Errorf("exit code = %d, want %d", r.code, ExitUsage)
 	}
 }
+
+func TestUnexpectedVaultFailureIsInternal(t *testing.T) {
+	failure := vaultError(errors.New("disk I/O error"))
+
+	if failure.Exit != ExitInternal || failure.Code != "vault" {
+		t.Errorf("got exit %d code %q, want exit %d code vault", failure.Exit, failure.Code, ExitInternal)
+	}
+}

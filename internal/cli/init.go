@@ -43,14 +43,12 @@ var vaultErrorCodes = []struct {
 	{vault.ErrNotInitialized, "not-initialized"},
 }
 
-// vaultError maps vault failures to the envelope; all are local setup problems, so exit 2.
+// vaultError maps known setup problems to exit 2; anything else is a failure of addn itself.
 func vaultError(err error) *Error {
-	code := "vault"
 	for _, c := range vaultErrorCodes {
 		if errors.Is(err, c.err) {
-			code = c.code
-			break
+			return &Error{Code: c.code, Message: err.Error(), Exit: ExitUsage}
 		}
 	}
-	return &Error{Code: code, Message: err.Error(), Exit: ExitUsage}
+	return &Error{Code: "vault", Message: err.Error(), Exit: ExitInternal}
 }
