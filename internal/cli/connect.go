@@ -240,10 +240,12 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 	}
 	cleanup := context.WithoutCancel(ctx)
 	code, err := cb.Verify(pending.State)
-	if err != nil {
-		if errors.As(err, new(*oauth.AuthorizationError)) {
-			_ = s.DeletePendingAuth(cleanup, pending.State)
+	if errors.As(err, new(*oauth.AuthorizationError)) {
+		if err := s.DeleteUnclaimedPendingAuth(cleanup, pending.State); err != nil {
+			return pendingError(err)
 		}
+	}
+	if err != nil {
 		return oauthError(err)
 	}
 	provider, err := identityRootProvider(c, pending.Provider)
@@ -340,13 +342,14 @@ func commitConnect(ctx context.Context, d deps, s *vault.Store, t connectTarget,
 	}
 	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: g.identity.Display, Scopes: granted}
 	err := s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
-		acct, created, err := saveAccount(ctx, tx, t, auth, result, g.identity.Subject)
+		saved, err := saveAccount(ctx, tx, t, auth, result, g.identity.Subject)
 		if err != nil {
 			return err
 		}
-		result.Created = created
+		acct := saved.account
+		result.Created = saved.created
 		cred := vault.Credential{AccessToken: g.tokens.AccessToken, RefreshToken: g.tokens.RefreshToken, TokenType: g.tokens.TokenType}
-		if cred.RefreshToken == "" && !created {
+		if cred.RefreshToken == "" && saved.sameSubject {
 			if old, err := tx.GetCredential(ctx, acct.ID); err == nil {
 				cred.RefreshToken = old.RefreshToken
 			}
@@ -388,34 +391,44 @@ func reportConnect(cmd *cobra.Command, t connectTarget, auth oauth.Authorization
 	return nil
 }
 
+// savedAccount is the stored alias. sameSubject is true when it was already bound to the
+// consenting subject, the only case where its old credential is the same account's.
+type savedAccount struct {
+	account     vault.Account
+	created     bool
+	sameSubject bool
+}
+
 // saveAccount creates the alias, or updates it when the same subject re-consents with a fresh
 // view of its scopes.
-func saveAccount(ctx context.Context, tx *vault.Tx, t connectTarget, auth oauth.Authorization, r connectResult, subject string) (vault.Account, bool, error) {
+func saveAccount(ctx context.Context, tx *vault.Tx, t connectTarget, auth oauth.Authorization, r connectResult, subject string) (savedAccount, error) {
 	existing, err := tx.GetAccount(ctx, r.Provider, r.Alias)
 	if errors.Is(err, vault.ErrNotFound) {
 		acct, err := tx.CreateAccount(ctx, vault.Account{Provider: r.Provider, Alias: r.Alias, Identity: r.Identity, Subject: subject, Scopes: r.Scopes})
-		return acct, true, err
+		return savedAccount{account: acct, created: true}, err
 	}
 	if err != nil {
-		return vault.Account{}, false, err
+		return savedAccount{}, err
 	}
-	if !sameSubject(existing, subject, r.Identity) {
-		return vault.Account{}, false, &Error{Code: "identity-mismatch", Exit: ExitUsage, Message: fmt.Sprintf(
+	if !matchesAccount(existing, subject, r.Identity) {
+		return savedAccount{}, &Error{Code: "identity-mismatch", Exit: ExitUsage, Message: fmt.Sprintf(
 			"%s:%s is %s, but the consent was given by another account (%s); nothing was changed. Connect that account under another alias",
 			r.Provider, r.Alias, existing.Identity, r.Identity)}
 	}
 	if added := missingScopes(existing.Scopes, t.accountScopes); len(missingScopes(added, auth.Scopes)) > 0 {
-		return vault.Account{}, false, &Error{Code: "stale-authorization", Exit: ExitUsage, Message: fmt.Sprintf(
+		return savedAccount{}, &Error{Code: "stale-authorization", Exit: ExitUsage, Message: fmt.Sprintf(
 			"%s:%s gained %s after this authorization started, and it did not ask for them; nothing was changed. Run `addn connect %s --as %s` again to authorize every scope",
 			r.Provider, r.Alias, strings.Join(missingScopes(added, auth.Scopes), " "), r.Provider, r.Alias)}
 	}
+	sameSubject := existing.Subject != "" && existing.Subject == subject
 	existing.Identity, existing.Subject, existing.Scopes, existing.Status = r.Identity, subject, r.Scopes, vault.AccountActive
 	acct, err := tx.UpdateAccount(ctx, existing)
-	return acct, false, err
+	return savedAccount{account: acct, sameSubject: sameSubject}, err
 }
 
-// sameSubject matches on the provider's stable subject; an account stored without one falls back to its display identity.
-func sameSubject(existing vault.Account, subject, display string) bool {
+// matchesAccount matches on the provider's stable subject; an account stored without one falls
+// back to its display identity, and is then bound to the subject without keeping its credential.
+func matchesAccount(existing vault.Account, subject, display string) bool {
 	if existing.Subject != "" {
 		return existing.Subject == subject
 	}

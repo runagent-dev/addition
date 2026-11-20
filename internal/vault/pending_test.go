@@ -116,6 +116,35 @@ func TestConcurrentClaimsHaveOneWinner(t *testing.T) {
 	}
 }
 
+func TestDeleteUnclaimedPendingAuth(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	for _, state := range []string{"unclaimed", "claimed"} {
+		if err := s.PutPendingAuth(ctx, pending(state, testNow.Add(time.Minute))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.ClaimPendingAuth(ctx, "claimed"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteUnclaimedPendingAuth(ctx, "unclaimed"); err != nil {
+		t.Errorf("unclaimed: %v", err)
+	}
+	if _, err := s.GetPendingAuth(ctx, "unclaimed"); !errors.Is(err, vault.ErrNotFound) {
+		t.Errorf("after delete, get = %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteUnclaimedPendingAuth(ctx, "claimed"); !errors.Is(err, vault.ErrPendingClaimed) {
+		t.Errorf("claimed: %v, want ErrPendingClaimed", err)
+	}
+	if _, err := s.GetPendingAuth(ctx, "claimed"); err != nil {
+		t.Errorf("a claimed authorization was removed: %v", err)
+	}
+	if err := s.DeleteUnclaimedPendingAuth(ctx, "never-issued"); !errors.Is(err, vault.ErrNotFound) {
+		t.Errorf("unknown: %v, want ErrNotFound", err)
+	}
+}
+
 func TestPendingAuthWithoutPKCE(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newStore(t)

@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -77,22 +78,25 @@ func Exchange(ctx context.Context, hc *http.Client, p *catalog.Provider, client 
 	return extractTokens(cfg, parsed, status)
 }
 
-// send runs one back-channel request. It never follows a redirect, so a request body holding
-// a secret or a token goes only to the URL in the catalog.
+// send runs one back-channel request on hc's transport, bypassing the client so no redirect is
+// ever followed: a request body holding a secret or a token goes only to the URL in the catalog.
 func send(hc *http.Client, req *http.Request, op string) (int, []byte, error) {
-	noRedirects := *hc
-	noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	var sent atomic.Bool
-	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
-		if info.Err == nil {
-			sent.Store(true)
-		}
-	}}
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	transport := hc.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	ctx := req.Context()
+	if hc.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, hc.Timeout)
+		defer cancel()
+	}
+	var conn connectionTrace
+	req = req.WithContext(httptrace.WithClientTrace(ctx, conn.hooks()))
 
-	resp, err := noRedirects.Do(req)
+	resp, err := transport.RoundTrip(req)
 	if err != nil {
-		return 0, nil, &NetworkError{Op: op, RequestSent: sent.Load(), err: err}
+		return 0, nil, &NetworkError{Op: op, RequestSent: !conn.neverConnected(), err: err}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
@@ -100,6 +104,31 @@ func send(hc *http.Client, req *http.Request, op string) (int, []byte, error) {
 		return 0, nil, &NetworkError{Op: op, RequestSent: true, err: err}
 	}
 	return resp.StatusCode, body, nil
+}
+
+// connectionTrace records whether a request was handed a connection, and whether a DNS lookup,
+// dial or TLS handshake failed before that.
+type connectionTrace struct {
+	got, setupFailed atomic.Bool
+}
+
+func (c *connectionTrace) hooks() *httptrace.ClientTrace {
+	failed := func(err error) {
+		if err != nil {
+			c.setupFailed.Store(true)
+		}
+	}
+	return &httptrace.ClientTrace{
+		GotConn:          func(httptrace.GotConnInfo) { c.got.Store(true) },
+		DNSDone:          func(info httptrace.DNSDoneInfo) { failed(info.Err) },
+		ConnectDone:      func(_, _ string, err error) { failed(err) },
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) { failed(err) },
+	}
+}
+
+// neverConnected is positive evidence that no byte of the request reached the provider.
+func (c *connectionTrace) neverConnected() bool {
+	return c.setupFailed.Load() && !c.got.Load()
 }
 
 // parseBody decodes a JSON or form response; anything unparsable becomes an empty object.
@@ -138,12 +167,12 @@ func extractTokens(cfg *catalog.OAuth2, body map[string]any, status int) (Tokens
 	if seconds, ok := asSeconds(lookup(body, paths.ExpiresIn)); ok {
 		t.ExpiresIn = time.Duration(seconds) * time.Second
 	}
-	switch scope := lookup(body, "scope").(type) {
-	case nil:
-	case string:
+	if raw, present := body["scope"]; present {
+		scope, ok := raw.(string)
+		if !ok {
+			return Tokens{}, malformed("the response's scope is not a string")
+		}
 		t.Scopes = nonNil(splitScopes(cfg, scope))
-	default:
-		return Tokens{}, malformed("the response's scope is not a string")
 	}
 	return t, nil
 }

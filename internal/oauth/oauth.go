@@ -29,7 +29,7 @@ type Authorization struct {
 }
 
 var (
-	ErrBadRedirect   = errors.New("not an OAuth redirect: expected the full URL the browser landed on, with code and state")
+	ErrBadRedirect   = errors.New("not an OAuth redirect: expected the full URL the browser landed on, with state and either code or error")
 	ErrStateMismatch = errors.New("the redirect's state does not match this authorization")
 )
 
@@ -153,7 +153,7 @@ func ParseCallback(raw string) (Callback, error) {
 		return Callback{}, ErrBadRedirect
 	}
 	cb := callbackFromQuery(u.Query())
-	if cb.State == "" || (cb.Code == "" && cb.Error == "") {
+	if cb.State == "" || !cb.wellFormed() {
 		return Callback{}, ErrBadRedirect
 	}
 	cb.RedirectURI = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
@@ -169,11 +169,14 @@ func (cb Callback) check(state string) error {
 	if !constantTimeEqual(cb.State, state) {
 		return ErrStateMismatch
 	}
-	if cb.Code == "" && cb.Error == "" {
+	if !cb.wellFormed() {
 		return ErrBadRedirect
 	}
 	return nil
 }
+
+// wellFormed is a callback carrying exactly one of a code or a provider error.
+func (cb Callback) wellFormed() bool { return (cb.Code == "") != (cb.Error == "") }
 
 // Verify checks the callback belongs to the authorization with state and returns its code.
 func (cb Callback) Verify(state string) (string, error) {
@@ -214,8 +217,8 @@ func (e *ProviderError) Error() string {
 	return msg
 }
 
-// NetworkError is a request that got no HTTP response. RequestSent is false only when the
-// request certainly never reached the provider in full.
+// NetworkError is a request that got no HTTP response. RequestSent is false only when addn
+// never obtained a connection to the provider, so no part of the request was sent.
 type NetworkError struct {
 	Op          string
 	RequestSent bool

@@ -152,6 +152,29 @@ func (o ops) ReleasePendingAuth(ctx context.Context, state string) error {
 	return err
 }
 
+// DeleteUnclaimedPendingAuth removes the authorization for state unless a completion has claimed
+// it, which is ErrPendingClaimed; no authorization is ErrNotFound.
+func (s *Store) DeleteUnclaimedPendingAuth(ctx context.Context, state string) error {
+	return s.WithImmediateTx(ctx, func(tx *Tx) error {
+		res, err := tx.q.ExecContext(ctx, `DELETE FROM pending_auth WHERE state = ? AND claimed_at IS NULL`, state)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 1 {
+			return err
+		}
+		var claimed int
+		err = tx.q.QueryRowContext(ctx, `SELECT count(*) FROM pending_auth WHERE state = ?`, state).Scan(&claimed)
+		switch {
+		case err != nil:
+			return err
+		case claimed > 0:
+			return ErrPendingClaimed
+		}
+		return fmt.Errorf("pending authorization: %w", ErrNotFound)
+	})
+}
+
 // DeletePendingAuth removes the authorization for state, if it is still there.
 func (o ops) DeletePendingAuth(ctx context.Context, state string) error {
 	_, err := o.q.ExecContext(ctx, `DELETE FROM pending_auth WHERE state = ?`, state)
