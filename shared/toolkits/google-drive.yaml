@@ -7,7 +7,7 @@ tools:
 
   - id: list_files
     name: "List files"
-    description: "List or search files and folders the user can access. Use q to filter and fields to choose which metadata comes back."
+    description: "List or search files and folders in the user's My Drive and files shared with them; shared drives are not included. Use q to filter and fields to choose which metadata comes back."
     operation: "GET /drive/v3/files"
     effect: read
     params:
@@ -23,7 +23,7 @@ tools:
       - name: fields
         type: string
         required: false
-        description: "Partial response selector (e.g., 'nextPageToken, files(id, name, mimeType, parents, modifiedTime, size)')"
+        description: "Partial response selector (e.g., 'nextPageToken, files(id, name, mimeType, parents, modifiedTime, size)'); include nextPageToken when paginating, or Drive omits the cursor and listing stops after one page"
     pagination:
       type: cursor
       cursor_param: pageToken
@@ -60,7 +60,7 @@ tools:
 
   - id: create_folder
     name: "Create folder"
-    description: "Create a new folder, optionally inside one or more parent folders"
+    description: "Create a new folder, optionally inside a parent folder"
     operation: "POST /drive/v3/files"
     effect: write
     transform: "google-drive:create_folder_body"
@@ -69,10 +69,10 @@ tools:
         type: string
         required: true
         description: "Folder name"
-      - name: parents
-        type: string[]
+      - name: parent
+        type: string
         required: false
-        description: "IDs of the parent folders; defaults to My Drive root"
+        description: "ID of the parent folder; defaults to My Drive root"
     response:
       type: object
       fields:
@@ -82,7 +82,7 @@ tools:
 
   - id: update_file
     name: "Rename or move file"
-    description: "Rename a file or folder, or move it by adding and removing parent folders"
+    description: "Rename a file or folder, or move it from one parent folder to another"
     operation: "PATCH /drive/v3/files/{fileId}"
     effect: write
     transform: "google-drive:update_file_request"
@@ -98,11 +98,11 @@ tools:
       - name: addParents
         type: string
         required: false
-        description: "Comma-separated folder IDs to add as parents (move destination)"
+        description: "ID of the single folder to move the file into (move destination)"
       - name: removeParents
         type: string
         required: false
-        description: "Comma-separated folder IDs to remove as parents (move source)"
+        description: "ID of the single folder to move the file out of (move source)"
     response:
       type: object
       fields:
