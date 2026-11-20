@@ -189,11 +189,16 @@ func TestNilWritersFallBackToProcessStreams(t *testing.T) {
 }
 
 func TestHiddenCompletionEntryPointsAreRejected(t *testing.T) {
-	for _, entry := range []string{"__complete", "__completeNoDesc"} {
-		r := run(entry, "--bogus", "")
+	cases := [][]string{
+		{"__complete", "--bogus", ""},
+		{"__completeNoDesc", "version", ""},
+		{"--help=false", "__complete", "version", ""},
+	}
+	for _, args := range cases {
+		r := run(args...)
 
 		if r.code != ExitUsage || r.stdout != "" {
-			t.Errorf("%s: exit %d, stdout %q", entry, r.code, r.stdout)
+			t.Errorf("%v: exit %d, stdout %q", args, r.code, r.stdout)
 		}
 		decodeError(t, r.stderr)
 	}
