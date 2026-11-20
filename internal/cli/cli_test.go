@@ -172,3 +172,29 @@ func TestNilArgsDoNotReadProcessArgs(t *testing.T) {
 		t.Fatalf("exit code = %d, want %d (stderr: %q)", code, ExitOK, stderr.String())
 	}
 }
+
+func TestHelpTopicMatchesHelpFlag(t *testing.T) {
+	topic, flag := run("help", "version"), run("version", "--help")
+
+	if topic.stdout != flag.stdout {
+		t.Errorf("help version and version --help differ:\n--- topic\n%s\n--- flag\n%s", topic.stdout, flag.stdout)
+	}
+}
+
+func TestNilWritersFallBackToProcessStreams(t *testing.T) {
+	var stderr bytes.Buffer
+	if code := Run([]string{"version"}, nil, &stderr); code != ExitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %q)", code, ExitOK, stderr.String())
+	}
+}
+
+func TestHiddenCompletionEntryPointsAreRejected(t *testing.T) {
+	for _, entry := range []string{"__complete", "__completeNoDesc"} {
+		r := run(entry, "--bogus", "")
+
+		if r.code != ExitUsage || r.stdout != "" {
+			t.Errorf("%s: exit %d, stdout %q", entry, r.code, r.stdout)
+		}
+		decodeError(t, r.stderr)
+	}
+}
