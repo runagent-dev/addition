@@ -1,0 +1,249 @@
+# Addition CLI — Direction & Build Plan
+
+> Status: **accepted 2026-11-20.** Authoritative for direction and work order.
+> Replaces the SDK-era `docs/spec.md`, `docs/tdd-plan.md` and
+> `docs/mcp-collections-plan.md`, which are preserved, with the TS + Python SDK
+> (v0.1 + M14), on branch `archive/sdk-v0.1`.
+
+---
+
+## 1. What we're building
+
+A **local-first, single-binary CLI that gives any coding agent authenticated
+access to your accounts** — several Gmail inboxes, several Drives, calendars,
+GitHub, Slack, Discord — with every credential stored on your own machine.
+
+Think *"rclone / `gh`, but for every SaaS API, built for agents"*:
+
+```bash
+addn connect google --as work --services gmail,drive,calendar
+addn connect google --as personal --services gmail,drive
+
+addn gmail search-messages -a work --query "from:billing has:attachment newer_than:7d"
+addn gmail get-attachment  -a work --message 18c2… --attachment 0.1 -o ./invoice.pdf
+addn drive upload          -a personal --file ./invoice.pdf --folder "Taxes/2026"
+addn call -a work GET /calendar/v3/calendars/primary/events --query maxResults=5
+```
+
+The agent needs nothing but a shell. Claude Code, Codex, OpenCode, Cursor,
+a cron job: all of them can run a binary and read JSON.
+
+### 1.1 Who it's for
+
+1. **Primary:** a developer whose coding agents need to touch their real accounts
+   (mail, files, calendar, chat) from any harness, on any machine, including
+   headless SSH boxes.
+2. **Secondary (later):** programs that embed it through thin language wrappers
+   (Python / TS packages that ship the binary and parse its JSON).
+
+### 1.2 Why this and not the existing tools
+
+From the market research (Nov 2026):
+
+| Gap in existing tools | Our answer |
+|---|---|
+| Core engine closed or paywalled (Composio, Arcade, Nango's actions/syncs/MCP) | Whole engine MIT. No hosted tier holding features hostage. |
+| MCP-first; files and pipes are second-class (Executor) | CLI-first. Files in, files out, `--json` everywhere. MCP is a projection on top (Phase 2). |
+| OAuth / token handling is the #1 bug source everywhere (Executor: ~50 of 400 recent issues) | We already have a TDD'd OAuth/refresh/retry engine + fixtures; port it, keep the fixtures as the contract. |
+| Heavy stacks, fragile native deps (Bun + napi keyring + workerd) | One static Go binary. Pure-Go SQLite. No runtime. |
+| State split across files → silent expiries (Executor #2564) | One data dir, one SQLite file. |
+| Telemetry on by default (authsome) | No telemetry. Ever. |
+| Single-vendor CLIs (`gog`, `gws`) | One grammar across providers, provider config as data. |
+
+### 1.3 Principles
+
+1. **Local only.** No server of ours, no account with us, nothing phones home.
+2. **One binary, one data dir.** `~/.local/share/addition/` (XDG; macOS: `~/Library/Application Support/addition`), overridable with `ADDN_HOME`.
+3. **Agent-first output.** Tool commands print JSON on stdout; errors print a JSON envelope on stderr with a stable exit code. Never interactive unless a human is at a TTY.
+4. **Tokens never leave the vault in plaintext.** Not in stdout, logs, errors, or `--debug` output. No `addn token print` command. Agents get API access through `addn call`, not raw tokens.
+5. **Provider config is data, quirks are code.** Kept from the SDK era: provider + toolkit YAML, adapters for quirks.
+6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; adding a service later is an incremental consent, not a new account.
+7. **Every user-visible phase ships a usable release.**
+
+---
+
+## 2. Architecture
+
+```
+            ┌──────────────── addn (Go binary) ────────────────┐
+ agent ──▶  │ CLI layer (cobra)  ── commands generated from    │
+ shell      │                       embedded toolkit YAML      │
+            │        │                                          │
+            │ Tool engine: validate → interpolate → transform  │
+            │        │                                          │
+            │ Proxy: inject token · 401→refresh→retry once ·   │
+            │        429 Retry-After · binary streaming        │
+            │        │                                          │
+            │ Token manager ◀──▶ OAuth engine (loopback+PKCE)  │
+            │        │                                          │
+            │ Vault: SQLite (addition.db) · AES-256-GCM blobs  │
+            │        master key ← OS keychain | key file | env │
+            └───────────────────────────────────────────────────┘
+                     │ HTTPS
+                     ▼
+              Google / GitHub / Slack / …
+```
+
+### 2.1 Data model (SQLite, `addition.db`)
+
+| Table | Holds |
+|---|---|
+| `meta` | `schema_version` (self-bootstrapping migrations, as before) |
+| `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
+| `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), granted scopes, status |
+| `credentials` | encrypted access/refresh token, expiry — one row per account |
+| `audit_log` | connect / refresh / revoke / tool-call events; never token values |
+
+The `user_id` multi-tenancy column from the SDK becomes the account alias.
+
+### 2.2 Encryption & master key
+
+- Wire format unchanged: `base64(iv[12] || tag[16] || ciphertext)`, AES-256-GCM.
+  The existing `crypto_interop.yaml` fixture still applies.
+- Master key resolution, in order: `ADDN_MASTER_KEY` env → OS keychain
+  (`go-keyring`) → key file `$ADDN_HOME/master.key` (0600) **only if the user
+  opted in at `addn init --key-file`**. Headless Linux without a secret service
+  is a first-class case (it's our own dev setup), so the key-file path must be
+  good, not a fallback hack.
+- If the keychain is unavailable and no opt-in exists: fail loudly. Never
+  silently downgrade to plaintext.
+
+### 2.3 OAuth on any machine
+
+- **Default:** RFC 8252 loopback redirect on `127.0.0.1:<random port>`, PKCE S256,
+  `state` validated and discarded.
+- **Headless / SSH:** `addn connect … --no-browser` prints the authorize URL. The
+  user opens it on any device, approves, and pastes back the URL the browser
+  landed on (the localhost page fails to load; the URL in the address bar still
+  carries `code` + `state`). No port forwarding needed.
+- **Bring your own OAuth client** (v0.1): `addn client add google --file client_secret.json`.
+  `addn doctor google` walks through the Google Cloud setup and warns about the
+  7-day refresh-token expiry for apps left in "Testing".
+
+### 2.4 Concurrency
+
+Several agents may run `addn` in parallel against the same account. Token
+refresh runs inside a SQLite `BEGIN IMMEDIATE` transaction that re-reads the
+credential before refreshing, so two processes never burn the same refresh
+token.
+
+### 2.5 Command grammar
+
+```
+addn <provider> <tool> [-a <alias>] [--param value …] [-o file] [--all]
+addn call -a <alias> <METHOD> <path> [--query k=v] [--data @file.json] [-o file]
+addn connect <provider> --as <alias> [--services …] [--no-browser]
+addn accounts [list|show|remove|default]      addn auth check
+addn tools [--provider p] [--json]            addn skill install [--harness …]
+```
+
+- Tool commands are **generated at runtime** from embedded toolkit YAML;
+  `snake_case` ids become `kebab-case` commands, params become flags.
+- `-a` is optional when a provider has exactly one account or a default is set.
+- Exit codes: `0` ok · `2` usage/validation · `3` not connected / needs reauth ·
+  `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied (Phase 2).
+
+---
+
+## 3. Phases
+
+Each phase ends in a tagged release someone can install and use. Inside a phase,
+milestones keep the old workflow: Red → Green → Refactor, one PR per milestone,
+stop after the PR is opened.
+
+### Phase 1 — "Google for my agents" → `v0.1.0`
+
+**The user value:** connect several Google accounts once; from then on any coding
+agent can search and read mail, pull attachments to disk, send mail with
+attachments, search/download/upload Drive files, and read/create calendar
+events. `addn call` covers every other Google API on day one.
+
+**First usable checkpoint is M4.** From M4 on, every merged PR is something you
+can use the same day.
+
+| # | Milestone | Ships | Usable after merge? |
+|---|---|---|---|
+| M0 | Repo reshape | TS/Python removed from `main`, this plan adopted, CLAUDE.md + README rewritten, Go module + cobra root with `addn version` and the JSON error envelope, CI | — |
+| M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; `addn providers`, `addn tools` | browse only |
+| M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM, master-key resolution, `addn init`, `addn client add/list` | — |
+| M3 | Connect | loopback + paste-back OAuth, PKCE, state, Google incremental scopes, `addn connect / accounts / auth check` | accounts connected |
+| **M4** | **Raw call** | `addn call`: token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming | **✅ agents can hit any Google API** |
+| M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
+| M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
+| M7 | Agent surface + release | `addn skill install` (SKILL.md for Claude Code / Codex / generic), `addn tools --json` schemas, goreleaser binaries (linux/mac/windows, amd64/arm64), install script, README | ✅ **v0.1.0** |
+
+**M1–M4 test focus (port, don't reinvent):**
+- `crypto_interop.yaml`, `token_refresh.yaml`, `proxy_requests.yaml` and
+  `tool_schema_export.yaml` get a Go conformance driver. They are the contract
+  that the port behaves like the SDK.
+- Provider endpoints are faked with `httptest.Server`; a fake OAuth server drives
+  the full connect flow, including a state mismatch and a missing refresh token.
+- SQLite runs in `t.TempDir()`, starting from an empty DB that runs the real
+  bootstrap every time.
+- Two goroutines refreshing the same account → exactly one token-endpoint hit.
+- Golden tests: no token string ever appears in stdout, stderr or `--debug`
+  output for any command.
+
+**Phase 1 non-goals:** MCP, policies, non-Google providers, sync, wrappers,
+API-key providers, OpenAPI import.
+
+### Phase 2 — "Safe and broader" → `v0.2.0`
+
+- **Policies per account:** `read-only`, `confirm-writes` (agent gets exit 6 plus
+  instructions; a human approves with `addn approve <id>` or in a TTY prompt),
+  `deny <tool>`. Every write tool in the YAML is tagged `effect: write|destructive`.
+- **Providers:** GitHub, Slack (comma scopes, `ok:false` adapter — already in
+  YAML), Discord (bot token), Notion.
+- **API-key / bot-token auth type** next to OAuth2.
+- `addn mcp` (stdio): the same catalog projected as MCP tools (the M14 schema
+  mapper, ported), for harnesses that prefer MCP.
+- Audit viewer: `addn log`.
+
+### Phase 3 — "Every API" → `v0.3.0`
+
+- **Generated tools** from OpenAPI and Google Discovery documents
+  (`addn import openapi <url> --as provider`), so coverage stops depending on
+  hand-written YAML. Curated YAML stays as the high-quality layer on top.
+- Community provider registry: a directory of YAML files in the repo and PRs to
+  add more. No hosted registry.
+- **Wrappers:** `pip install addition` / `npm i @runagent/addition` ship the
+  binary and expose `run(provider, tool, params) -> dict` over the JSON contract.
+
+### Phase 4 — "All my machines" → `v0.4.0`
+
+- `addn vault export/import` (encrypted bundle, age-style passphrase).
+- Sync design, decided at that point. Leading options:
+  (a) encrypted vault file synced via git / Syncthing, with refresh-token
+  rotation conflicts handled by re-reading and re-consenting, or
+  (b) a "home" device that holds the tokens, with other devices calling it over
+  Tailscale.
+- WhatsApp research: Business Cloud API vs the unofficial (whatsmeow)
+  route, and its ToS risk.
+
+---
+
+## 4. What carries over from `archive/sdk-v0.1`
+
+| Keep as-is | Port to Go (behaviour pinned by fixtures) | Drop |
+|---|---|---|
+| `shared/providers/*.yaml`, `shared/toolkits/*.yaml` | crypto, provider registry + `extends`, toolkit loader, transforms, adapters, OAuth engine, token manager, proxy, tool engine, M14 schema projection | Postgres, `_addition` schema namespace, testcontainers, multi-tenant `user_id`, framework callback handlers, background task runner, REST auto-mount, collections, TS/Python parity machinery |
+| `shared/test-fixtures/*.yaml` | Postgres schema → SQLite migrations (M2) | `shared/spec.yaml` (SDK API contract) |
+
+New YAML needed in Phase 1: `providers/google-drive.yaml`, `toolkits/google-drive.yaml`,
+plus `effect:` tags on tools (used from Phase 2, cheap to add now).
+
+---
+
+## 5. Decisions (accepted 2026-11-20)
+
+1. **Binary name:** `addn`. Go module `github.com/runagent-dev/addition`.
+2. **Grammar:** gh-style. `addn gmail search-messages -a work`.
+3. **CLI framework:** cobra.
+4. **Output:** tool commands always print JSON on stdout. Errors always print a
+   JSON envelope on stderr: `{"error":{"code":"…","message":"…"}}`.
+5. **Repo:** pivot `runagent-dev/addition` in place. SDK history stays on
+   `archive/sdk-v0.1`.
+6. **OAuth clients:** bring your own in v0.1. Revisit a verified shared Google
+   client later, since it means a security assessment and a support burden.
+7. **Toolchain:** Go 1.27 (`go.mod` pins it, so older local Go installs fetch
+   it automatically via `GOTOOLCHAIN`).
