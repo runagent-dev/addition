@@ -168,7 +168,7 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	rec, found, err := loadInitRecords(ctx, db)
+	rec, found, err := loadInitRecordsSnapshot(ctx, db)
 	if err == nil && !found {
 		err = notInitializedAt(home.path)
 	}
@@ -190,6 +190,16 @@ type initRecords struct {
 	vaultID string
 	source  KeySource
 	canary  string
+}
+
+// loadInitRecordsSnapshot reads the init records and the empty-vault check in one read transaction.
+func loadInitRecordsSnapshot(ctx context.Context, db *sql.DB) (initRecords, bool, error) {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return initRecords{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	return loadInitRecords(ctx, tx)
 }
 
 // afterFirstInitRecord lets tests commit a concurrent init between the init-record reads.
