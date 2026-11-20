@@ -22,13 +22,14 @@ var testNow = time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)
 type fakeEnv struct {
 	vars map[string]string
 	home string
+	goos string
 }
 
 func newFakeEnv(t *testing.T) *fakeEnv {
 	t.Helper()
 	keyring.MockInit()
 	home := filepath.Join(privateTempDir(t), "addn-home")
-	return &fakeEnv{vars: map[string]string{"ADDN_HOME": home, "HOME": privateTempDir(t)}, home: home}
+	return &fakeEnv{vars: map[string]string{"ADDN_HOME": home, "HOME": privateTempDir(t)}, home: home, goos: "linux"}
 }
 
 func (f *fakeEnv) set(key, value string) { f.vars[key] = value }
@@ -38,7 +39,7 @@ func (f *fakeEnv) unset(key string) { delete(f.vars, key) }
 func (f *fakeEnv) env() vault.Env {
 	return vault.Env{
 		LookupEnv: func(k string) (string, bool) { v, ok := f.vars[k]; return v, ok },
-		GOOS:      "linux",
+		GOOS:      f.goos,
 		Now:       func() time.Time { return testNow },
 	}
 }

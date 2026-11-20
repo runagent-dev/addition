@@ -281,3 +281,11 @@ func TestInitRejectsARelativeHome(t *testing.T) {
 		t.Errorf("init created %v in the working directory", entries)
 	}
 }
+
+func TestKeyFileUnsupportedIsAUsageError(t *testing.T) {
+	failure := vaultError(fmt.Errorf("%w: use the Windows Credential Manager", vault.ErrKeyFileUnsupported))
+
+	if failure.Exit != ExitUsage || failure.Code != "key-file-unsupported" {
+		t.Errorf("got exit %d code %q, want exit %d code key-file-unsupported", failure.Exit, failure.Code, ExitUsage)
+	}
+}
