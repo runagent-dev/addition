@@ -24,6 +24,8 @@ type accountFixture struct {
 	groupName    string
 	userGID      func(dirGID uint32) uint32
 	noGroupFile  bool
+	extraGroup   string // appended to the group file; %d is the ancestor's gid
+	extraPasswd  string // appended to the passwd file; %d is the ancestor's gid
 }
 
 // groupWritableHome points f at a home below a new ancestor of mode, whose group the fixture describes.
@@ -57,12 +59,18 @@ func groupWritableHome(t *testing.T, f *fakeEnv, mode os.FileMode, fx accountFix
 		if gid == 0 {
 			group = fmt.Sprintf("%s:x:0:%s\n", fx.groupName, fx.groupMembers)
 		}
+		if fx.extraGroup != "" {
+			group += fmt.Sprintf(fx.extraGroup, gid) + "\n"
+		}
 		writeFixture(t, groupFile, group)
 	}
 	passwdFile := filepath.Join(files, "passwd")
 	passwd := fmt.Sprintf("%s:x:%d:%d::/home/%s:/bin/sh\n", testUser, uid, userGID, testUser)
 	if fx.otherPrimary {
 		passwd += fmt.Sprintf("bob:x:4242:%d::/home/bob:/bin/sh\n", gid)
+	}
+	if fx.extraPasswd != "" {
+		passwd += fmt.Sprintf(fx.extraPasswd, gid) + "\n"
 	}
 	writeFixture(t, passwdFile, passwd)
 
@@ -101,6 +109,10 @@ func TestRejectsAGroupWritableAncestorWhoseGroupIsNotPrivate(t *testing.T) {
 		"group named otherwise": {fx: accountFixture{groupName: "staff"}, hint: "chmod g-w"},
 		"not the primary group": {fx: accountFixture{userGID: func(gid uint32) uint32 { return gid + 1 }}, hint: "chmod g-w"},
 		"unreadable group file": {fx: accountFixture{noGroupFile: true}, hint: "cannot verify"},
+		"zero-padded group gid": {fx: accountFixture{extraGroup: "devs:x:0%d:bob"}, hint: "chmod g-w"},
+		"malformed group entry": {fx: accountFixture{extraGroup: "devs:x:%d:bob:extra"}, hint: "cannot verify"},
+		"zero-padded user gid":  {fx: accountFixture{extraPasswd: "bob:x:4242:0%d::/home/bob:/bin/sh"}, hint: "chmod g-w"},
+		"malformed passwd line": {fx: accountFixture{extraPasswd: "bob:x:4242:%d::/home/bob"}, hint: "cannot verify"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
