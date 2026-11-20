@@ -66,11 +66,13 @@ func newConnectCmd(d deps) *cobra.Command {
 }
 
 // connectTarget is everything both flows resolve before talking to the provider.
+// accountScopes is what the alias held when the authorization started.
 type connectTarget struct {
-	provider *catalog.Provider
-	client   oauth.Client
-	alias    string
-	scopes   []string
+	provider      *catalog.Provider
+	client        oauth.Client
+	alias         string
+	scopes        []string
+	accountScopes []string
 }
 
 func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags) error {
@@ -99,7 +101,7 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	if err != nil {
 		return err
 	}
-	target.scopes = unionScopes(target.scopes, scopes)
+	target.scopes = unionScopes(target.accountScopes, scopes)
 	if f.noBrowser {
 		return startTwoStep(cmd, d, s, target)
 	}
@@ -120,7 +122,7 @@ func loadTarget(ctx context.Context, s *vault.Store, provider *catalog.Provider,
 	t := connectTarget{provider: provider, client: oauth.Client{ID: client.ClientID, Secret: client.ClientSecret}, alias: alias}
 	existing, err := s.GetAccount(ctx, provider.ID, alias)
 	if err == nil {
-		t.scopes = existing.Scopes
+		t.accountScopes = existing.Scopes
 	} else if !errors.Is(err, vault.ErrNotFound) {
 		return connectTarget{}, vaultError(err)
 	}
@@ -134,37 +136,62 @@ func connectViaLoopback(cmd *cobra.Command, d deps, s *vault.Store, t connectTar
 	}
 	lb, err := oauth.ListenLoopback(0, auth.State)
 	if err != nil {
-		return &Error{Code: "loopback", Message: "listen on 127.0.0.1: " + err.Error(), Exit: ExitInternal}
+		return &Error{Code: "loopback", Message: "could not listen on 127.0.0.1", Exit: ExitInternal}
 	}
 	defer lb.Close()
 	auth.RedirectURI = lb.RedirectURI()
-	authorizeURL := auth.URL(t.provider.OAuth2, t.client)
-	if err := d.openBrowser(authorizeURL); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Could not open a browser. Open this URL to authorize addn:\n%s\n", authorizeURL)
+	cb, err := awaitCallback(cmd, d, lb, auth.URL(t.provider.OAuth2, t.client))
+	if err != nil {
+		return err
 	}
-	ctx, cancel := context.WithTimeout(cmd.Context(), d.loopbackTimeout)
-	defer cancel()
-	var cb oauth.Callback
-	select {
-	case cb = <-lb.Received():
-	case <-ctx.Done():
-		if rejected := lb.LastRejection(); rejected != nil {
-			return oauthError(rejected)
-		}
-		return &Error{Code: "authorization-timeout", Exit: ExitUsage, Message: fmt.Sprintf(
-			"no authorization arrived within %s; run connect again, or use --no-browser on a headless machine", d.loopbackTimeout)}
-	}
+	_ = lb.Close()
 	code, err := cb.Verify(auth.State)
 	if err != nil {
 		return oauthError(err)
 	}
-	return finishConnect(cmd, d, s, t, auth, code)
+	g, err := redeem(cmd.Context(), d, t, auth, code)
+	if err != nil {
+		return oauthError(err)
+	}
+	result, err := commitConnect(cmd.Context(), d, s, t, auth, g, nil)
+	if err != nil {
+		return commitError(err)
+	}
+	return reportConnect(cmd, t, auth, result)
+}
+
+// awaitCallback opens the browser and waits for the loopback's verified callback. If the
+// launcher fails, it prints a notice with the URL to stderr, one JSON object per line.
+func awaitCallback(cmd *cobra.Command, d deps, lb *oauth.Loopback, authorizeURL string) (oauth.Callback, error) {
+	ctx, cancel := context.WithTimeout(cmd.Context(), d.loopbackTimeout)
+	defer cancel()
+	launcher := d.openBrowser(authorizeURL)
+	for {
+		select {
+		case cb := <-lb.Received():
+			return cb, nil
+		case err := <-launcher:
+			launcher = nil
+			if err != nil {
+				_ = writeJSON(cmd.ErrOrStderr(), map[string]string{"notice": "open-browser-failed", "authorize_url": authorizeURL})
+			}
+		case <-ctx.Done():
+			if rejected := lb.LastRejection(); rejected != nil {
+				return oauth.Callback{}, oauthError(rejected)
+			}
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return oauth.Callback{}, ctx.Err()
+			}
+			return oauth.Callback{}, &Error{Code: "authorization-timeout", Exit: ExitUsage, Message: fmt.Sprintf(
+				"no authorization arrived within %s; run connect again, or use --no-browser on a headless machine", d.loopbackTimeout)}
+		}
+	}
 }
 
 func startTwoStep(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget) error {
 	port, err := oauth.FreeLoopbackPort()
 	if err != nil {
-		return &Error{Code: "loopback", Message: "pick a loopback port: " + err.Error(), Exit: ExitInternal}
+		return &Error{Code: "loopback", Message: "could not pick a port on 127.0.0.1", Exit: ExitInternal}
 	}
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 	auth, err := oauth.NewAuthorization(t.provider.OAuth2, redirectURI, t.scopes)
@@ -173,7 +200,7 @@ func startTwoStep(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget) e
 	}
 	expires := d.now().Add(pendingAuthTTL).UTC().Truncate(time.Second)
 	err = s.PutPendingAuth(cmd.Context(), vault.PendingAuth{
-		State: auth.State, Provider: t.provider.ID, Alias: t.alias, Scopes: t.scopes,
+		State: auth.State, Provider: t.provider.ID, Alias: t.alias, Scopes: t.scopes, AccountScopes: t.accountScopes,
 		RedirectURI: redirectURI, Verifier: auth.Verifier, ExpiresAt: expires,
 	})
 	if err != nil {
@@ -186,6 +213,8 @@ func startTwoStep(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget) e
 	})
 }
 
+// completeTwoStep checks the pasted redirect against its pending authorization before claiming
+// it, so a bad paste leaves it usable; the claim then keeps a second completion from exchanging.
 func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 	ctx := cmd.Context()
 	cb, err := oauth.ParseCallback(pasted)
@@ -201,27 +230,20 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 		return err
 	}
 	defer s.Close()
-	pending, err := s.ClaimPendingAuth(ctx, cb.State)
-	if err == nil {
-		err = s.DeletePendingAuth(ctx, cb.State)
-	}
-	switch {
-	case errors.Is(err, vault.ErrNotFound):
-		return &Error{Code: "unknown-state", Exit: ExitUsage,
-			Message: "no pending authorization matches this URL's state; it was already used or never issued. Run `addn connect <provider> --as <alias> --no-browser` again"}
-	case errors.Is(err, vault.ErrPendingExpired):
-		return &Error{Code: "authorization-expired", Exit: ExitUsage,
-			Message: "this authorization expired; run `addn connect <provider> --as <alias> --no-browser` again"}
-	case err != nil:
-		return vaultError(err)
+	pending, err := s.GetPendingAuth(ctx, cb.State)
+	if err != nil {
+		return pendingError(err)
 	}
 	if cb.RedirectURI != pending.RedirectURI {
 		return &Error{Code: "redirect-mismatch", Exit: ExitUsage,
 			Message: fmt.Sprintf("the URL is not the redirect this authorization expects (%s)", pending.RedirectURI)}
 	}
-	auth := oauth.Authorization{State: pending.State, Verifier: pending.Verifier, RedirectURI: pending.RedirectURI, Scopes: pending.Scopes}
+	cleanup := context.WithoutCancel(ctx)
 	code, err := cb.Verify(pending.State)
 	if err != nil {
+		if errors.As(err, new(*oauth.AuthorizationError)) {
+			_ = s.DeletePendingAuth(cleanup, pending.State)
+		}
 		return oauthError(err)
 	}
 	provider, err := identityRootProvider(c, pending.Provider)
@@ -232,8 +254,55 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 	if err != nil {
 		return err
 	}
-	t.scopes = pending.Scopes
-	return finishConnect(cmd, d, s, t, auth, code)
+	t.scopes, t.accountScopes = pending.Scopes, pending.AccountScopes
+	if _, err := s.ClaimPendingAuth(ctx, pending.State); err != nil {
+		return pendingError(err)
+	}
+
+	auth := oauth.Authorization{State: pending.State, Verifier: pending.Verifier, RedirectURI: pending.RedirectURI, Scopes: pending.Scopes}
+	again := fmt.Sprintf("; this authorization can no longer be used, so run `addn connect %s --as %s --no-browser` again",
+		pending.Provider, pending.Alias)
+	g, err := redeem(ctx, d, t, auth, code)
+	if err != nil {
+		var netErr *oauth.NetworkError
+		if errors.As(err, &netErr) && netErr.Op == oauth.OpExchange && !netErr.RequestSent {
+			_ = s.ReleasePendingAuth(cleanup, pending.State)
+			return oauthError(err)
+		}
+		_ = s.DeletePendingAuth(cleanup, pending.State)
+		return withHint(oauthError(err), again)
+	}
+	result, err := commitConnect(ctx, d, s, t, auth, g, func(tx *vault.Tx) error {
+		return tx.DeletePendingAuth(ctx, pending.State)
+	})
+	if err != nil {
+		_ = s.DeletePendingAuth(cleanup, pending.State)
+		if typed, ok := errors.AsType[*Error](err); ok {
+			return typed
+		}
+		return withHint(vaultError(err), again)
+	}
+	return reportConnect(cmd, t, auth, result)
+}
+
+func pendingError(err error) error {
+	switch {
+	case errors.Is(err, vault.ErrNotFound):
+		return &Error{Code: "unknown-state", Exit: ExitUsage,
+			Message: "no pending authorization matches this URL's state; it was already used or never issued. Run `addn connect <provider> --as <alias> --no-browser` again"}
+	case errors.Is(err, vault.ErrPendingExpired):
+		return &Error{Code: "authorization-expired", Exit: ExitUsage,
+			Message: "this authorization expired; run `addn connect <provider> --as <alias> --no-browser` again"}
+	case errors.Is(err, vault.ErrPendingClaimed):
+		return &Error{Code: "authorization-in-progress", Exit: ExitUsage,
+			Message: "another `addn connect --complete` is finishing this authorization; if it was interrupted, run `addn connect <provider> --as <alias> --no-browser` again"}
+	}
+	return vaultError(err)
+}
+
+func withHint(e *Error, hint string) *Error {
+	e.Message += hint
+	return e
 }
 
 type connectResult struct {
@@ -244,53 +313,74 @@ type connectResult struct {
 	Created  bool     `json:"created"`
 }
 
-// finishConnect exchanges the code, learns the identity, and stores the account, its credential and an audit row together.
-func finishConnect(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget, auth oauth.Authorization, code string) error {
-	ctx := cmd.Context()
+// grant is what an authorization code bought: the tokens and who they belong to.
+type grant struct {
+	tokens   oauth.Tokens
+	identity oauth.Identity
+}
+
+func redeem(ctx context.Context, d deps, t connectTarget, auth oauth.Authorization, code string) (grant, error) {
 	tokens, err := oauth.Exchange(ctx, d.httpClient, t.provider, t.client, auth, code)
 	if err != nil {
-		return oauthError(err)
+		return grant{}, err
 	}
 	identity, err := oauth.FetchIdentity(ctx, d.httpClient, t.provider, tokens.AccessToken)
 	if err != nil {
-		return oauthError(err)
+		return grant{}, err
 	}
-	granted := tokens.Scopes
+	return grant{tokens: tokens, identity: identity}, nil
+}
+
+// commitConnect stores the account, its credential and an audit row in one transaction, with
+// settle's work if given. A typed *Error is a refusal; any other error is the vault failing.
+func commitConnect(ctx context.Context, d deps, s *vault.Store, t connectTarget, auth oauth.Authorization, g grant, settle func(*vault.Tx) error) (connectResult, error) {
+	granted := g.tokens.Scopes
 	if granted == nil {
 		granted = auth.Scopes
 	}
-	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: identity.Display, Scopes: granted}
-	err = s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
-		acct, created, err := saveAccount(ctx, tx, result)
+	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: g.identity.Display, Scopes: granted}
+	err := s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
+		acct, created, err := saveAccount(ctx, tx, t, auth, result, g.identity.Subject)
 		if err != nil {
 			return err
 		}
 		result.Created = created
-		cred := vault.Credential{AccessToken: tokens.AccessToken, RefreshToken: tokens.RefreshToken, TokenType: tokens.TokenType}
+		cred := vault.Credential{AccessToken: g.tokens.AccessToken, RefreshToken: g.tokens.RefreshToken, TokenType: g.tokens.TokenType}
 		if cred.RefreshToken == "" && !created {
 			if old, err := tx.GetCredential(ctx, acct.ID); err == nil {
 				cred.RefreshToken = old.RefreshToken
 			}
 		}
-		if tokens.ExpiresIn > 0 {
-			cred.ExpiresAt = d.now().Add(tokens.ExpiresIn)
+		if g.tokens.ExpiresIn > 0 {
+			cred.ExpiresAt = d.now().Add(g.tokens.ExpiresIn)
 		}
 		if err := tx.PutCredential(ctx, acct.ID, cred); err != nil {
 			return err
 		}
-		return tx.Audit(ctx, vault.ConnectEvent{AccountID: acct.ID})
-	})
-	if err != nil {
-		var typed *Error
-		if errors.As(err, &typed) {
-			return typed
+		if err := tx.Audit(ctx, vault.ConnectEvent{AccountID: acct.ID}); err != nil {
+			return err
 		}
-		return vaultError(err)
+		if settle != nil {
+			return settle(tx)
+		}
+		return nil
+	})
+	return result, err
+}
+
+func commitError(err error) error {
+	if typed, ok := errors.AsType[*Error](err); ok {
+		return typed
 	}
+	return vaultError(err)
+}
+
+// reportConnect prints the stored account, then flags any requested scope the provider withheld.
+func reportConnect(cmd *cobra.Command, t connectTarget, auth oauth.Authorization, result connectResult) error {
 	if err := writeJSON(cmd.OutOrStdout(), result); err != nil {
 		return err
 	}
-	if missing := missingScopes(auth.Scopes, granted); len(missing) > 0 {
+	if missing := missingScopes(auth.Scopes, result.Scopes); len(missing) > 0 {
 		return &Error{Code: "scopes-not-granted", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
 			"the account was saved, but %s did not grant: %s; connect again and allow them on the consent screen",
 			t.provider.ID, strings.Join(missing, " "))}
@@ -298,28 +388,43 @@ func finishConnect(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget, 
 	return nil
 }
 
-// saveAccount creates the alias, or updates it when it is the same identity re-consenting.
-func saveAccount(ctx context.Context, tx *vault.Tx, r connectResult) (vault.Account, bool, error) {
+// saveAccount creates the alias, or updates it when the same subject re-consents with a fresh
+// view of its scopes.
+func saveAccount(ctx context.Context, tx *vault.Tx, t connectTarget, auth oauth.Authorization, r connectResult, subject string) (vault.Account, bool, error) {
 	existing, err := tx.GetAccount(ctx, r.Provider, r.Alias)
 	if errors.Is(err, vault.ErrNotFound) {
-		acct, err := tx.CreateAccount(ctx, vault.Account{Provider: r.Provider, Alias: r.Alias, Identity: r.Identity, Scopes: r.Scopes})
+		acct, err := tx.CreateAccount(ctx, vault.Account{Provider: r.Provider, Alias: r.Alias, Identity: r.Identity, Subject: subject, Scopes: r.Scopes})
 		return acct, true, err
 	}
 	if err != nil {
 		return vault.Account{}, false, err
 	}
-	if existing.Identity != "" && existing.Identity != r.Identity {
+	if !sameSubject(existing, subject, r.Identity) {
 		return vault.Account{}, false, &Error{Code: "identity-mismatch", Exit: ExitUsage, Message: fmt.Sprintf(
-			"%s:%s is %s, but the consent was given as %s; nothing was changed. Connect that account under another alias",
+			"%s:%s is %s, but the consent was given by another account (%s); nothing was changed. Connect that account under another alias",
 			r.Provider, r.Alias, existing.Identity, r.Identity)}
 	}
-	existing.Identity, existing.Scopes, existing.Status = r.Identity, r.Scopes, vault.AccountActive
+	if added := missingScopes(existing.Scopes, t.accountScopes); len(missingScopes(added, auth.Scopes)) > 0 {
+		return vault.Account{}, false, &Error{Code: "stale-authorization", Exit: ExitUsage, Message: fmt.Sprintf(
+			"%s:%s gained %s after this authorization started, and it did not ask for them; nothing was changed. Run `addn connect %s --as %s` again to authorize every scope",
+			r.Provider, r.Alias, strings.Join(missingScopes(added, auth.Scopes), " "), r.Provider, r.Alias)}
+	}
+	existing.Identity, existing.Subject, existing.Scopes, existing.Status = r.Identity, subject, r.Scopes, vault.AccountActive
 	acct, err := tx.UpdateAccount(ctx, existing)
 	return acct, false, err
 }
 
-// oauthError maps engine failures to the exit codes: 2 for a bad paste or state, 4 for a provider refusal, 5 for the network or a provider 5xx.
-func oauthError(err error) error {
+// sameSubject matches on the provider's stable subject; an account stored without one falls back to its display identity.
+func sameSubject(existing vault.Account, subject, display string) bool {
+	if existing.Subject != "" {
+		return existing.Subject == subject
+	}
+	return existing.Identity == "" || existing.Identity == display
+}
+
+// oauthError maps engine failures to the exit codes: 2 for a bad paste or state, 4 for a provider
+// refusal or an unusable 2xx, 5 for the network or a provider 5xx. Every message is addn's own.
+func oauthError(err error) *Error {
 	var authErr *oauth.AuthorizationError
 	var provErr *oauth.ProviderError
 	var netErr *oauth.NetworkError
@@ -343,11 +448,11 @@ func oauthError(err error) error {
 	case errors.As(err, &netErr):
 		return &Error{Code: "network", Message: err.Error(), Exit: ExitUpstreamServer}
 	}
-	return &Error{Code: "internal", Message: err.Error(), Exit: ExitInternal}
+	return &Error{Code: "internal", Message: "the OAuth flow failed inside addn", Exit: ExitInternal}
 }
 
 var providerErrorCodes = map[string]string{
-	"token exchange":  "token-exchange-rejected",
-	"identity lookup": "identity-rejected",
-	"revoke":          "revoke-rejected",
+	oauth.OpExchange: "token-exchange-rejected",
+	oauth.OpIdentity: "identity-rejected",
+	oauth.OpRevoke:   "revoke-rejected",
 }

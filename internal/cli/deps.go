@@ -18,7 +18,7 @@ type deps struct {
 	catalogFS       fs.FS
 	env             vault.Env
 	httpClient      *http.Client
-	openBrowser     func(url string) error
+	openBrowser     func(url string) (exited <-chan error)
 	loopbackTimeout time.Duration
 }
 
@@ -50,19 +50,24 @@ func (d deps) openVault(ctx context.Context) (*vault.Store, error) {
 	return s, nil
 }
 
-func openSystemBrowser(url string) error {
-	var cmd *exec.Cmd
+// openSystemBrowser hands url to the platform's launcher and reports, later, how it exited.
+func openSystemBrowser(url string) <-chan error {
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		return launch(exec.Command("open", url))
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		cmd = exec.Command("xdg-open", url)
+		return launch(exec.Command("rundll32", "url.dll,FileProtocolHandler", url))
 	}
+	return launch(exec.Command("xdg-open", url))
+}
+
+// launch starts cmd and yields, once, its start failure or its exit status.
+func launch(cmd *exec.Cmd) <-chan error {
+	exited := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
-		return err
+		exited <- err
+		return exited
 	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	go func() { exited <- cmd.Wait() }()
+	return exited
 }

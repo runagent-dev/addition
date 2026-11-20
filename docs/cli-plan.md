@@ -90,9 +90,9 @@ From the market research (Nov 2026):
 |---|---|
 | `meta` | `schema_version` (self-bootstrapping migrations, as before) |
 | `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
-| `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), granted scopes, status |
+| `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), the provider's stable subject id, granted scopes, status |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
-| `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, redirect URI, expiry |
+| `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, the alias's scopes at the start, redirect URI, claim marker, expiry |
 | `audit_log` | connect / refresh / revoke / tool-call events by account id and provider id; never token values or aliases |
 
 The `user_id` multi-tenancy column from the SDK becomes the account alias.
@@ -141,22 +141,34 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 ### 2.3 OAuth on any machine
 
 - **Default:** RFC 8252 loopback redirect on `127.0.0.1:<random port>`, PKCE S256,
-  `state` validated and discarded.
+  `state` validated and discarded. The listener answers 400 to any callback that is
+  not for its state and accepts exactly one verified one (a code or a denial), then
+  closes before the code is exchanged.
 - **Headless / SSH, in two steps:** `addn connect … --no-browser` stores a pending
   authorization in the vault (state, sealed PKCE verifier, alias, scopes, redirect
   URI; 10-minute expiry) and prints `{authorize_url, expires_at, next}`. The user
   opens the URL on any device, approves, and runs `addn connect --complete '<url>'`
   with the URL the browser landed on (the localhost page fails to load; the address
-  bar still carries `code` + `state`). `--complete` takes the pending row by `state`
-  and deletes it in one statement, so each authorization works once. No port
-  forwarding needed, and the agent never holds the flow open.
-- **Identity is data:** `oauth2.identity: {url, field}` in the provider YAML names
-  the endpoint read with the new token and the dot-path of the identity (Google:
-  OpenID `userinfo`, `email`). Reconnecting an alias as a different identity is refused.
+  bar still carries `code` + `state`). `--complete` checks the pasted URL before
+  touching the pending row, so a bad paste leaves it usable; it then claims the row
+  exclusively, and deletes it in the transaction that stores the account. A request
+  that never reached the token endpoint releases the claim for a retry; any other
+  failure deletes the row. No port forwarding needed, and the agent never holds the
+  flow open.
+- **Identity is data:** `oauth2.identity: {url, field, subject_field}` in the provider
+  YAML names the endpoint read with the new token, a display field and the stable
+  subject (Google: OpenID `userinfo`, `email`, `sub`). An alias is bound to its
+  subject, so an email rename re-consents fine and a different account is refused.
+- **Stale re-consent:** a completion is refused (`stale-authorization`) if the alias
+  gained scopes after the authorization started that it did not ask for.
+- **Back channel:** token, userinfo and revoke requests never follow redirects and
+  need a 2xx. Error messages are addn's own: the operation, the HTTP status and at
+  most an RFC 6749/6750 error identifier, never the provider's text.
 - **Exit codes for connect:** `2` for a bad or mismatched paste, a state mismatch,
-  an unknown, used or expired authorization, or a timeout; `3` when the account was
-  saved but some requested scopes were not granted (`scopes-not-granted`); `4` for a
-  provider refusal (`access_denied`, a 4xx on exchange); `5` for the network or a 5xx.
+  an unknown, used, expired, in-progress or stale authorization, or a timeout; `3`
+  when the account was saved but some requested scopes were not granted
+  (`scopes-not-granted`); `4` for a provider refusal (`access_denied`, a 4xx or 3xx)
+  or an unusable 2xx token or identity response; `5` for the network or a 5xx.
 - **Bring your own OAuth client** (v0.1): `addn client add google --file client_secret.json`.
   `addn doctor google` walks through the Google Cloud setup and warns about the
   7-day refresh-token expiry for apps left in "Testing".
@@ -190,6 +202,9 @@ addn tools [--provider p] [--json]            addn skill install [--harness …]
   `3` not connected / needs reauth · `4` upstream 4xx · `5` upstream 5xx/network ·
   `6` policy denied (Phase 2).
 - Help text is human-readable; JSON is the contract for tool and data commands.
+- Stderr is JSON lines: a progress notice is one object per line, such as
+  `{"notice":"open-browser-failed","authorize_url":"…"}`, and an error envelope, if
+  any, is always the last line.
 - A closed stdout pipe ends the process with SIGPIPE, like standard Unix tools.
 
 ---

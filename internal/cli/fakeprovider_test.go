@@ -275,8 +275,9 @@ type harness struct {
 	clock  *fakeClock
 	deps   deps
 
-	mu      sync.Mutex
-	results []result
+	mu         sync.Mutex
+	results    []result
+	challenges map[string]bool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -286,7 +287,7 @@ func newHarness(t *testing.T) *harness {
 	clock := &fakeClock{t: time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)}
 	env := vault.OSEnv()
 	env.Now = clock.Now
-	h := &harness{t: t, home: home, google: g, clock: clock}
+	h := &harness{t: t, home: home, google: g, clock: clock, challenges: map[string]bool{}}
 	h.deps = deps{
 		catalogFS:       g.catalogFS(),
 		env:             env,
@@ -314,14 +315,33 @@ func (h *harness) visit(authorizeURL string) error {
 	return resp.Body.Close()
 }
 
+var challengeParam = regexp.MustCompile(`code_challenge=([A-Za-z0-9_-]{43})`)
+
+// run records every PKCE challenge addn hands the browser or prints, so the leak check can
+// recognise a verifier even when the provider never saw its authorization.
 func (h *harness) run(args ...string) result {
+	d := h.deps
+	open := d.openBrowser
+	d.openBrowser = func(authorizeURL string) <-chan error {
+		h.noteChallenges(authorizeURL)
+		return open(authorizeURL)
+	}
 	var stdout, stderr bytes.Buffer
-	code := execute(args, &stdout, &stderr, h.deps)
+	code := execute(args, &stdout, &stderr, d)
 	r := result{args: args, code: code, stdout: stdout.String(), stderr: stderr.String()}
+	h.noteChallenges(r.stdout + r.stderr)
 	h.mu.Lock()
 	h.results = append(h.results, r)
 	h.mu.Unlock()
 	return r
+}
+
+func (h *harness) noteChallenges(text string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, m := range challengeParam.FindAllStringSubmatch(text, -1) {
+		h.challenges[m[1]] = true
+	}
 }
 
 func (h *harness) mustRun(args ...string) result {
@@ -363,7 +383,9 @@ var base64URLRun = regexp.MustCompile(`[A-Za-z0-9_-]{43,}`)
 func (h *harness) assertNothingLeaked() {
 	h.t.Helper()
 	secrets := []string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, echoMarker}
-	challenges := map[string]bool{}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	challenges := h.challenges
 	h.google.mu.Lock()
 	for _, v := range h.google.verifiers {
 		if v != "" {
@@ -376,8 +398,6 @@ func (h *harness) assertNothingLeaked() {
 	}
 	h.google.mu.Unlock()
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	for _, r := range h.results {
 		assertNoLeak(h.t, r, secrets...)
 		for stream, out := range map[string]string{"stdout": r.stdout, "stderr": r.stderr} {
