@@ -201,7 +201,10 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 		return err
 	}
 	defer s.Close()
-	pending, err := s.TakePendingAuth(ctx, cb.State)
+	pending, err := s.ClaimPendingAuth(ctx, cb.State)
+	if err == nil {
+		err = s.DeletePendingAuth(ctx, cb.State)
+	}
 	switch {
 	case errors.Is(err, vault.ErrNotFound):
 		return &Error{Code: "unknown-state", Exit: ExitUsage,

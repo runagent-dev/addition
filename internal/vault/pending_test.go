@@ -155,6 +155,16 @@ func pendingStates(t *testing.T, home string) []string {
 	return states
 }
 
+// insertRawPending writes a pending row directly, bypassing the prune that PutPendingAuth runs.
+func insertRawPending(t *testing.T, home, state string, expires time.Time) {
+	t.Helper()
+	_, err := rawDB(t, home).Exec(`INSERT INTO pending_auth (state, provider, alias, redirect_uri, created_at, expires_at)
+		VALUES (?, 'google', 'work', 'http://127.0.0.1:1/callback', '', ?)`, state, expires.UTC().Format("2006-01-02T15:04:05.000000000Z"))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExpiredPendingAuthIsRejectedAndPruned(t *testing.T) {
 	for name, get := range map[string]func(*vault.Store) func(context.Context, string) (vault.PendingAuth, error){
 		"get": func(s *vault.Store) func(context.Context, string) (vault.PendingAuth, error) { return s.GetPendingAuth },
@@ -165,15 +175,11 @@ func TestExpiredPendingAuthIsRejectedAndPruned(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			s, f := newStore(t)
-			for _, p := range []vault.PendingAuth{
-				pending("live", testNow.Add(time.Minute)),
-				pending("expired", testNow.Add(-time.Second)),
-				pending("also-expired", testNow.Add(-time.Hour)),
-			} {
-				if err := s.PutPendingAuth(ctx, p); err != nil {
-					t.Fatal(err)
-				}
+			if err := s.PutPendingAuth(ctx, pending("live", testNow.Add(time.Minute))); err != nil {
+				t.Fatal(err)
 			}
+			insertRawPending(t, f.home, "expired", testNow.Add(-time.Second))
+			insertRawPending(t, f.home, "also-expired", testNow.Add(-time.Hour))
 			if _, err := get(s)(ctx, "expired"); !errors.Is(err, vault.ErrPendingExpired) {
 				t.Errorf("err = %v, want ErrPendingExpired", err)
 			}
@@ -187,15 +193,8 @@ func TestExpiredPendingAuthIsRejectedAndPruned(t *testing.T) {
 func TestPutPendingAuthPrunesExpiredRows(t *testing.T) {
 	ctx := context.Background()
 	s, f := newStore(t)
-	for _, p := range []vault.PendingAuth{
-		pending("at-the-boundary", testNow),
-		pending("just-live", testNow.Add(time.Nanosecond)),
-	} {
-		if _, err := rawDB(t, f.home).Exec(`INSERT INTO pending_auth (state, provider, alias, redirect_uri, created_at, expires_at)
-			VALUES (?, 'google', 'work', 'http://127.0.0.1:1/callback', '', ?)`, p.State, p.ExpiresAt.UTC().Format("2006-01-02T15:04:05.000000000Z")); err != nil {
-			t.Fatal(err)
-		}
-	}
+	insertRawPending(t, f.home, "at-the-boundary", testNow)
+	insertRawPending(t, f.home, "just-live", testNow.Add(time.Nanosecond))
 	if err := s.PutPendingAuth(ctx, pending("next", testNow.Add(time.Minute))); err != nil {
 		t.Fatal(err)
 	}
