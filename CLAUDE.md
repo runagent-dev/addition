@@ -120,7 +120,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 3. **`extends` merge semantics:** scalars override, arrays **replace**, `id` and `name` come from the child.
 4. **Path interpolation:** params named in `{}` are **consumed** — stripped from body/query.
 5. **401 retry:** exactly once, and only when a refresh token exists. Never loop.
-6. **Refresh under lock:** concurrent `addn` processes refreshing one account hit the token endpoint once (SQLite `BEGIN IMMEDIATE`, re-read before refresh). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop.
+6. **Refresh under lock:** concurrent `addn` processes whose refreshes commit hit the token endpoint once per rotation (SQLite `BEGIN IMMEDIATE`, re-read before refresh). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop.
 7. **OAuth:** PKCE S256, `state` validated and discarded after use; loopback redirect on `127.0.0.1`, with a paste-back path for headless machines.
 8. **Slack non-standard errors:** HTTP 200 with `ok: false` is a failure, detected by the Slack adapter, not core.
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.

@@ -124,8 +124,8 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
 Several agents may run `addn` in parallel against the same account. Token
 refresh runs inside a SQLite `BEGIN IMMEDIATE` transaction that re-reads the
-credential before refreshing, so two processes never burn the same refresh
-token.
+credential before refreshing, so two processes whose refreshes commit never
+burn the same refresh token.
 
 The guarantee covers refreshes that commit. If the process dies after the
 provider rotated the refresh token but before the commit, the stored token is
@@ -247,7 +247,8 @@ plus `effect:` tags on tools (used from Phase 2, cheap to add now).
 1. **Binary name:** `addn`. Go module `github.com/runagent-dev/addition`.
 2. **Grammar:** gh-style. `addn gmail search-messages -a work`.
 3. **CLI framework:** cobra.
-4. **Output:** tool commands always print JSON on stdout. Errors always print a
+4. **Output:** tool commands always print JSON on stdout. Errors print (when
+   stderr is writable; a closed stdout pipe is the SIGPIPE exception in §2.5) a
    JSON envelope on stderr: `{"error":{"code":"…","message":"…"}}`.
 5. **Repo:** pivot `runagent-dev/addition` in place. SDK history stays on
    `archive/sdk-v0.1`.
