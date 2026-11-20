@@ -150,7 +150,9 @@ func TestParseCallback(t *testing.T) {
 		"http://127.0.0.1/callback?code=&error=access_denied&state=y",
 		"http://127.0.0.1/callback?error=access_denied&error=server_error&state=y",
 		"http://127.0.0.1/callback?code=a&code=b&state=y",
-		"http://127.0.0.1/callback?code=x&state=y&state=z"} {
+		"http://127.0.0.1/callback?code=x&state=y&state=z",
+		"http://127.0.0.1/callback?error=access_denied&error=%zz&state=y",
+		"http://127.0.0.1/callback?code=%zz&error=access_denied&state=y"} {
 		if _, err := oauth.ParseCallback(bad); !errors.Is(err, oauth.ErrBadRedirect) {
 			t.Errorf("ParseCallback(%q) err = %v, want ErrBadRedirect", bad, err)
 		}
@@ -509,6 +511,9 @@ func TestLoopbackAcceptsOnlyTheVerifiedCallback(t *testing.T) {
 	}
 	if status, _ := get(t, lb.RedirectURI()+"?code=c0&error=access_denied&state=s1"); status != 400 {
 		t.Errorf("a code with an error: %d", status)
+	}
+	if status, _ := get(t, lb.RedirectURI()+"?code=%zz&error=access_denied&state=s1"); status != 400 {
+		t.Errorf("an invalid escape beside an error: %d", status)
 	}
 	if _, ok := received(lb); ok {
 		t.Fatal("an invalid callback was delivered")
