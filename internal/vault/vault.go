@@ -19,8 +19,10 @@ var (
 	ErrKeychainUnavailable = errors.New("the OS keychain is unavailable")
 	ErrNoMasterKey         = errors.New("no master key available")
 	ErrWrongMasterKey      = errors.New("the master key does not match this vault")
-	ErrInsecureKeyFile     = errors.New("the key file is readable by group or others")
+	ErrInsecureKeyFile     = errors.New("the key file is not a private regular file")
+	ErrInsecureHome        = errors.New("the data dir is not private to this user")
 	ErrSchemaTooNew        = errors.New("the vault was written by a newer addn")
+	ErrCorrupt             = errors.New("the vault database is corrupt")
 	ErrNotFound            = errors.New("not found")
 	ErrAliasTaken          = errors.New("alias already in use for this provider")
 )
@@ -30,6 +32,7 @@ type InitOptions struct {
 	KeyFile bool
 }
 
+// InitResult reports the vault; KeySource is the source recorded at init, even when ADDN_MASTER_KEY unlocked it.
 type InitResult struct {
 	Home          string    `json:"home"`
 	KeySource     KeySource `json:"key_source"`
@@ -47,14 +50,17 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return InitResult{}, fmt.Errorf("create data dir: %w", err)
 	}
+	if err := checkPrivateDir(home); err != nil {
+		return InitResult{}, err
+	}
+	if err := createDBFile(home); err != nil {
+		return InitResult{}, err
+	}
 	db, err := openDB(ctx, home)
 	if err != nil {
 		return InitResult{}, err
 	}
 	defer db.Close()
-	if err := os.Chmod(filepath.Join(home, dbFile), 0o600); err != nil {
-		return InitResult{}, err
-	}
 
 	result := InitResult{Home: home, SchemaVersion: SchemaVersion}
 	tx, err := db.BeginTx(ctx, nil)
@@ -63,34 +69,35 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	recorded, err := getMeta(ctx, tx, metaKeySource)
-	switch {
-	case err == nil:
-		if _, err := unlock(ctx, tx, env, home); err != nil {
+	rec, found, err := loadInitRecords(ctx, tx)
+	if err != nil {
+		return InitResult{}, err
+	}
+	if found {
+		if _, err := unlock(env, home, rec); err != nil {
 			return InitResult{}, err
 		}
-		result.KeySource = KeySource(recorded)
+		result.KeySource = rec.source
 		return result, nil
-	case !errors.Is(err, ErrNotFound):
-		return InitResult{}, err
 	}
 
-	key, source, err := provisionKey(env, home, opts.KeyFile)
+	if rec.vaultID, err = newVaultID(); err != nil {
+		return InitResult{}, err
+	}
+	key, source, err := provisionKey(env, home, rec.vaultID, opts.KeyFile)
 	if err != nil {
 		return InitResult{}, err
 	}
-	canary, err := newCanary(key)
+	canary, err := newCanary(key, rec.vaultID)
 	if err != nil {
 		return InitResult{}, err
 	}
-	if err := setMeta(ctx, tx, metaKeySource, string(source)); err != nil {
-		return InitResult{}, err
+	for k, v := range map[string]string{metaVaultID: rec.vaultID, metaKeySource: string(source), metaKeyCanary: canary} {
+		if err := setMeta(ctx, tx, k, v); err != nil {
+			return InitResult{}, err
+		}
 	}
-	if err := setMeta(ctx, tx, metaKeyCanary, canary); err != nil {
-		return InitResult{}, err
-	}
-	ops := ops{q: tx, now: env.Now}
-	if err := ops.Audit(ctx, "init", nil, map[string]any{"key_source": source}); err != nil {
+	if err := (ops{q: tx, now: env.Now}).Audit(ctx, InitEvent{KeySource: source}); err != nil {
 		return InitResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -98,6 +105,31 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	}
 	result.KeySource, result.Created = source, true
 	return result, nil
+}
+
+// createDBFile creates the database at 0600 before SQLite sees it, or checks the existing one.
+func createDBFile(home string) error {
+	f, err := createPrivateFile(filepath.Join(home, dbFile))
+	if err == nil {
+		return f.Close()
+	}
+	if !errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("create vault database: %w", err)
+	}
+	return checkDBFiles(home)
+}
+
+// checkDBFiles requires the database to exist and it and its WAL side files to be private.
+func checkDBFiles(home string) error {
+	if err := checkPrivateFile(filepath.Join(home, dbFile)); err != nil {
+		return err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := checkPrivateFile(filepath.Join(home, dbFile+suffix)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Store is an open vault. All methods take and return plaintext; secrets are sealed at this boundary.
@@ -113,41 +145,91 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(filepath.Join(home, dbFile)); errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
+	notInitialized := fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
+	if _, err := os.Stat(home); errors.Is(err, fs.ErrNotExist) {
+		return nil, notInitialized
+	}
+	if err := checkPrivateDir(home); err != nil {
+		return nil, err
+	}
+	if err := checkDBFiles(home); errors.Is(err, fs.ErrNotExist) {
+		return nil, notInitialized
+	} else if err != nil {
+		return nil, err
 	}
 	db, err := openDB(ctx, home)
 	if err != nil {
 		return nil, err
 	}
-	key, err := unlock(ctx, db, env, home)
+	rec, found, err := loadInitRecords(ctx, db)
+	if err == nil && !found {
+		err = notInitialized
+	}
+	var key crypto.Key
+	if err == nil {
+		key, err = unlock(env, home, rec)
+	}
 	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{ops: ops{q: db, key: key, now: env.Now}, db: db}, nil
+	return &Store{ops: ops{q: db, key: key, vaultID: rec.vaultID, now: env.Now}, db: db}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// initRecords are the meta rows init writes together in one transaction.
+type initRecords struct {
+	vaultID string
+	source  KeySource
+	canary  string
+}
+
+// loadInitRecords reports found=false only for a vault with no init records and no data.
+func loadInitRecords(ctx context.Context, q querier) (initRecords, bool, error) {
+	values := map[string]string{}
+	for _, k := range []string{metaVaultID, metaKeySource, metaKeyCanary} {
+		v, err := getMeta(ctx, q, k)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return initRecords{}, false, err
+		}
+		values[k] = v
+	}
+	rec := initRecords{vaultID: values[metaVaultID], source: KeySource(values[metaKeySource]), canary: values[metaKeyCanary]}
+	switch len(values) {
+	case 3:
+		if !rec.source.valid() || rec.vaultID == "" {
+			return initRecords{}, false, fmt.Errorf("%w: unknown key source or vault id", ErrCorrupt)
+		}
+		return rec, true, nil
+	case 0:
+		empty, err := holdsNoVaultData(ctx, q)
+		if err != nil || empty {
+			return initRecords{}, false, err
+		}
+	}
+	return initRecords{}, false, fmt.Errorf("%w: it is only partly initialised; restore it from a backup, or move it aside and run `addn init`", ErrCorrupt)
+}
+
+func holdsNoVaultData(ctx context.Context, q querier) (bool, error) {
+	var n int
+	err := q.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM oauth_clients) + (SELECT count(*) FROM accounts) +
+		(SELECT count(*) FROM credentials) + (SELECT count(*) FROM audit_log) +
+		(SELECT count(*) FROM meta WHERE key != ?)`, metaSchemaVersion).Scan(&n)
+	return n == 0, err
+}
+
 // unlock resolves the master key and proves it against the stored canary.
-func unlock(ctx context.Context, q querier, env Env, home string) (crypto.Key, error) {
-	recorded, err := getMeta(ctx, q, metaKeySource)
-	if errors.Is(err, ErrNotFound) {
-		return crypto.Key{}, fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
-	}
+func unlock(env Env, home string, rec initRecords) (crypto.Key, error) {
+	key, err := resolveKey(env, home, rec)
 	if err != nil {
 		return crypto.Key{}, err
 	}
-	canary, err := getMeta(ctx, q, metaKeyCanary)
-	if err != nil {
-		return crypto.Key{}, fmt.Errorf("read key canary: %w", err)
-	}
-	key, err := resolveKey(env, home, KeySource(recorded))
-	if err != nil {
-		return crypto.Key{}, err
-	}
-	if err := checkCanary(key, canary); err != nil {
+	if err := checkCanary(key, rec); err != nil {
 		return crypto.Key{}, err
 	}
 	return key, nil

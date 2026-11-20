@@ -235,9 +235,9 @@ func TestInitReportsTheRecordedSourceWhenEnvUnlocks(t *testing.T) {
 
 func TestInitRefusesAPartiallyInitializedVault(t *testing.T) {
 	cases := map[string]string{
-		"no key_source": `DELETE FROM meta WHERE key = 'key_source'`,
-		"no key_canary": `DELETE FROM meta WHERE key = 'key_canary'`,
-		"no vault_id":   `DELETE FROM meta WHERE key = 'vault_id'`,
+		"no key_source":           `DELETE FROM meta WHERE key = 'key_source'`,
+		"no key_canary":           `DELETE FROM meta WHERE key = 'key_canary'`,
+		"no vault_id":             `DELETE FROM meta WHERE key = 'vault_id'`,
 		"records gone, data left": `DELETE FROM meta WHERE key IN ('key_source', 'key_canary', 'vault_id')`,
 	}
 	for name, damage := range cases {
@@ -246,11 +246,11 @@ func TestInitRefusesAPartiallyInitializedVault(t *testing.T) {
 			f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
 			mustInit(t, f, vault.InitOptions{})
 			db := rawDB(t, f.home)
-			var canaryBefore string
-			_ = db.QueryRow(`SELECT COALESCE((SELECT value FROM meta WHERE key = 'key_canary'), '')`).Scan(&canaryBefore)
 			if _, err := db.Exec(damage); err != nil {
 				t.Fatal(err)
 			}
+			var canaryBefore string
+			_ = db.QueryRow(`SELECT COALESCE((SELECT value FROM meta WHERE key = 'key_canary'), '')`).Scan(&canaryBefore)
 			f.set("ADDN_MASTER_KEY", strings.Repeat("e", 64))
 
 			_, initErr := vault.Init(context.Background(), f.env(), vault.InitOptions{})

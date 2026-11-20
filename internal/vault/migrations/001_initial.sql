@@ -1,5 +1,5 @@
 -- Timestamps are RFC 3339 UTC text. Columns ending in _encrypted hold
--- base64(iv || tag || ciphertext) blobs from internal/crypto.
+-- base64(iv || tag || ciphertext) blobs sealed with AAD naming their row and column.
 
 CREATE TABLE oauth_clients (
     provider                TEXT PRIMARY KEY,
@@ -9,8 +9,9 @@ CREATE TABLE oauth_clients (
     updated_at              TEXT NOT NULL
 );
 
+-- AUTOINCREMENT: an id is never reused, so a sealed blob cannot open under a later account.
 CREATE TABLE accounts (
-    id         INTEGER PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
     provider   TEXT NOT NULL,
     alias      TEXT NOT NULL,
     identity   TEXT NOT NULL DEFAULT '',

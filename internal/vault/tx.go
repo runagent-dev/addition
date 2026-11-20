@@ -15,7 +15,7 @@ func (s *Store) WithImmediateTx(ctx context.Context, fn func(*Tx) error) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := fn(&Tx{ops{q: tx, key: s.key, now: s.now}}); err != nil {
+	if err := fn(&Tx{ops{q: tx, key: s.key, vaultID: s.vaultID, now: s.now}}); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -38,8 +38,8 @@ func (f *fakeEnv) unset(key string) { delete(f.vars, key) }
 func (f *fakeEnv) env() vault.Env {
 	return vault.Env{
 		LookupEnv: func(k string) (string, bool) { v, ok := f.vars[k]; return v, ok },
-		GOOS:   "linux",
-		Now:    func() time.Time { return testNow },
+		GOOS:      "linux",
+		Now:       func() time.Time { return testNow },
 	}
 }
 

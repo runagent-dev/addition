@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -16,8 +17,23 @@ import (
 
 const dbFile = "addition.db"
 
+// dsn is a file: URI for the existing database; mode=rw stops SQLite creating it with its own permissions.
 // Every transaction is BEGIN IMMEDIATE, so a writer takes the lock before it reads.
-const dsnParams = "?_busy_timeout=10000&_journal_mode=WAL&_foreign_keys=1&_synchronous=NORMAL&_txlock=immediate"
+func dsn(home string) string {
+	path := filepath.ToSlash(filepath.Join(home, dbFile))
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	params := url.Values{
+		"mode":          {"rw"},
+		"_busy_timeout": {"10000"},
+		"_journal_mode": {"WAL"},
+		"_foreign_keys": {"1"},
+		"_synchronous":  {"NORMAL"},
+		"_txlock":       {"immediate"},
+	}
+	return (&url.URL{Scheme: "file", Path: path, RawQuery: params.Encode()}).String()
+}
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -60,7 +76,7 @@ func mustLoadMigrations() []migration {
 }
 
 func openDB(ctx context.Context, home string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", filepath.Join(home, dbFile)+dsnParams)
+	db, err := sql.Open("sqlite", dsn(home))
 	if err != nil {
 		return nil, err
 	}
@@ -112,14 +128,15 @@ func schemaVersion(ctx context.Context, q querier) (int, error) {
 		return 0, err
 	}
 	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, fmt.Errorf("corrupt schema_version %q", raw)
+	if err != nil || v < 1 {
+		return 0, fmt.Errorf("%w: schema_version is not a valid version", ErrCorrupt)
 	}
 	return v, nil
 }
 
 const (
 	metaSchemaVersion = "schema_version"
+	metaVaultID       = "vault_id"
 	metaKeySource     = "key_source"
 	metaKeyCanary     = "key_canary"
 )

@@ -3,9 +3,11 @@ package vault
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,9 +47,10 @@ type Credential struct {
 
 // ops holds the store operations shared by Store and Tx.
 type ops struct {
-	q   querier
-	key crypto.Key
-	now func() time.Time
+	q       querier
+	key     crypto.Key
+	vaultID string
+	now     func() time.Time
 }
 
 func (o ops) timestamp() string { return formatTime(o.now()) }
@@ -56,15 +59,44 @@ func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 func parseTime(s string) (time.Time, error) { return time.Parse(time.RFC3339Nano, s) }
 
-func (o ops) seal(plaintext string) (string, error) { return crypto.Encrypt(o.key, []byte(plaintext)) }
+// slot names where a sealed value lives; its blob opens only in the same slot of the same vault.
+type slot struct{ table, row, column string }
 
-func (o ops) open(blob string) (string, error) {
-	plaintext, err := crypto.Decrypt(o.key, blob)
+func clientSecretSlot(provider string) slot {
+	return slot{"oauth_clients", provider, "client_secret_encrypted"}
+}
+
+func accessTokenSlot(accountID int64) slot {
+	return slot{"credentials", strconv.FormatInt(accountID, 10), "access_token_encrypted"}
+}
+
+func refreshTokenSlot(accountID int64) slot {
+	return slot{"credentials", strconv.FormatInt(accountID, 10), "refresh_token_encrypted"}
+}
+
+const sealContextVersion = "addn-vault-aad/v1"
+
+// sealContext is the AAD for a slot: length-prefixed parts, so no two slots share an encoding.
+func sealContext(vaultID, table, row, column string) []byte {
+	var aad []byte
+	for _, part := range []string{sealContextVersion, vaultID, table, row, column} {
+		aad = binary.AppendUvarint(aad, uint64(len(part)))
+		aad = append(aad, part...)
+	}
+	return aad
+}
+
+func (o ops) seal(at slot, plaintext string) (string, error) {
+	return crypto.EncryptWithAAD(o.key, []byte(plaintext), sealContext(o.vaultID, at.table, at.row, at.column))
+}
+
+func (o ops) open(at slot, blob string) (string, error) {
+	plaintext, err := crypto.DecryptWithAAD(o.key, blob, sealContext(o.vaultID, at.table, at.row, at.column))
 	return string(plaintext), err
 }
 
 func (o ops) PutOAuthClient(ctx context.Context, c OAuthClient) error {
-	secret, err := o.seal(c.ClientSecret)
+	secret, err := o.seal(clientSecretSlot(c.Provider), c.ClientSecret)
 	if err != nil {
 		return err
 	}
@@ -117,7 +149,7 @@ func (o ops) scanOAuthClient(row scanner) (OAuthClient, error) {
 		return OAuthClient{}, err
 	}
 	var err error
-	if c.ClientSecret, err = o.open(secret); err != nil {
+	if c.ClientSecret, err = o.open(clientSecretSlot(c.Provider), secret); err != nil {
 		return OAuthClient{}, fmt.Errorf("oauth client for %s: %w", c.Provider, err)
 	}
 	if c.CreatedAt, err = parseTime(created); err != nil {
@@ -225,13 +257,13 @@ func scanAccount(row scanner) (Account, error) {
 
 // PutCredential replaces the account's credential.
 func (o ops) PutCredential(ctx context.Context, accountID int64, c Credential) error {
-	access, err := o.seal(c.AccessToken)
+	access, err := o.seal(accessTokenSlot(accountID), c.AccessToken)
 	if err != nil {
 		return err
 	}
 	var refresh, expires sql.NullString
 	if c.RefreshToken != "" {
-		blob, err := o.seal(c.RefreshToken)
+		blob, err := o.seal(refreshTokenSlot(accountID), c.RefreshToken)
 		if err != nil {
 			return err
 		}
@@ -273,11 +305,11 @@ func (o ops) GetCredential(ctx context.Context, accountID int64) (Credential, er
 	if err != nil {
 		return Credential{}, err
 	}
-	if c.AccessToken, err = o.open(access); err != nil {
+	if c.AccessToken, err = o.open(accessTokenSlot(accountID), access); err != nil {
 		return Credential{}, fmt.Errorf("credential for account %d: %w", accountID, err)
 	}
 	if refresh.Valid {
-		if c.RefreshToken, err = o.open(refresh.String); err != nil {
+		if c.RefreshToken, err = o.open(refreshTokenSlot(accountID), refresh.String); err != nil {
 			return Credential{}, fmt.Errorf("credential for account %d: %w", accountID, err)
 		}
 	}
@@ -290,29 +322,6 @@ func (o ops) GetCredential(ctx context.Context, accountID int64) (Credential, er
 		return Credential{}, err
 	}
 	return c, nil
-}
-
-// Audit records a sensitive event. details must never carry token or secret values.
-func (o ops) Audit(ctx context.Context, event string, account *Account, details map[string]any) error {
-	if details == nil {
-		details = map[string]any{}
-	}
-	body, err := json.Marshal(details)
-	if err != nil {
-		return fmt.Errorf("audit details: %w", err)
-	}
-	var id sql.NullInt64
-	var provider, alias sql.NullString
-	if account != nil {
-		id = sql.NullInt64{Int64: account.ID, Valid: account.ID != 0}
-		provider = sql.NullString{String: account.Provider, Valid: true}
-		alias = sql.NullString{String: account.Alias, Valid: true}
-	}
-	_, err = o.q.ExecContext(ctx, `
-		INSERT INTO audit_log (event, account_id, provider, alias, details, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		event, id, provider, alias, string(body), o.timestamp())
-	return err
 }
 
 func isUniqueViolation(err error) bool {

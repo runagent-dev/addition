@@ -1,8 +1,11 @@
 package vault
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,122 +24,147 @@ const (
 	KeySourceFile     KeySource = "file"
 )
 
+func (s KeySource) valid() bool {
+	return s == KeySourceEnv || s == KeySourceKeychain || s == KeySourceFile
+}
+
 const (
 	envMasterKey = "ADDN_MASTER_KEY"
 	keyFileName  = "master.key"
 
-	// KeychainService is the OS keychain service; the account is the vault's home path.
+	// KeychainService is the OS keychain service; the account is the vault's random ID.
 	KeychainService = "addition"
+
+	keyFileMaxBytes = 4096
 )
 
 const canaryPlaintext = "addition master key canary"
 
-// resolveKey follows invariant 2: env, then keychain, then the key file only if init opted into it.
-func resolveKey(env Env, home string, recorded KeySource) (crypto.Key, error) {
-	if hex := env.Getenv(envMasterKey); hex != "" {
-		key, err := crypto.ParseKey(hex)
-		if err != nil {
-			return crypto.Key{}, fmt.Errorf("%s: %w", envMasterKey, err)
-		}
-		return key, nil
+// resolveKey uses a set ADDN_MASTER_KEY, else only the source the vault recorded at init.
+func resolveKey(env Env, home string, rec initRecords) (crypto.Key, error) {
+	if hex, ok := env.LookupEnv(envMasterKey); ok {
+		return parseEnvKey(hex)
 	}
-	if hex, err := keyring.Get(KeychainService, home); err == nil {
-		key, err := crypto.ParseKey(hex)
-		if err != nil {
-			return crypto.Key{}, fmt.Errorf("keychain entry for %s: %w", home, err)
-		}
-		return key, nil
-	}
-	if recorded == KeySourceFile {
-		return readKeyFile(env, home)
-	}
-	return crypto.Key{}, noKeyError(recorded, home)
-}
-
-func noKeyError(recorded KeySource, home string) error {
-	switch recorded {
-	case KeySourceEnv:
-		return fmt.Errorf("%w: this vault was initialised with %s; set it to the same key", ErrNoMasterKey, envMasterKey)
+	switch rec.source {
+	case KeySourceKeychain:
+		return keychainKey(rec.vaultID)
 	case KeySourceFile:
-		return fmt.Errorf("%w: key file %s is missing; restore it or set %s", ErrNoMasterKey, filepath.Join(home, keyFileName), envMasterKey)
+		key, err := readKeyFile(home)
+		if errors.Is(err, fs.ErrNotExist) {
+			return crypto.Key{}, fmt.Errorf("%w: key file %s is missing; restore it or set %s", ErrNoMasterKey, filepath.Join(home, keyFileName), envMasterKey)
+		}
+		return key, err
 	default:
-		return fmt.Errorf("%w: the OS keychain has no key for %s or is unavailable; unlock the keychain or set %s", ErrNoMasterKey, home, envMasterKey)
+		return crypto.Key{}, fmt.Errorf("%w: this vault was initialised with %s; set it to the same key", ErrNoMasterKey, envMasterKey)
 	}
 }
 
-func readKeyFile(env Env, home string) (crypto.Key, error) {
-	path := filepath.Join(home, keyFileName)
-	info, err := os.Stat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return crypto.Key{}, noKeyError(KeySourceFile, home)
+func parseEnvKey(hex string) (crypto.Key, error) {
+	if hex == "" {
+		return crypto.Key{}, fmt.Errorf("%s is set but empty; unset it or set it to the vault's key: %w", envMasterKey, crypto.ErrInvalidKey)
 	}
+	key, err := crypto.ParseKey(hex)
+	if err != nil {
+		return crypto.Key{}, fmt.Errorf("%s: %w", envMasterKey, err)
+	}
+	return key, nil
+}
+
+func keychainKey(vaultID string) (crypto.Key, error) {
+	hex, err := keyring.Get(KeychainService, vaultID)
+	if err != nil {
+		return crypto.Key{}, fmt.Errorf("%w: the OS keychain has no key for vault %s or is unavailable; unlock the keychain or set %s", ErrNoMasterKey, vaultID, envMasterKey)
+	}
+	key, err := crypto.ParseKey(hex)
+	if err != nil {
+		return crypto.Key{}, fmt.Errorf("keychain entry for vault %s: %w", vaultID, err)
+	}
+	return key, nil
+}
+
+// readKeyFile reads the key through one handle that it has checked is a private regular file.
+func readKeyFile(home string) (crypto.Key, error) {
+	f, err := openKeyFile(home)
 	if err != nil {
 		return crypto.Key{}, err
 	}
-	if env.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return crypto.Key{}, fmt.Errorf("%w: %s has mode %o; run chmod 600 %s", ErrInsecureKeyFile, path, info.Mode().Perm(), path)
-	}
-	content, err := os.ReadFile(path)
+	defer f.Close()
+	path := f.Name()
+	info, err := f.Stat()
 	if err != nil {
 		return crypto.Key{}, err
+	}
+	if err := checkKeyFileInfo(info, path); err != nil {
+		return crypto.Key{}, err
+	}
+	content, err := io.ReadAll(io.LimitReader(f, keyFileMaxBytes))
+	if err != nil {
+		return crypto.Key{}, fmt.Errorf("read key file: %w", err)
 	}
 	key, err := crypto.ParseKey(string(content))
 	if err != nil {
-		return crypto.Key{}, fmt.Errorf("%s: %w", path, err)
+		return crypto.Key{}, fmt.Errorf("key file %s is empty, truncated or not a key; restore it or set %s: %w", path, envMasterKey, err)
 	}
 	return key, nil
 }
 
-// provisionKey finds or creates the key for a new vault without overwriting any existing one.
-func provisionKey(env Env, home string, useKeyFile bool) (crypto.Key, KeySource, error) {
-	if hex := env.Getenv(envMasterKey); hex != "" {
-		key, err := crypto.ParseKey(hex)
-		if err != nil {
-			return crypto.Key{}, "", fmt.Errorf("%s: %w", envMasterKey, err)
-		}
-		return key, KeySourceEnv, nil
+// provisionKey finds or creates the key for a new vault; a set ADDN_MASTER_KEY wins over opts.
+func provisionKey(env Env, home, vaultID string, useKeyFile bool) (crypto.Key, KeySource, error) {
+	if hex, ok := env.LookupEnv(envMasterKey); ok {
+		key, err := parseEnvKey(hex)
+		return key, KeySourceEnv, err
 	}
 	if useKeyFile {
-		key, err := provisionKeyFile(env, home)
+		key, err := provisionKeyFile(home)
 		return key, KeySourceFile, err
 	}
-	key, err := provisionKeychain(home)
+	key, err := provisionKeychain(vaultID)
 	return key, KeySourceKeychain, err
 }
 
-func provisionKeyFile(env Env, home string) (crypto.Key, error) {
-	path := filepath.Join(home, keyFileName)
-	if _, err := os.Stat(path); err == nil {
-		return readKeyFile(env, home)
+// provisionKeyFile reuses a key file an interrupted init left behind, else publishes a new one.
+func provisionKeyFile(home string) (crypto.Key, error) {
+	key, err := readKeyFile(home)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return key, err
 	}
-	key, err := crypto.GenerateKey()
-	if err != nil {
+	if key, err = crypto.GenerateKey(); err != nil {
 		return crypto.Key{}, err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return crypto.Key{}, fmt.Errorf("create key file: %w", err)
-	}
-	if _, err := f.WriteString(key.Hex()); err != nil {
-		_ = f.Close()
-		return crypto.Key{}, fmt.Errorf("write key file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return crypto.Key{}, fmt.Errorf("write key file: %w", err)
+	if err := writeKeyFile(home, key); err != nil {
+		return crypto.Key{}, err
 	}
 	return key, nil
 }
 
-func provisionKeychain(home string) (crypto.Key, error) {
-	hex, err := keyring.Get(KeychainService, home)
-	if err == nil {
-		key, err := crypto.ParseKey(hex)
-		if err != nil {
-			return crypto.Key{}, fmt.Errorf("keychain entry for %s: %w", home, err)
-		}
-		return key, nil
+// writeKeyFile publishes a complete, synced key file and never replaces an existing one.
+func writeKeyFile(home string, key crypto.Key) error {
+	tmp, err := os.CreateTemp(home, "."+keyFileName+"-*")
+	if err != nil {
+		return fmt.Errorf("create key file: %w", err)
 	}
-	if !errors.Is(err, keyring.ErrNotFound) {
+	defer os.Remove(tmp.Name())
+	_, err = tmp.WriteString(key.Hex())
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("write key file: %w", err)
+	}
+	if err := os.Link(tmp.Name(), filepath.Join(home, keyFileName)); err != nil {
+		return fmt.Errorf("publish key file: %w", err)
+	}
+	if err := syncDir(home); err != nil {
+		return fmt.Errorf("sync data dir: %w", err)
+	}
+	return nil
+}
+
+func provisionKeychain(vaultID string) (crypto.Key, error) {
+	if _, err := keyring.Get(KeychainService, vaultID); !errors.Is(err, keyring.ErrNotFound) {
 		return crypto.Key{}, keychainUnavailable(fmt.Sprintf(" (%v)", err))
 	}
 	key, err := crypto.GenerateKey()
@@ -144,7 +172,7 @@ func provisionKeychain(home string) (crypto.Key, error) {
 		return crypto.Key{}, err
 	}
 	// The Set error is dropped: it is the one call that carries the key.
-	if err := keyring.Set(KeychainService, home, key.Hex()); err != nil {
+	if err := keyring.Set(KeychainService, vaultID, key.Hex()); err != nil {
 		return crypto.Key{}, keychainUnavailable(" (storing the key failed)")
 	}
 	return key, nil
@@ -154,12 +182,20 @@ func keychainUnavailable(detail string) error {
 	return fmt.Errorf("%w%s: run `addn init --key-file` to keep the key in a 0600 file, or set %s", ErrKeychainUnavailable, detail, envMasterKey)
 }
 
-func newCanary(key crypto.Key) (string, error) {
-	return crypto.Encrypt(key, []byte(canaryPlaintext))
+func newVaultID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", fmt.Errorf("generate vault id: %w", err)
+	}
+	return hex.EncodeToString(id[:]), nil
 }
 
-func checkCanary(key crypto.Key, canary string) error {
-	plaintext, err := crypto.Decrypt(key, canary)
+func newCanary(key crypto.Key, vaultID string) (string, error) {
+	return crypto.EncryptWithAAD(key, []byte(canaryPlaintext), sealContext(vaultID, "meta", metaKeyCanary, "value"))
+}
+
+func checkCanary(key crypto.Key, rec initRecords) error {
+	plaintext, err := crypto.DecryptWithAAD(key, rec.canary, sealContext(rec.vaultID, "meta", metaKeyCanary, "value"))
 	if err != nil || string(plaintext) != canaryPlaintext {
 		return fmt.Errorf("%w: it cannot decrypt this vault's canary", ErrWrongMasterKey)
 	}
