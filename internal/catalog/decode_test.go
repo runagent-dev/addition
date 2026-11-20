@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func pingTool(description, paramsLine string) string {
@@ -148,4 +149,27 @@ func TestNullResponseFieldsLoadAsOmitted(t *testing.T) {
 
 	nested := strings.Replace(validTool, "effect: read", "effect: read\n    response:\n      fields: {data: {title: t}}", 1)
 	wantLoadError(t, toolkitFS(map[string]string{"acme.yaml": acmeToolkit(nested)}), `tool "get_widget"`, "fields")
+}
+
+func TestScalarsOutsideYAML12CoreStayStrings(t *testing.T) {
+	src := "tagged: !!int 010\nbinary: 0b10\nunderscored: 1_000\nsexagesimal: 1:30\nhex: 0x1F\noctal: 0o17\nfloat: 1.5\nquoted: \"010\"\n"
+	fsys := fstest.MapFS{"doc.yaml": {Data: []byte(src)}}
+
+	node, err := decodeDocument(fsys, "doc.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := node.Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"tagged": 10, "binary": "0b10", "underscored": "1_000", "sexagesimal": "1:30",
+		"hex": 31, "octal": 15, "float": 1.5, "quoted": "010",
+	}
+	for key, w := range want {
+		if got[key] != w {
+			t.Errorf("%s = %#v (%T), want %#v (%T)", key, got[key], got[key], w, w)
+		}
+	}
 }
