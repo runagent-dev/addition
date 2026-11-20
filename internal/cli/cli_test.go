@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -81,10 +84,10 @@ func TestUsageErrorsUseEnvelopeAndExitCode(t *testing.T) {
 
 func TestExitCodesMatchThePlan(t *testing.T) {
 	want := map[string]int{
-		"ok": 0, "usage": 2, "needs-connect": 3, "upstream-4xx": 4, "upstream-5xx": 5, "policy-denied": 6,
+		"ok": 0, "output": 1, "usage": 2, "needs-connect": 3, "upstream-4xx": 4, "upstream-5xx": 5, "policy-denied": 6,
 	}
 	got := map[string]int{
-		"ok": ExitOK, "usage": ExitUsage, "needs-connect": ExitNeedsConnect,
+		"ok": ExitOK, "output": ExitOutput, "usage": ExitUsage, "needs-connect": ExitNeedsConnect,
 		"upstream-4xx": ExitUpstreamClient, "upstream-5xx": ExitUpstreamServer, "policy-denied": ExitPolicyDenied,
 	}
 	for name, code := range want {
@@ -102,5 +105,70 @@ func TestNoArgsPrintsHelpAndSucceeds(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(r.stdout), []byte("addn")) {
 		t.Errorf("help output does not mention addn: %q", r.stdout)
+	}
+}
+
+func TestMalformedRequestsAreUsageErrors(t *testing.T) {
+	cases := map[string][]string{
+		"help for unknown command":  {"help", "bogus"},
+		"help with extra argument":  {"help", "version", "extra"},
+		"completion is not offered": {"completion", "bash"},
+		"empty argument":            {""},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := run(args...)
+
+			if r.code != ExitUsage {
+				t.Fatalf("exit code = %d, want %d (stdout: %q)", r.code, ExitUsage, r.stdout)
+			}
+			if r.stdout != "" {
+				t.Errorf("stdout = %q, want empty", r.stdout)
+			}
+			if env := decodeError(t, r.stderr); env.Error.Code != "usage" {
+				t.Errorf("error.code = %q, want usage", env.Error.Code)
+			}
+		})
+	}
+}
+
+func TestHelpRequestsSucceed(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}, {"help", "version"}, {"version", "--help"}} {
+		r := run(args...)
+		if r.code != ExitOK || r.stderr != "" {
+			t.Errorf("%v: exit %d, stderr %q", args, r.code, r.stderr)
+		}
+		if !strings.Contains(r.stdout, "Usage:") {
+			t.Errorf("%v: stdout has no usage text: %q", args, r.stdout)
+		}
+	}
+}
+
+type brokenWriter struct{}
+
+func (brokenWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+
+func TestStdoutWriteFailureIsAnOutputError(t *testing.T) {
+	for _, args := range [][]string{{"version"}, {"--help"}} {
+		var stderr bytes.Buffer
+		code := Run(args, brokenWriter{}, &stderr)
+
+		if code != ExitOutput {
+			t.Errorf("%v: exit code = %d, want %d", args, code, ExitOutput)
+		}
+		if env := decodeError(t, stderr.String()); env.Error.Code != "output" {
+			t.Errorf("%v: error.code = %q, want output", args, env.Error.Code)
+		}
+	}
+}
+
+func TestNilArgsDoNotReadProcessArgs(t *testing.T) {
+	saved := os.Args
+	t.Cleanup(func() { os.Args = saved })
+	os.Args = []string{"addn.test", "bogus"}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(nil, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("exit code = %d, want %d (stderr: %q)", code, ExitOK, stderr.String())
 	}
 }
