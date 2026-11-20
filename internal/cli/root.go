@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -17,6 +18,13 @@ var Version = "dev"
 
 // Run executes addn with args and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
+	return execute(args, stdout, stderr, productionDeps())
+}
+
+func execute(args []string, stdout, stderr io.Writer, d deps) int {
+	if d.env.Now == nil {
+		d.env.Now = time.Now
+	}
 	if args == nil {
 		args = []string{} // cobra falls back to os.Args on nil
 	}
@@ -28,7 +36,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	out := &trackingWriter{w: stdout}
 
-	root := newRoot()
+	root := newRoot(d)
 	root.SetArgs(args)
 	root.SetOut(out)
 	root.SetErr(stderr)
@@ -45,7 +53,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return ExitOK
 }
 
-func newRoot() *cobra.Command {
+func newRoot(d deps) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "addn",
 		Short:         "Give coding agents authenticated access to your accounts",
@@ -59,7 +67,10 @@ func newRoot() *cobra.Command {
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpCommand(newHelpCmd(root))
-	root.AddCommand(newVersionCmd(), newProvidersCmd(), newToolsCmd(), newInitCmd())
+	root.AddCommand(
+		newVersionCmd(), newProvidersCmd(d), newToolsCmd(d), newInitCmd(d),
+		newClientCmd(d), newConnectCmd(d), newAccountsCmd(d), newAuthCmd(d),
+	)
 	return root
 }
 
@@ -101,11 +112,14 @@ func writeErrorEnvelope(w io.Writer, e *Error) {
 	envelope := map[string]map[string]string{
 		"error": {"code": e.Code, "message": e.Message},
 	}
-	_ = json.NewEncoder(w).Encode(envelope)
+	_ = writeJSON(w, envelope)
 }
 
+// writeJSON prints v without HTML escaping, so URLs stay copyable.
 func writeJSON(w io.Writer, v any) error {
-	return json.NewEncoder(w).Encode(v)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(v)
 }
 
 // trackingWriter remembers the first write error, since cobra's help output discards it.

@@ -36,6 +36,15 @@ type OAuth2 struct {
 	TokenResponseFormat  string                `yaml:"token_response_format"`
 	ClientAuthMethod     string                `yaml:"client_auth_method"`
 	TokenResponseMapping *TokenResponseMapping `yaml:"token_response_mapping"`
+	Identity             *Identity             `yaml:"identity"`
+}
+
+// Identity names the endpoint that tells who an access token belongs to. SubjectField is the
+// stable account id that aliases match on; Field is a display name, such as an email.
+type Identity struct {
+	URL          string `yaml:"url"`
+	Field        string `yaml:"field"`
+	SubjectField string `yaml:"subject_field"`
 }
 
 // TokenResponseMapping holds dot-paths into a non-standard token response.

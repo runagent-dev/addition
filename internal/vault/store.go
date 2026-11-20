@@ -25,12 +25,14 @@ type OAuthClient struct {
 
 const AccountActive = "active"
 
-// Account is one connected identity, addressed by (Provider, Alias).
+// Account is one connected identity, addressed by (Provider, Alias). Subject is the provider's
+// stable id for it; Identity is a display name, such as an email.
 type Account struct {
 	ID        int64
 	Provider  string
 	Alias     string
 	Identity  string
+	Subject   string
 	Scopes    []string
 	Status    string
 	CreatedAt time.Time
@@ -170,7 +172,8 @@ var (
 	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 )
 
-func validateAccountName(provider, alias string) error {
+// ValidateAccountName checks a provider id and alias before anything is stored under them.
+func ValidateAccountName(provider, alias string) error {
 	if !providerIDPattern.MatchString(provider) {
 		return fmt.Errorf("%w: provider must match %s", ErrInvalidAccount, providerIDPattern)
 	}
@@ -182,7 +185,7 @@ func validateAccountName(provider, alias string) error {
 
 // CreateAccount inserts a; an empty Status becomes AccountActive.
 func (o ops) CreateAccount(ctx context.Context, a Account) (Account, error) {
-	if err := validateAccountName(a.Provider, a.Alias); err != nil {
+	if err := ValidateAccountName(a.Provider, a.Alias); err != nil {
 		return Account{}, err
 	}
 	if a.Status == "" {
@@ -197,9 +200,9 @@ func (o ops) CreateAccount(ctx context.Context, a Account) (Account, error) {
 	}
 	now := o.now().UTC()
 	res, err := o.q.ExecContext(ctx, `
-		INSERT INTO accounts (provider, alias, identity, scopes, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.Provider, a.Alias, a.Identity, string(scopes), a.Status, formatTime(now), formatTime(now))
+		INSERT INTO accounts (provider, alias, identity, subject, scopes, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.Provider, a.Alias, a.Identity, a.Subject, string(scopes), a.Status, formatTime(now), formatTime(now))
 	if isUniqueViolation(err) {
 		return Account{}, fmt.Errorf("%s/%s: %w", a.Provider, a.Alias, ErrAliasTaken)
 	}
@@ -213,7 +216,7 @@ func (o ops) CreateAccount(ctx context.Context, a Account) (Account, error) {
 	return a, nil
 }
 
-const accountColumns = `id, provider, alias, identity, scopes, status, created_at, updated_at`
+const accountColumns = `id, provider, alias, identity, subject, scopes, status, created_at, updated_at`
 
 func (o ops) GetAccount(ctx context.Context, provider, alias string) (Account, error) {
 	row := o.q.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM accounts WHERE provider = ? AND alias = ?`, provider, alias)
@@ -244,9 +247,34 @@ func (o ops) ListAccounts(ctx context.Context, provider string) ([]Account, erro
 	return out, rows.Err()
 }
 
-// RemoveAccount deletes the account and, by cascade, its credential.
+// UpdateAccount stores a's identity, subject, scopes and status on the account named by its provider and alias.
+func (o ops) UpdateAccount(ctx context.Context, a Account) (Account, error) {
+	scopes, err := json.Marshal(nonNil(a.Scopes))
+	if err != nil {
+		return Account{}, err
+	}
+	now := o.now().UTC()
+	res, err := o.q.ExecContext(ctx, `
+		UPDATE accounts SET identity = ?, subject = ?, scopes = ?, status = ?, updated_at = ?
+		WHERE provider = ? AND alias = ?`,
+		a.Identity, a.Subject, string(scopes), a.Status, formatTime(now), a.Provider, a.Alias)
+	if err := requireOneRow(res, err, a.Provider, a.Alias); err != nil {
+		return Account{}, err
+	}
+	return o.GetAccount(ctx, a.Provider, a.Alias)
+}
+
+// RemoveAccount deletes the account, by cascade its credential, and its default marker.
 func (o ops) RemoveAccount(ctx context.Context, provider, alias string) error {
 	res, err := o.q.ExecContext(ctx, `DELETE FROM accounts WHERE provider = ? AND alias = ?`, provider, alias)
+	if err := requireOneRow(res, err, provider, alias); err != nil {
+		return err
+	}
+	_, err = o.q.ExecContext(ctx, `DELETE FROM meta WHERE key = ? AND value = ?`, defaultAccountKey(provider), alias)
+	return err
+}
+
+func requireOneRow(res sql.Result, err error, provider, alias string) error {
 	if err != nil {
 		return err
 	}
@@ -258,10 +286,32 @@ func (o ops) RemoveAccount(ctx context.Context, provider, alias string) error {
 	return nil
 }
 
+func defaultAccountKey(provider string) string { return "default_account:" + provider }
+
+// SetDefaultAccount makes alias the account used for provider when none is named. One
+// statement checks the account exists and sets it, so a concurrent removal cannot leave it stale.
+func (o ops) SetDefaultAccount(ctx context.Context, provider, alias string) error {
+	res, err := o.q.ExecContext(ctx, `
+		INSERT INTO meta (key, value)
+		SELECT ?, alias FROM accounts WHERE provider = ? AND alias = ?
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+		defaultAccountKey(provider), provider, alias)
+	return requireOneRow(res, err, provider, alias)
+}
+
+// DefaultAccount returns provider's default alias, or ErrNotFound.
+func (o ops) DefaultAccount(ctx context.Context, provider string) (string, error) {
+	alias, err := getMeta(ctx, o.q, defaultAccountKey(provider))
+	if errors.Is(err, ErrNotFound) {
+		return "", fmt.Errorf("default account for %s: %w", provider, ErrNotFound)
+	}
+	return alias, err
+}
+
 func scanAccount(row scanner) (Account, error) {
 	var a Account
 	var scopes, created, updated string
-	if err := row.Scan(&a.ID, &a.Provider, &a.Alias, &a.Identity, &scopes, &a.Status, &created, &updated); err != nil {
+	if err := row.Scan(&a.ID, &a.Provider, &a.Alias, &a.Identity, &a.Subject, &scopes, &a.Status, &created, &updated); err != nil {
 		return Account{}, err
 	}
 	if err := json.Unmarshal([]byte(scopes), &a.Scopes); err != nil {

@@ -50,6 +50,15 @@ func (c fieldChecker) stringList(key string) {
 	}
 }
 
+// onlyKeys rejects any field not in allowed, so a typo cannot silently drop config.
+func (c fieldChecker) onlyKeys(allowed ...string) {
+	for _, key := range sortedKeys(c.fields) {
+		if !slices.Contains(allowed, key) {
+			c.fail(key, "is not a known field")
+		}
+	}
+}
+
 // mapping checks key holds a mapping and returns a checker for its fields.
 func (c fieldChecker) mapping(key string) (fieldChecker, bool) {
 	m, ok := c.fields[key].(map[string]any)
@@ -100,6 +109,14 @@ func validateOAuth2(o fieldChecker) {
 			m.nonEmptyString("access_token")
 			m.nonEmptyString("refresh_token")
 			m.nonEmptyString("expires_in")
+		}
+	}
+	if o.fields["identity"] != nil {
+		if id, ok := o.mapping("identity"); ok {
+			id.nonEmptyString("url")
+			id.nonEmptyString("field")
+			id.nonEmptyString("subject_field")
+			id.onlyKeys("url", "field", "subject_field")
 		}
 	}
 }

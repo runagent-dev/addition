@@ -75,7 +75,7 @@ func TestAccounts(t *testing.T) {
 	s, _ := newStore(t)
 
 	work, err := s.CreateAccount(ctx, vault.Account{
-		Provider: "google", Alias: "work", Identity: "me@work.com",
+		Provider: "google", Alias: "work", Identity: "me@work.com", Subject: "1001",
 		Scopes: []string{"openid", "https://www.googleapis.com/auth/gmail.readonly"},
 	})
 	if err != nil {

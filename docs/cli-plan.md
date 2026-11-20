@@ -90,8 +90,9 @@ From the market research (Nov 2026):
 |---|---|
 | `meta` | `schema_version` (self-bootstrapping migrations, as before) |
 | `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
-| `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), granted scopes, status |
+| `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), the provider's stable subject id, granted scopes, status |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
+| `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, the alias's scopes at the start, redirect URI, claim marker, expiry |
 | `audit_log` | connect / refresh / revoke / tool-call events by account id and provider id; never token values or aliases |
 
 The `user_id` multi-tenancy column from the SDK becomes the account alias.
@@ -140,11 +141,39 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 ### 2.3 OAuth on any machine
 
 - **Default:** RFC 8252 loopback redirect on `127.0.0.1:<random port>`, PKCE S256,
-  `state` validated and discarded.
-- **Headless / SSH:** `addn connect … --no-browser` prints the authorize URL. The
-  user opens it on any device, approves, and pastes back the URL the browser
-  landed on (the localhost page fails to load; the URL in the address bar still
-  carries `code` + `state`). No port forwarding needed.
+  `state` validated and discarded. The listener answers 400 to any callback that is
+  not for its state, or that carries both or neither of `code` and `error`, and
+  accepts exactly one verified one (a code or a denial), then closes before the code
+  is exchanged.
+- **Headless / SSH, in two steps:** `addn connect … --no-browser` stores a pending
+  authorization in the vault (state, sealed PKCE verifier, alias, scopes, redirect
+  URI; 10-minute expiry) and prints `{authorize_url, expires_at, next}`. The user
+  opens the URL on any device, approves, and runs `addn connect --complete '<url>'`
+  with the URL the browser landed on (the localhost page fails to load; the address
+  bar still carries `code` + `state`). `--complete` checks the pasted URL before
+  touching the pending row, so a bad paste leaves it usable; it then claims the row
+  exclusively, and deletes it in the transaction that stores the account. The claim
+  is released for a retry only when a DNS, dial or TLS failure left the token request
+  without a connection; any other failure deletes the row. A denial deletes the row
+  only if no completion holds the claim (else `authorization-in-progress`). No port
+  forwarding needed, and the agent never holds the flow open.
+- **Identity is data:** `oauth2.identity: {url, field, subject_field}` in the provider
+  YAML names the endpoint read with the new token, a display field and the stable
+  subject (Google: OpenID `userinfo`, `email`, `sub`). An alias is bound to its
+  subject, so an email rename re-consents fine and a different account is refused.
+  An account stored without a subject is bound on re-consent and keeps only the new
+  tokens.
+- **Stale re-consent:** a completion is refused (`stale-authorization`) if the alias
+  gained scopes after the authorization started that it did not ask for.
+- **Back channel:** token, userinfo and revoke requests go straight to the HTTP
+  transport, so no redirect is followed, and need a 2xx; any 3xx is a refusal.
+  `addn` discards the standard library's logger, so `net/http` never writes to stderr. Error messages are addn's own: the operation, the HTTP status and at
+  most an RFC 6749/6750 error identifier, never the provider's text.
+- **Exit codes for connect:** `2` for a bad or mismatched paste, a state mismatch,
+  an unknown, used, expired, in-progress or stale authorization, or a timeout; `3`
+  when the account was saved but some requested scopes were not granted
+  (`scopes-not-granted`); `4` for a provider refusal (`access_denied`, a 4xx or 3xx)
+  or an unusable 2xx token or identity response; `5` for the network or a 5xx.
 - **Bring your own OAuth client** (v0.1): `addn client add google --file client_secret.json`.
   `addn doctor google` walks through the Google Cloud setup and warns about the
   7-day refresh-token expiry for apps left in "Testing".
@@ -178,6 +207,9 @@ addn tools [--provider p] [--json]            addn skill install [--harness …]
   `3` not connected / needs reauth · `4` upstream 4xx · `5` upstream 5xx/network ·
   `6` policy denied (Phase 2).
 - Help text is human-readable; JSON is the contract for tool and data commands.
+- Stderr is JSON lines: a progress notice is one object per line, such as
+  `{"notice":"open-browser-failed","authorize_url":"…"}`, and an error envelope, if
+  any, is always the last line.
 - A closed stdout pipe ends the process with SIGPIPE, like standard Unix tools.
 
 ---
@@ -203,7 +235,7 @@ can use the same day.
 | M0 | Repo reshape | TS/Python removed from `main`, this plan adopted, CLAUDE.md + README rewritten, Go module + cobra root with `addn version` and the JSON error envelope, CI | — |
 | M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; identity root of each provider; `effect:` tag and CLI `command:` name per toolkit; Google Drive provider + metadata toolkit; `addn providers`, `addn tools` | browse only |
 | M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
-| M3 | Connect | `addn client add/list`, loopback + paste-back OAuth, PKCE, state, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` | accounts connected |
+| M3 | Connect | `addn client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` (local status only) | accounts connected |
 | **M4** | **Raw call** | `addn call`: token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming | **✅ agents can hit any Google API** |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |

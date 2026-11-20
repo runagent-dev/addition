@@ -19,14 +19,14 @@ type toolListing struct {
 	Effect      string `json:"effect"`
 }
 
-func newToolsCmd() *cobra.Command {
+func newToolsCmd(d deps) *cobra.Command {
 	var provider string
 	cmd := &cobra.Command{
 		Use:   "tools",
 		Short: "List curated tools as JSON",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := loadCatalog()
+			c, err := d.loadCatalog()
 			if err != nil {
 				return err
 			}

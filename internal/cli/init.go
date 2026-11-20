@@ -9,7 +9,7 @@ import (
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
-func newInitCmd() *cobra.Command {
+func newInitCmd(d deps) *cobra.Command {
 	var opts vault.InitOptions
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -21,7 +21,7 @@ func newInitCmd() *cobra.Command {
 			"reports the recorded key_source, even when ADDN_MASTER_KEY unlocked the vault.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			res, err := vault.Init(cmd.Context(), vault.OSEnv(), opts)
+			res, err := vault.Init(cmd.Context(), d.env, opts)
 			if err != nil {
 				return vaultError(err)
 			}
@@ -46,6 +46,7 @@ var vaultErrorCodes = []struct {
 	{vault.ErrSchemaTooNew, "schema-too-new"},
 	{vault.ErrNotInitialized, "not-initialized"},
 	{vault.ErrRelativePath, "relative-path"},
+	{vault.ErrInvalidAccount, "invalid-account"},
 }
 
 // vaultError maps known setup problems to exit 2; anything else is a failure of addn itself.

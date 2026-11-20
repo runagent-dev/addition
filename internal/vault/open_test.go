@@ -162,7 +162,7 @@ func TestMigrationsCreateTheSchema(t *testing.T) {
 	_, f := newStore(t)
 	db := rawDB(t, f.home)
 
-	for _, table := range []string{"meta", "oauth_clients", "accounts", "credentials", "audit_log"} {
+	for _, table := range []string{"meta", "oauth_clients", "accounts", "credentials", "audit_log", "pending_auth"} {
 		var n int
 		if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n); err != nil || n != 1 {
 			t.Errorf("table %s missing (n=%d err=%v)", table, n, err)
@@ -172,8 +172,8 @@ func TestMigrationsCreateTheSchema(t *testing.T) {
 	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil {
 		t.Fatalf("schema_version: %v", err)
 	}
-	if version != "1" || vault.SchemaVersion != 1 {
-		t.Errorf("schema_version = %s (binary %d), want 1", version, vault.SchemaVersion)
+	if version != "2" || vault.SchemaVersion != 2 {
+		t.Errorf("schema_version = %s (binary %d), want 2", version, vault.SchemaVersion)
 	}
 	var mode string
 	_ = db.QueryRow(`PRAGMA journal_mode`).Scan(&mode)
