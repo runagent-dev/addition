@@ -4,7 +4,9 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -14,12 +16,21 @@ var Version = "dev"
 
 // Run executes addn with args and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
+	if args == nil {
+		args = []string{} // cobra falls back to os.Args on nil
+	}
+	out := &trackingWriter{w: stdout}
+
 	root := newRoot()
 	root.SetArgs(args)
-	root.SetOut(stdout)
+	root.SetOut(out)
 	root.SetErr(stderr)
 
-	if err := root.Execute(); err != nil {
+	err := root.Execute()
+	if out.err != nil {
+		err = &Error{Code: "output", Message: "writing output: " + out.err.Error(), Exit: ExitOutput}
+	}
+	if err != nil {
 		failure := asError(err)
 		writeErrorEnvelope(stderr, failure)
 		return failure.Exit
@@ -31,11 +42,32 @@ func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "addn",
 		Short:         "Give coding agents authenticated access to your accounts",
+		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
 	}
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetHelpCommand(newHelpCmd(root))
 	root.AddCommand(newVersionCmd())
 	return root
+}
+
+// newHelpCmd replaces cobra's help, which exits 0 on unknown topics.
+func newHelpCmd(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "help [command]",
+		Short: "Help about any command",
+		RunE: func(_ *cobra.Command, args []string) error {
+			target, rest, err := root.Find(args)
+			if err != nil || len(rest) > 0 {
+				return usageError(fmt.Sprintf("unknown help topic %q", strings.Join(args, " ")))
+			}
+			return target.Help()
+		},
+	}
 }
 
 // asError keeps typed failures; anything else came from cobra's argument parsing.
@@ -56,4 +88,21 @@ func writeErrorEnvelope(w io.Writer, e *Error) {
 
 func writeJSON(w io.Writer, v any) error {
 	return json.NewEncoder(w).Encode(v)
+}
+
+// trackingWriter remembers the first write error, since cobra's help output discards it.
+type trackingWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (t *trackingWriter) Write(p []byte) (int, error) {
+	if t.err != nil {
+		return 0, t.err
+	}
+	n, err := t.w.Write(p)
+	if err != nil {
+		t.err = err
+	}
+	return n, err
 }
