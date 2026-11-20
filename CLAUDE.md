@@ -6,36 +6,30 @@ This file is loaded automatically by Claude Code when working in this repo. It c
 
 ## 1. What Addition is
 
-**Addition** is an *embeddable integration runtime* — a library (npm / PyPI), not a platform. A developer installs it into their own app (Next.js, FastAPI, Express, etc.), gives it a database connection string, and it handles:
+**Addition** (`addn`) is a **local-first, single-binary CLI that gives any coding agent authenticated access to the user's accounts**: several Gmail inboxes, several Drives, calendars, and later GitHub, Slack, Discord. Every credential stays on the user's machine in one encrypted SQLite file.
 
-- OAuth flows (authorize URL, callback, PKCE, state)
-- Encrypted token storage + automatic refresh
-- Authenticated API proxying (credential injection, 401/429 retry)
-- Curated, typed "tools" for each provider (e.g. Gmail `send_message`, GitHub `create_issue`)
-- Multi-tenant isolation by `user_id`
+```bash
+addn connect google --as work --services gmail,drive,calendar
+addn gmail search-messages -a work --query "has:attachment newer_than:7d"
+addn call -a work GET /calendar/v3/calendars/primary/events
+```
 
-**No separate server. No Redis. No workers.** The developer's application process and Postgres are the entire stack. Addition bootstraps its own `_addition` schema in the app's existing database.
+It is a tool, not a platform: no server of ours, no account with us, no telemetry. Agents need only a shell. MCP and language wrappers are projections layered on top later.
 
-**v0.1.0 provider set:** Google (base) → Gmail, Google Calendar; GitHub; Slack.
-
-Two consumption modes:
-- **Manual:** `addition.executeTool({ userId, providerId, toolId, params })` — the first-class mode in v0.1.0.
-- **Agentic (future):** same tool definitions exposed as MCP / OpenAI function-calling schemas. Deferred to v0.3.0.
-
-**Full architectural spec:** `docs/spec.md` — authoritative.
-**TDD build plan:** `docs/tdd-plan.md` — authoritative for the order of work and what tests to write.
+**Plan and direction:** `docs/cli-plan.md` — authoritative for design, phases, milestone order, and the decisions already taken.
+**SDK-era history:** the earlier TypeScript + Python embeddable SDK (Postgres, multi-tenant) lives on branch `archive/sdk-v0.1`. Its behaviour is ported, not resurrected. Do not copy its Postgres, multi-tenancy, or framework-handler code back into `main`.
 
 ---
 
-## 2. Architecture principles (from spec §3 — don't violate these)
+## 2. Architecture principles (don't violate these)
 
-1. **Library, not a service.** No HTTP server of our own; we expose a callback *handler* the developer mounts in their framework.
-2. **Database is the only infra.** Postgres (v0.1.0) under schema `_addition`.
-3. **Self-bootstrapping schema.** On first instantiation, `Addition` creates tables and records `schema_version` in `_addition.meta`. Developers never run a migration command.
-4. **Provider config is data (YAML), provider quirks are code (adapters).** Keep branches (`if provider === 'slack'`) out of the core engine — isolate them in adapter classes.
-5. **Multi-tenancy via `user_id`.** Every connection, every query, every proxy call is scoped by a caller-supplied `user_id` string.
-6. **Tools as curated data.** We do NOT expose every endpoint; we expose 5–10 high-value actions per provider with friendly params.
-7. **Format-agnostic tool definitions.** Metadata is rich enough to structurally convert to MCP / OpenAI / Anthropic tool schemas later.
+1. **Local only.** No hosted component, no phoning home, no telemetry.
+2. **One static binary, one data dir.** Go, pure-Go SQLite, no cgo, no runtime. All state under `$ADDN_HOME` (default XDG data dir) in one `addition.db`. The only exception is the master key: OS keychain, env, or an opted-in `master.key`.
+3. **Agent-first output.** Tool commands print JSON on stdout. Errors print `{"error":{"code","message"}}` on stderr with a stable exit code. Never prompt unless stdin is a TTY.
+4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, or test snapshots. There is no command that prints a token; agents reach APIs through `addn call`.
+5. **Provider config is data (YAML), provider quirks are code (adapters).** Keep `if provider == "slack"` out of the core engine.
+6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; more services means re-consent for the union of granted and requested scopes, not a new account.
+7. **Tools as curated data.** Toolkit YAML is the source for generated commands, JSON schemas and (later) MCP tools. Commands are generated at runtime, not code-generated.
 
 ---
 
@@ -43,23 +37,17 @@ Two consumption modes:
 
 ```
 addition/
-├── CLAUDE.md                 # this file
+├── CLAUDE.md
 ├── README.md
-├── docs/
-│   ├── spec.md               # architectural spec (authoritative)
-│   └── tdd-plan.md           # TDD milestone plan (authoritative for work order)
-├── shared/                   # language-agnostic source of truth
-│   ├── providers/            # provider config YAML (google, gmail, github, slack, ...)
-│   ├── toolkits/             # tool definitions YAML per provider
-│   ├── schema/               # raw SQL migrations (001_initial.sql, ...)
-│   ├── test-fixtures/        # cross-language scenarios (oauth, tokens, proxy, tools)
-│   └── spec.yaml             # public API contract for both languages
-├── ts/                       # TypeScript implementation (@runagent/addition)
-├── python/                   # Python implementation (runagent-addition)
-└── examples/                 # Next.js + FastAPI reference apps
+├── docs/cli-plan.md        # direction + phases + milestones (authoritative)
+├── go.mod                  # module github.com/runagent-dev/addition
+├── cmd/addn/               # main package; thin
+├── internal/               # all implementation packages (cli, catalog, vault, oauth, proxy, …)
+└── shared/                 # language-agnostic data, embedded into the binary
+    ├── providers/          # provider config YAML
+    ├── toolkits/           # tool definitions YAML
+    └── test-fixtures/      # behavioural contract carried over from the SDK era
 ```
-
-Nothing in `shared/` is language-specific. Both `ts/` and `python/` read it at runtime/test time. Changes to `shared/` must be matched in both language tracks.
 
 ---
 
@@ -69,11 +57,11 @@ Nothing in `shared/` is language-specific. Both `ts/` and `python/` read it at r
 
 ### 4.1 Red → Green → Refactor, per milestone
 
-Each milestone (M1, M2, ... as listed in `docs/tdd-plan.md §2`) follows the same loop:
+Each milestone (M0, M1, … as listed in `docs/cli-plan.md §3`) follows the same loop:
 
-1. **Red.** Write the failing tests named in the plan for that milestone. Run them — they MUST fail for the right reason (missing module, missing export). Do not write implementation code yet.
-2. **Green.** Write the minimum implementation needed to make the tests pass. Nothing more. No features the tests don't demand.
-3. **Refactor.** Clean up while tests stay green. No behavior change.
+1. **Red.** Write the failing tests for that milestone. Run them — they MUST fail for the right reason (missing package, missing function, wrong output). No implementation code yet.
+2. **Green.** Write the minimum implementation needed to make them pass.
+3. **Refactor.** Clean up while tests stay green. No behaviour change.
 
 Do not mix milestones in one session. Do not start M_n+1 before M_n is merged.
 
@@ -81,143 +69,102 @@ Do not mix milestones in one session. Do not start M_n+1 before M_n is merged.
 
 ```
 M_n → tests green locally
-    → commit on branch feat/m<N>-<slug> (e.g. feat/m1-crypto-ts)
+    → commit on branch feat/m<N>-<slug> (e.g. feat/m2-vault)
     → push + open PR titled "M<N>: <milestone name>"
     → a SEPARATE reviewer reviews the PR
-    → apply review fixes on the SAME branch/PR (do not open a new one)
+    → apply review fixes on the SAME branch/PR
     → reviewer approves → merge to main
     → only then start M_{n+1} on a fresh branch off main
 ```
 
 **Hard rules:**
-- **Stop after the PR is opened.** Don't speculatively start the next milestone. Wait for the user to signal "go / next / merged".
+- **Stop after the PR is opened.** Wait for the user to signal "go / next / merged".
 - **One milestone per branch, one branch per PR.** No stacked milestones.
-- **Fixes go on the original PR branch.** Never open M1-v2 or a followup PR for the same milestone.
-- **The main branch is always mergeable and green.** If CI red, stop everything and fix.
+- **Fixes go on the original PR branch.** Never open a follow-up PR for the same milestone.
+- **main is always green.** If CI is red, stop everything and fix it.
 
 ### 4.3 Commit message style
 
-Small, Red/Green scoped commits beat one giant commit:
-- `test(m1): add failing crypto unit tests` (Red)
-- `feat(m1): implement aes-256-gcm crypto` (Green)
-- `refactor(m1): extract iv/tag constants` (Refactor — optional)
+- `test(m2): add failing vault tests` (Red)
+- `feat(m2): implement sqlite vault` (Green)
+- `refactor(m2): extract key resolution` (optional)
 
 Co-authored-by Claude trailer as configured.
 
 ### 4.4 Scope discipline
 
-Every milestone has a tight scope listed in `docs/tdd-plan.md`. If you discover something out-of-scope during implementation (e.g. you're building M1-crypto and notice a gap in providers.ts), **file it as a note for its own milestone — do NOT fix it in this PR**. Scope creep breaks the reviewer loop.
+Every milestone has a tight scope in `docs/cli-plan.md`. If you find something out of scope, note it in the PR description for its own milestone — do not fix it in this PR.
 
 ---
 
-## 5. Test stacks
+## 5. Tests
 
-| Concern | TypeScript (`ts/`) | Python (`python/`) |
-|---|---|---|
-| Runner | `vitest` | `pytest` + `pytest-asyncio` |
-| HTTP mocking | `msw` or `vi.fn()` on `globalThis.fetch` | `respx` (for `httpx`) |
-| Postgres | `@testcontainers/postgresql` | `testcontainers[postgres]` |
-| Time / timers | `vi.useFakeTimers()` | `freezegun` |
-| Coverage | `vitest --coverage` | `pytest --cov` |
+| Concern | Tool |
+|---|---|
+| Runner | `go test ./...` (standard `testing`; table tests) |
+| HTTP / provider fakes | `net/http/httptest` — a fake provider API and a fake OAuth server |
+| Storage | real SQLite in `t.TempDir()`, starting empty and running the real bootstrap every time |
+| CLI | run the cobra root in-process with captured stdout/stderr; assert JSON, not prose |
+| Time | inject a clock; never `time.Sleep` in tests |
 
-**Test directories:**
-- `ts/test/unit/` — pure, no IO
-- `ts/test/integration/` — ephemeral Postgres + mocked HTTP
-- `ts/test/conformance/` — drives `shared/test-fixtures/*.yaml`
-- Python mirrors this under `python/tests/{unit,integration,conformance}/`.
-
-**Mocking rule:** mock only at the network edge (`fetch` / `httpx`). Do not mock internal modules against each other — that's how interface drift hides.
-
-**Ephemeral Postgres:** every integration test starts from an empty DB and runs the real schema bootstrap. That way the bootstrap code path is exercised on every test run — never stub it.
+- **Mock only at the network edge.** Fake the HTTP server, never internal packages against each other.
+- **Fixtures in `shared/test-fixtures/` are the contract** that the Go port behaves like the SDK. A Go conformance driver consumes them.
+- **No-leak tests:** any command touching credentials gets a test asserting no token string appears in stdout, stderr or debug output.
 
 ---
 
-## 6. Core invariants (things that must never silently break)
+## 6. Core invariants (must never silently break)
 
-These are the things to check first when something feels off, and the things that should have direct tests pinning them down:
-
-1. **Encryption wire format:** `base64(iv[12] || tag[16] || ciphertext)`, AES-256-GCM, 32-byte key parsed from 64 hex chars. TS-encrypted blob must decrypt in Python and vice versa — there is a cross-language interop test for this.
-2. **Schema namespace:** everything lives under `_addition.*`. Never `public.*`.
-3. **`extends` merge semantics (providers):** scalars override, arrays **replace** (do not merge), `id` and `name` always come from the child.
-4. **Path interpolation:** params named in `{}` in a tool operation are **consumed** — stripped from the request body/query. Write the assertion that they do NOT appear in the body before writing the interpolation code.
+1. **Encryption wire format:** `base64(iv[12] || tag[16] || ciphertext)`, AES-256-GCM, 32-byte key parsed from 64 hex chars. `crypto_interop.yaml` pins it.
+2. **Master key never silently downgrades.** Resolution: `ADDN_MASTER_KEY` → OS keychain → key file only if opted in at `addn init --key-file`. Otherwise fail loudly.
+3. **`extends` merge semantics:** scalars override, arrays **replace**, `id` and `name` come from the child.
+4. **Path interpolation:** params named in `{}` are **consumed** — stripped from body/query.
 5. **401 retry:** exactly once, and only when a refresh token exists. Never loop.
-6. **Slack non-standard errors:** HTTP 200 with `ok: false` is a failure; detected by `SlackAdapter.isErrorResponse`, not core.
-7. **Scopes delimiter:** space for most providers, **comma for Slack**. Read from the YAML, never hardcode.
-8. **Audit log:** every OAuth / token / connection / tool event writes a row to `_addition.audit_log`. Tokens never appear in logs in plaintext.
-9. **Spec version:** `shared/spec.yaml` version, `ts/package.json` version, `python/pyproject.toml` version are always equal. Bump together.
-10. **Token extraction is data, not code.** `provider.oauth2.token_response_mapping` (dot-paths in the provider YAML) is the single source of truth for where tokens live in a token-exchange response. When absent, the OAuth engine uses the standard OAuth2 layout (top-level `access_token`, `refresh_token`, `expires_in`). **Adapters MUST NOT override `parseTokenResponse` to extract tokens** — they may only override it to reject non-standard error shapes (e.g. Slack `ok: false`) before the default extraction runs. Adapter responsibilities: request-shaping (headers, params) and error detection. Never token extraction.
+6. **Refresh under lock:** concurrent `addn` processes whose refreshes commit hit the token endpoint once per rotation (SQLite `BEGIN IMMEDIATE`, re-read before refresh). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop.
+7. **OAuth:** PKCE S256, `state` validated and discarded after use; loopback redirect on `127.0.0.1`, with a paste-back path for headless machines.
+8. **Slack non-standard errors:** HTTP 200 with `ok: false` is a failure, detected by the Slack adapter, not core.
+9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
+10. **Token extraction is data:** `oauth2.token_response_mapping` dot-paths, else the standard OAuth2 layout. Adapters may reject error shapes but never extract tokens.
+11. **Audit log:** connect / refresh / revoke / tool-call events write a row; never token values.
+12. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
 
 ---
 
 ## 7. Dev commands
 
-### TypeScript (`ts/`)
 ```bash
-cd ts
-npm install
-npm test                       # vitest, watch mode
-npm run test:ci                # single run with coverage
-npm run build                  # tsc → dist/
-```
-
-### Python (`python/`)
-```bash
-cd python
-uv sync
-uv run pytest
-uv run pytest tests/unit/      # just unit tests
-uv run pytest -k crypto        # single suite
-```
-
-### Shared validation
-```bash
-# YAML lint
-yamllint shared/
-
-# Re-run conformance in both languages
-(cd ts && npm run test:conformance) && (cd python && uv run pytest tests/conformance/)
+go test ./...                 # all tests (older local Go fetches the pinned toolchain)
+go vet ./...
+"$(go env GOROOT)/bin/gofmt" -l .   # must print nothing
+go run ./cmd/addn version
+go build -o addn ./cmd/addn
 ```
 
 ---
 
 ## 8. Security checklist (per PR)
 
-Before marking any PR ready for review:
-
-- [ ] No plaintext access/refresh tokens in logs, errors, or test snapshots.
-- [ ] Encryption roundtrip tested (for any code that touches `crypto.ts`).
-- [ ] OAuth `state` is validated and deleted after use (for any code touching `oauth.ts`).
-- [ ] No `client_secret` appears unencrypted anywhere except in-memory during OAuth exchange.
-- [ ] Audit log row written for each sensitive event the PR touches.
+- [ ] No plaintext tokens or client secrets in output, logs, errors, or test snapshots.
+- [ ] Encryption roundtrip tested for code touching the vault.
+- [ ] OAuth `state` validated and deleted after use (for code touching OAuth).
+- [ ] Audit row written for each sensitive event the PR touches.
+- [ ] No new network destination other than the provider APIs the user connected.
 
 ---
 
-## 9. What NOT to build (v0.1.0 non-goals — per spec §20)
+## 9. Non-goals (until their phase in `docs/cli-plan.md`)
 
-Do not add code or tests for these until they have their own milestone:
+- **Phase 1 excludes:** MCP, policies, non-Google providers, API-key auth, sync, language wrappers, OpenAPI import.
+- **Never:** a hosted service, telemetry, a shared OAuth client we operate (revisit only by explicit decision).
 
-- SQLite support (v0.3.0)
-- OpenAI / Anthropic function-calling export (v0.3.0)
-- Webhooks / triggers
-- UI components (`<ConnectButton>`, etc.)
-- Rate-limit persistence across restarts
-- Connection health checks
-
-**Now in scope (v0.2.0, `docs/mcp-collections-plan.md`, milestones M14–M18):**
-MCP server generation, REST endpoint auto-mounting, and collections. These were
-v0.3.0 non-goals; the roadmap was re-sequenced 2026-08-14 on user direction to
-back an on-platform Composio/Nango. Build them only within their M14–M18
-milestones, one PR each, same TDD workflow.
-
-If a milestone surfaces one of the remaining non-goals as "nice to have", note it in the PR description as follow-up — do not implement.
+If a milestone surfaces one of these as "nice to have", note it in the PR description as follow-up — do not implement.
 
 ---
 
 ## 10. References
 
-- `docs/spec.md` — full architectural spec. When in doubt, this wins.
-- `docs/tdd-plan.md` — ordered milestones with the exact test cases to write per milestone.
-- `shared/spec.yaml` — the public API contract both languages must satisfy.
-- `shared/test-fixtures/` — the cross-language conformance contract.
+- `docs/cli-plan.md` — direction, architecture, phases, decisions.
+- `shared/test-fixtures/` — behavioural contract.
+- `archive/sdk-v0.1` branch — the SDK implementation the Go port is based on.
 
-When user instructions, spec, and plan disagree: **user instructions win**, then spec, then plan. Flag the disagreement before coding.
+When user instructions and the plan disagree: **user instructions win**. Flag the disagreement before coding.
