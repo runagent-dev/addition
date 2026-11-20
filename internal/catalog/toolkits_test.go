@@ -172,7 +172,7 @@ func TestToolkitValidationErrors(t *testing.T) {
 		{"operation path without slash", swap("GET /widgets/{widgetId}", "GET widgets/{widgetId}"), []string{"get_widget", "METHOD /path"}},
 		{"operation with trailing junk", swap("GET /widgets/{widgetId}", "GET /widgets/{widgetId} extra"), []string{"get_widget", "METHOD /path"}},
 		{"undeclared placeholder", swap("GET /widgets/{widgetId}", "GET /widgets/{widgetId}/parts/{partId}"), []string{"acme.yaml", "get_widget", "partId"}},
-		{"missing effect", swap("effect: read\n", ""), []string{"acme.yaml", "get_widget", "effect"}},
+		{"missing effect", swap("    effect: read\n", ""), []string{"acme.yaml", "get_widget", "effect"}},
 		{"invalid effect", swap("effect: read", "effect: dangerous"), []string{"acme.yaml", "get_widget", "effect", "dangerous"}},
 		{"unknown param type", param("type: blobstring"), []string{"acme.yaml", "bad_param", "blobstring"}},
 		{"missing param type", param(""), []string{"acme.yaml", "bad_param", "type"}},

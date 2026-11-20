@@ -8,6 +8,7 @@ tools:
     name: "List repositories"
     description: "List repositories for the authenticated user"
     operation: "GET /user/repos"
+    effect: read
     params:
       - name: type
         type: string
@@ -44,6 +45,7 @@ tools:
     name: "List issues"
     description: "List issues in a repository"
     operation: "GET /repos/{owner}/{repo}/issues"
+    effect: read
     params:
       - name: owner
         type: string
@@ -84,6 +86,7 @@ tools:
     name: "Create issue"
     description: "Create a new issue in a repository"
     operation: "POST /repos/{owner}/{repo}/issues"
+    effect: write
     params:
       - name: owner
         type: string
@@ -121,6 +124,7 @@ tools:
     name: "List pull requests"
     description: "List pull requests in a repository"
     operation: "GET /repos/{owner}/{repo}/pulls"
+    effect: read
     params:
       - name: owner
         type: string
@@ -158,6 +162,7 @@ tools:
     name: "Create pull request"
     description: "Create a new pull request"
     operation: "POST /repos/{owner}/{repo}/pulls"
+    effect: write
     params:
       - name: owner
         type: string

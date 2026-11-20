@@ -5,7 +5,8 @@ id: ""                              # Unique ID (lowercase, hyphenated)
 name: ""                            # Human-readable display name
 auth_type: "oauth2"                 # "oauth2" | "api_key" | "basic"
 
-# Uncomment to inherit from a base provider (e.g. "google").
+# Uncomment to inherit from a base provider (e.g. "google"). Scalars override,
+# arrays replace, nested maps merge; the top of the chain owns accounts and OAuth.
 # extends: ""
 
 oauth2:

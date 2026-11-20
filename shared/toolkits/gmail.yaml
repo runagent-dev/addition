@@ -8,6 +8,7 @@ tools:
     name: "List messages"
     description: "List email messages in the user's mailbox. Returns message IDs and thread IDs. Use get_message to fetch full content."
     operation: "GET /gmail/v1/users/me/messages"
+    effect: read
     params:
       - name: query
         type: string
@@ -37,6 +38,7 @@ tools:
     name: "Get message"
     description: "Get the full content of a specific email message, including headers, body, and attachments metadata"
     operation: "GET /gmail/v1/users/me/messages/{messageId}"
+    effect: read
     params:
       - name: messageId
         type: string
@@ -62,6 +64,7 @@ tools:
     name: "Send email"
     description: "Send a new email message. The library handles MIME formatting automatically."
     operation: "POST /gmail/v1/users/me/messages/send"
+    effect: write
     transform: "gmail:rfc2822"
     params:
       - name: to
@@ -95,6 +98,7 @@ tools:
     name: "Search emails"
     description: "Search emails using Gmail's powerful search syntax. Returns matching message IDs."
     operation: "GET /gmail/v1/users/me/messages"
+    effect: read
     params:
       - name: query
         type: string
@@ -119,6 +123,7 @@ tools:
     name: "Modify message labels"
     description: "Add or remove labels from a message (e.g., mark as read, archive, star)"
     operation: "POST /gmail/v1/users/me/messages/{messageId}/modify"
+    effect: write
     params:
       - name: messageId
         type: string
