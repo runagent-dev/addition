@@ -54,7 +54,14 @@ func ParseKey(s string) (Key, error) {
 	return k, nil
 }
 
-func Encrypt(key Key, plaintext []byte) (string, error) {
+// Encrypt seals plaintext without associated data, as the SDK did.
+func Encrypt(key Key, plaintext []byte) (string, error) { return EncryptWithAAD(key, plaintext, nil) }
+
+// Decrypt opens a blob sealed without associated data.
+func Decrypt(key Key, blob string) ([]byte, error) { return DecryptWithAAD(key, blob, nil) }
+
+// EncryptWithAAD seals plaintext so that it opens only with the same aad; the wire format is unchanged.
+func EncryptWithAAD(key Key, plaintext, aad []byte) (string, error) {
 	gcm, err := newGCM(key)
 	if err != nil {
 		return "", err
@@ -63,7 +70,7 @@ func Encrypt(key Key, plaintext []byte) (string, error) {
 	if _, err := rand.Read(iv); err != nil {
 		return "", fmt.Errorf("generate iv: %w", err)
 	}
-	sealed := gcm.Seal(nil, iv, plaintext, nil)
+	sealed := gcm.Seal(nil, iv, plaintext, aad)
 	ciphertext, tag := sealed[:len(sealed)-tagBytes], sealed[len(sealed)-tagBytes:]
 
 	wire := make([]byte, 0, ivBytes+len(sealed))
@@ -73,7 +80,7 @@ func Encrypt(key Key, plaintext []byte) (string, error) {
 	return base64.StdEncoding.EncodeToString(wire), nil
 }
 
-func Decrypt(key Key, blob string) ([]byte, error) {
+func DecryptWithAAD(key Key, blob string, aad []byte) ([]byte, error) {
 	raw, err := base64.StdEncoding.DecodeString(blob)
 	if err != nil {
 		return nil, fmt.Errorf("%w: not base64", ErrMalformed)
@@ -90,7 +97,7 @@ func Decrypt(key Key, blob string) ([]byte, error) {
 	sealed := make([]byte, 0, len(ciphertext)+tagBytes)
 	sealed = append(sealed, ciphertext...)
 	sealed = append(sealed, tag...)
-	plaintext, err := gcm.Open(nil, iv, sealed, nil)
+	plaintext, err := gcm.Open(nil, iv, sealed, aad)
 	if err != nil {
 		return nil, ErrDecrypt
 	}
