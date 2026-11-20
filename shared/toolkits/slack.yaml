@@ -8,6 +8,7 @@ tools:
     name: "Send message"
     description: "Send a message to a Slack channel"
     operation: "POST /chat.postMessage"
+    effect: write
     params:
       - name: channel
         type: string
@@ -32,6 +33,7 @@ tools:
     name: "List channels"
     description: "List public channels in the workspace"
     operation: "GET /conversations.list"
+    effect: read
     params:
       - name: types
         type: string
@@ -62,6 +64,7 @@ tools:
     name: "List messages"
     description: "List recent messages in a channel"
     operation: "GET /conversations.history"
+    effect: read
     params:
       - name: channel
         type: string

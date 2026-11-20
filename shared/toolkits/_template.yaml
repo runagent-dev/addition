@@ -2,12 +2,13 @@
 # See docs/spec.md §8 for the full field reference.
 #
 # Canonical field order for each tool in this project:
-#     id → name → description → operation → transform → params → response → pagination
+#     id → name → description → operation → effect → transform → params → response → pagination
 # YAML parsing is order-independent, but keeping the order stable makes diffs
-# and side-by-side tool comparisons easy. Keep `transform` next to `operation`
-# because together they describe the request; `params` describe the inputs.
+# and side-by-side tool comparisons easy. Keep `effect` and `transform` next to
+# `operation` because together they describe the call; `params` describe the inputs.
 
 provider: ""                        # Must match a provider ID from shared/providers/
+# command: ""                       # Optional CLI name (`addn <command> …`); defaults to the provider ID
 name: ""                            # Human-readable toolkit name
 description: ""                     # What this toolkit does (1-2 sentences)
 
@@ -15,7 +16,8 @@ tools:
   - id: ""                          # Unique within this toolkit (snake_case)
     name: ""                        # Human-readable
     description: ""                 # Used by LLMs for tool selection
-    operation: ""                   # "METHOD /path", e.g. "GET /users/me/messages"
+    operation: ""                   # "METHOD /path", e.g. "GET /users/me/messages"; every {placeholder} must be a param
+    effect: read                    # Required: read | write (sends, creates, updates) | destructive (deletes)
 
     # Optional. Format: "{provider}:{transform_name}". When set, the named
     # transform rewrites friendly params into the API request body/params/

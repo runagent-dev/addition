@@ -1,4 +1,5 @@
 provider: "google-calendar"
+command: "calendar"
 name: "Google Calendar"
 description: "Create, read, and manage calendar events"
 
@@ -8,6 +9,7 @@ tools:
     name: "List events"
     description: "List upcoming events from the user's primary calendar"
     operation: "GET /calendars/primary/events"
+    effect: read
     params:
       - name: timeMin
         type: string
@@ -52,6 +54,7 @@ tools:
     name: "Get event"
     description: "Get details of a specific calendar event"
     operation: "GET /calendars/primary/events/{eventId}"
+    effect: read
     params:
       - name: eventId
         type: string
@@ -72,6 +75,7 @@ tools:
     name: "Create event"
     description: "Create a new calendar event"
     operation: "POST /calendars/primary/events"
+    effect: write
     transform: "google-calendar:create_event_body"
     params:
       - name: summary
@@ -116,6 +120,7 @@ tools:
     name: "Update event"
     description: "Update an existing calendar event"
     operation: "PATCH /calendars/primary/events/{eventId}"
+    effect: write
     transform: "google-calendar:update_event_body"
     params:
       - name: eventId
@@ -157,6 +162,7 @@ tools:
     name: "Delete event"
     description: "Delete a calendar event"
     operation: "DELETE /calendars/primary/events/{eventId}"
+    effect: destructive
     params:
       - name: eventId
         type: string
