@@ -198,6 +198,26 @@ func TestBackChannelReportsARedirectWithAnInvalidLocation(t *testing.T) {
 	}
 }
 
+func TestBackChannelReportsARedirectWithATruncatedBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		_, _ = io.WriteString(w, "short")
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p := pointedAt(srv.URL)
+	for name, call := range backChannelCalls(p, newAuthorization(t, p.OAuth2)) {
+		var perr *oauth.ProviderError
+		if err := call(srv.Client()); !errors.As(err, &perr) || perr.Status != http.StatusTemporaryRedirect {
+			t.Errorf("%s: err = %v, want ProviderError 307", name, err)
+		}
+	}
+}
+
 func TestBackChannelRequiresSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMultipleChoices)

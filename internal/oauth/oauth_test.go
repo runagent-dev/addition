@@ -146,7 +146,11 @@ func TestParseCallback(t *testing.T) {
 	}
 
 	for _, bad := range []string{"", "not a url", "http://127.0.0.1:5555/callback", "code=x&state=y", "http://127.0.0.1/callback?code=x",
-		"http://127.0.0.1/callback?code=x&error=access_denied&state=y"} {
+		"http://127.0.0.1/callback?code=x&error=access_denied&state=y",
+		"http://127.0.0.1/callback?code=&error=access_denied&state=y",
+		"http://127.0.0.1/callback?error=access_denied&error=server_error&state=y",
+		"http://127.0.0.1/callback?code=a&code=b&state=y",
+		"http://127.0.0.1/callback?code=x&state=y&state=z"} {
 		if _, err := oauth.ParseCallback(bad); !errors.Is(err, oauth.ErrBadRedirect) {
 			t.Errorf("ParseCallback(%q) err = %v, want ErrBadRedirect", bad, err)
 		}
