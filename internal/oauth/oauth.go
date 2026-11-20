@@ -144,6 +144,7 @@ type Callback struct {
 	Code        string
 	State       string
 	Error       string
+	ambiguous   bool
 }
 
 // ParseCallback reads a redirect URL the browser landed on.
@@ -160,8 +161,16 @@ func ParseCallback(raw string) (Callback, error) {
 	return cb, nil
 }
 
+// callbackFromQuery marks a callback ambiguous when a key repeats or both code and error are present,
+// even empty, since q.Get would otherwise pick one value and hide the rest.
 func callbackFromQuery(q url.Values) Callback {
-	return Callback{Code: q.Get("code"), State: q.Get("state"), Error: q.Get("error")}
+	_, hasCode := q["code"]
+	_, hasError := q["error"]
+	repeated := len(q["code"]) > 1 || len(q["state"]) > 1 || len(q["error"]) > 1
+	return Callback{
+		Code: q.Get("code"), State: q.Get("state"), Error: q.Get("error"),
+		ambiguous: repeated || (hasCode && hasError),
+	}
 }
 
 // check is Verify without handing out the code: nil for a code or a provider refusal meant for state.
@@ -176,7 +185,7 @@ func (cb Callback) check(state string) error {
 }
 
 // wellFormed is a callback carrying exactly one of a code or a provider error.
-func (cb Callback) wellFormed() bool { return (cb.Code == "") != (cb.Error == "") }
+func (cb Callback) wellFormed() bool { return !cb.ambiguous && (cb.Code == "") != (cb.Error == "") }
 
 // Verify checks the callback belongs to the authorization with state and returns its code.
 func (cb Callback) Verify(state string) (string, error) {

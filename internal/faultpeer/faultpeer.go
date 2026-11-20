@@ -13,8 +13,8 @@ import (
 type Fault int
 
 const (
-	// ResetOnAccept resets as soon as the connection is accepted.
-	ResetOnAccept Fault = iota
+	// ResetOnFirstByte resets once the request starts arriving, so the client already holds the connection.
+	ResetOnFirstByte Fault = iota
 	// ResetMidRequest resets after reading the first PartialBytes of the request.
 	ResetMidRequest
 	// ResetAfterRequest resets after reading the whole request, body included.
@@ -46,6 +46,8 @@ func Listen(t *testing.T, fault Fault) string {
 
 func breakConn(conn *net.TCPConn, fault Fault) {
 	switch fault {
+	case ResetOnFirstByte:
+		_, _ = io.ReadFull(conn, make([]byte, 1))
 	case ResetMidRequest:
 		_, _ = io.ReadFull(conn, make([]byte, PartialBytes))
 	case ResetAfterRequest:

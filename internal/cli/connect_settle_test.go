@@ -106,7 +106,7 @@ func TestCompleteDropsTheAuthorizationWhenTheExchangeOutcomeIsUnknown(t *testing
 	cases := map[string]func(t *testing.T) failure{
 		"answered, then broken":         func(*testing.T) failure { return failAfterAnswer },
 		"no evidence about the network": func(*testing.T) failure { return failEchoing },
-		"reset on accept":               func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetOnAccept)) },
+		"reset on first byte":           func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetOnFirstByte)) },
 		"reset mid-request":             func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetMidRequest)) },
 		"reset after the whole request": func(t *testing.T) failure { return sendTo(faultpeer.Listen(t, faultpeer.ResetAfterRequest)) },
 	}

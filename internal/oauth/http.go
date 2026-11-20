@@ -99,6 +99,9 @@ func send(hc *http.Client, req *http.Request, op string) (int, []byte, error) {
 		return 0, nil, &NetworkError{Op: op, RequestSent: !conn.neverConnected(), err: err}
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return resp.StatusCode, nil, nil // a redirect is refused on its status; its body is never needed
+	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return 0, nil, &NetworkError{Op: op, RequestSent: true, err: err}

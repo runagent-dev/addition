@@ -141,7 +141,7 @@ func TestNetworkErrorKnowsWhetherTheRequestWasSent(t *testing.T) {
 		sent bool
 	}{
 		{"refused", refused.URL, false},
-		{"reset on accept", faultpeer.Listen(t, faultpeer.ResetOnAccept), true},
+		{"reset on first byte", faultpeer.Listen(t, faultpeer.ResetOnFirstByte), true},
 		{"reset mid-request", faultpeer.Listen(t, faultpeer.ResetMidRequest), true},
 		{"reset after the whole request", faultpeer.Listen(t, faultpeer.ResetAfterRequest), true},
 	} {
