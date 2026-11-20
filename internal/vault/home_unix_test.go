@@ -28,7 +28,7 @@ func TestRejectsAHomeUnderAnAncestorOthersCanWrite(t *testing.T) {
 	for _, mode := range []os.FileMode{0o777, 0o775, 0o757, os.ModeSticky | 0o777} {
 		t.Run(mode.String(), func(t *testing.T) {
 			f := newFakeEnv(t)
-			shared := filepath.Join(t.TempDir(), "shared")
+			shared := filepath.Join(privateTempDir(t), "shared")
 			if err := os.Mkdir(shared, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +78,7 @@ func TestAllowsAStickyRootOwnedAncestor(t *testing.T) {
 
 func TestResolvesAHomeBehindASymlink(t *testing.T) {
 	f := newFakeEnv(t)
-	base := t.TempDir()
+	base := privateTempDir(t)
 	real := filepath.Join(base, "real")
 	if err := os.Mkdir(real, 0o700); err != nil {
 		t.Fatal(err)
@@ -106,14 +106,14 @@ func TestValidatesTheAncestorsOfASymlinkTarget(t *testing.T) {
 		t.Skip("root owns every directory, so the ownership rules cannot be exercised")
 	}
 	f := newFakeEnv(t)
-	shared := filepath.Join(t.TempDir(), "shared")
+	shared := filepath.Join(privateTempDir(t), "shared")
 	if err := os.MkdirAll(filepath.Join(shared, "home"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(shared, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(t.TempDir(), "link")
+	link := filepath.Join(privateTempDir(t), "link")
 	if err := os.Symlink(filepath.Join(shared, "home"), link); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestRejectsInsecureSideFiles(t *testing.T) {
 			}
 		},
 		"symlink": func(t *testing.T, path string) {
-			target := filepath.Join(t.TempDir(), "target")
+			target := filepath.Join(privateTempDir(t), "target")
 			if err := os.WriteFile(target, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +234,7 @@ func TestKeyTempCleanupLeavesForeignEntries(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(t.TempDir(), "outside")
+	target := filepath.Join(privateTempDir(t), "outside")
 	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}

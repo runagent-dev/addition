@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
-	"path/filepath"
 
 	"github.com/zalando/go-keyring"
 
@@ -41,7 +39,7 @@ const (
 const canaryPlaintext = "addition master key canary"
 
 // resolveKey uses a set ADDN_MASTER_KEY, else only the source the vault recorded at init.
-func resolveKey(env Env, home string, rec initRecords) (crypto.Key, error) {
+func resolveKey(env Env, home *homeDir, rec initRecords) (crypto.Key, error) {
 	if hex, ok := env.LookupEnv(envMasterKey); ok {
 		return parseEnvKey(hex)
 	}
@@ -51,7 +49,7 @@ func resolveKey(env Env, home string, rec initRecords) (crypto.Key, error) {
 	case KeySourceFile:
 		key, err := readKeyFile(home)
 		if errors.Is(err, fs.ErrNotExist) {
-			return crypto.Key{}, fmt.Errorf("%w: key file %s is missing; restore it or set %s", ErrNoMasterKey, filepath.Join(home, keyFileName), envMasterKey)
+			return crypto.Key{}, fmt.Errorf("%w: key file %s is missing; restore it or set %s", ErrNoMasterKey, home.join(keyFileName), envMasterKey)
 		}
 		return key, err
 	default:
@@ -83,33 +81,25 @@ func keychainKey(vaultID string) (crypto.Key, error) {
 }
 
 // readKeyFile reads the key through one handle that it has checked is a private regular file.
-func readKeyFile(home string) (crypto.Key, error) {
-	f, err := openKeyFile(home)
+func readKeyFile(home *homeDir) (crypto.Key, error) {
+	f, err := home.openKeyFile()
 	if err != nil {
 		return crypto.Key{}, err
 	}
 	defer f.Close()
-	path := f.Name()
-	info, err := f.Stat()
-	if err != nil {
-		return crypto.Key{}, err
-	}
-	if err := checkKeyFileInfo(info, path); err != nil {
-		return crypto.Key{}, err
-	}
 	content, err := io.ReadAll(io.LimitReader(f, keyFileMaxBytes))
 	if err != nil {
 		return crypto.Key{}, fmt.Errorf("read key file: %w", err)
 	}
 	key, err := crypto.ParseKey(string(content))
 	if err != nil {
-		return crypto.Key{}, fmt.Errorf("key file %s is empty, truncated or not a key; restore it or set %s: %w", path, envMasterKey, err)
+		return crypto.Key{}, fmt.Errorf("key file %s is empty, truncated or not a key; restore it or set %s: %w", f.Name(), envMasterKey, err)
 	}
 	return key, nil
 }
 
 // provisionKey finds or creates the key for a new vault; a set ADDN_MASTER_KEY wins over opts.
-func provisionKey(env Env, home, vaultID string, useKeyFile bool) (crypto.Key, KeySource, error) {
+func provisionKey(env Env, home *homeDir, vaultID string, useKeyFile bool) (crypto.Key, KeySource, error) {
 	if hex, ok := env.LookupEnv(envMasterKey); ok {
 		key, err := parseEnvKey(hex)
 		return key, KeySourceEnv, err
@@ -123,7 +113,7 @@ func provisionKey(env Env, home, vaultID string, useKeyFile bool) (crypto.Key, K
 }
 
 // provisionKeyFile reuses a key file an interrupted init left behind, else publishes a new one.
-func provisionKeyFile(home string) (crypto.Key, error) {
+func provisionKeyFile(home *homeDir) (crypto.Key, error) {
 	key, err := readKeyFile(home)
 	if !errors.Is(err, fs.ErrNotExist) {
 		return key, err
@@ -131,36 +121,10 @@ func provisionKeyFile(home string) (crypto.Key, error) {
 	if key, err = crypto.GenerateKey(); err != nil {
 		return crypto.Key{}, err
 	}
-	if err := writeKeyFile(home, key); err != nil {
+	if err := home.writeKeyFile(key.Hex()); err != nil {
 		return crypto.Key{}, err
 	}
 	return key, nil
-}
-
-// writeKeyFile publishes a complete, synced key file and never replaces an existing one.
-func writeKeyFile(home string, key crypto.Key) error {
-	tmp, err := os.CreateTemp(home, "."+keyFileName+"-*")
-	if err != nil {
-		return fmt.Errorf("create key file: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	_, err = tmp.WriteString(key.Hex())
-	if err == nil {
-		err = tmp.Sync()
-	}
-	if closeErr := tmp.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return fmt.Errorf("write key file: %w", err)
-	}
-	if err := os.Link(tmp.Name(), filepath.Join(home, keyFileName)); err != nil {
-		return fmt.Errorf("publish key file: %w", err)
-	}
-	if err := syncDir(home); err != nil {
-		return fmt.Errorf("sync data dir: %w", err)
-	}
-	return nil
 }
 
 func provisionKeychain(vaultID string) (crypto.Key, error) {

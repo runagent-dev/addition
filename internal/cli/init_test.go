@@ -27,10 +27,10 @@ type initOutput struct {
 func isolatedHome(t *testing.T) string {
 	t.Helper()
 	keyring.MockInit()
-	home := filepath.Join(t.TempDir(), "addn")
+	home := filepath.Join(privateTempDir(t), "addn")
 	t.Setenv("ADDN_HOME", home)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("HOME", privateTempDir(t))
+	t.Setenv("XDG_DATA_HOME", privateTempDir(t))
 	t.Setenv("ADDN_MASTER_KEY", "")
 	_ = os.Unsetenv("ADDN_MASTER_KEY")
 	return home
@@ -267,7 +267,7 @@ func TestInitRejectsARelativeHome(t *testing.T) {
 	_ = os.Unsetenv("ADDN_HOME")
 	_ = os.Unsetenv("XDG_DATA_HOME")
 	t.Setenv("HOME", "relative")
-	t.Chdir(t.TempDir())
+	t.Chdir(privateTempDir(t))
 
 	r := run("init", "--key-file")
 

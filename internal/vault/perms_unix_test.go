@@ -84,7 +84,7 @@ func TestVaultFilesArePrivateUnderAPermissiveUmask(t *testing.T) {
 func TestKeyFileMustBeARegularFileNotALink(t *testing.T) {
 	cases := map[string]func(t *testing.T, path string){
 		"symlink to a 0600 file": func(t *testing.T, path string) {
-			target := filepath.Join(t.TempDir(), "real.key")
+			target := filepath.Join(privateTempDir(t), "real.key")
 			content, _ := os.ReadFile(path)
 			if err := os.WriteFile(target, content, 0o600); err != nil {
 				t.Fatal(err)

@@ -222,7 +222,7 @@ func TestOpenUsesOnlyTheRecordedSource(t *testing.T) {
 func TestAKeychainVaultSurvivesRelocation(t *testing.T) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{})
-	moved := filepath.Join(t.TempDir(), "moved-home")
+	moved := filepath.Join(privateTempDir(t), "moved-home")
 	if err := os.Rename(f.home, moved); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestAKeychainVaultSurvivesRelocation(t *testing.T) {
 
 func TestHomePathPunctuationIsNotParsedAsDSN(t *testing.T) {
 	f := newFakeEnv(t)
-	parent := t.TempDir()
+	parent := privateTempDir(t)
 	f.home = filepath.Join(parent, "we?ird#na%me")
 	f.set("ADDN_HOME", f.home)
 

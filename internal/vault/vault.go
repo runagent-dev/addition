@@ -8,8 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 
 	"github.com/runagent-dev/addition/internal/crypto"
 )
@@ -43,26 +41,24 @@ type InitResult struct {
 // Init creates the vault, or verifies an existing one; it never replaces a key.
 func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	env = env.withDefaults()
-	home, err := ResolveHome(env)
+	home, err := openHome(env, true)
 	if err != nil {
 		return InitResult{}, err
 	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return InitResult{}, fmt.Errorf("create data dir: %w", err)
-	}
-	if err := checkPrivateDir(home); err != nil {
+	defer home.Close()
+	if err := home.removeKeyTemps(); err != nil {
 		return InitResult{}, err
 	}
-	if err := createDBFile(home); err != nil {
+	if err := prepareDBFiles(home); err != nil {
 		return InitResult{}, err
 	}
-	db, err := openDB(ctx, home)
+	db, err := openDB(ctx, home.path)
 	if err != nil {
 		return InitResult{}, err
 	}
 	defer db.Close()
 
-	result := InitResult{Home: home, SchemaVersion: SchemaVersion}
+	result := InitResult{Home: home.path, SchemaVersion: SchemaVersion}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return InitResult{}, err
@@ -107,25 +103,35 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 	return result, nil
 }
 
-// createDBFile creates the database at 0600 before SQLite sees it, or checks the existing one.
-func createDBFile(home string) error {
-	f, err := createPrivateFile(filepath.Join(home, dbFile))
+var sideFileSuffixes = []string{"-wal", "-shm", "-journal"}
+
+// prepareDBFiles checks the home's existing vault files, then creates the database at 0600 if absent.
+func prepareDBFiles(home *homeDir) error {
+	if err := checkSideFiles(home); err != nil {
+		return err
+	}
+	f, err := home.createPrivateFile(dbFile)
 	if err == nil {
 		return f.Close()
 	}
 	if !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("create vault database: %w", err)
 	}
-	return checkDBFiles(home)
+	return home.checkPrivateFile(dbFile)
 }
 
-// checkDBFiles requires the database to exist and it and its WAL side files to be private.
-func checkDBFiles(home string) error {
-	if err := checkPrivateFile(filepath.Join(home, dbFile)); err != nil {
+// checkDBFiles requires the database to exist and it and its side files to be private.
+func checkDBFiles(home *homeDir) error {
+	if err := home.checkPrivateFile(dbFile); err != nil {
 		return err
 	}
-	for _, suffix := range []string{"-wal", "-shm"} {
-		if err := checkPrivateFile(filepath.Join(home, dbFile+suffix)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	return checkSideFiles(home)
+}
+
+// checkSideFiles requires every existing SQLite side file to be private; SQLite would reuse them as found.
+func checkSideFiles(home *homeDir) error {
+	for _, suffix := range sideFileSuffixes {
+		if err := home.checkPrivateFile(dbFile + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -138,32 +144,33 @@ type Store struct {
 	db *sql.DB
 }
 
+func notInitializedAt(home string) error {
+	return fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
+}
+
 // Open unlocks an initialised vault, applying any pending migrations.
 func Open(ctx context.Context, env Env) (*Store, error) {
 	env = env.withDefaults()
-	home, err := ResolveHome(env)
+	home, err := openHome(env, false)
 	if err != nil {
 		return nil, err
 	}
-	notInitialized := fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
-	if _, err := os.Stat(home); errors.Is(err, fs.ErrNotExist) {
-		return nil, notInitialized
-	}
-	if err := checkPrivateDir(home); err != nil {
+	defer home.Close()
+	if err := home.removeKeyTemps(); err != nil {
 		return nil, err
 	}
 	if err := checkDBFiles(home); errors.Is(err, fs.ErrNotExist) {
-		return nil, notInitialized
+		return nil, notInitializedAt(home.path)
 	} else if err != nil {
 		return nil, err
 	}
-	db, err := openDB(ctx, home)
+	db, err := openDB(ctx, home.path)
 	if err != nil {
 		return nil, err
 	}
 	rec, found, err := loadInitRecords(ctx, db)
 	if err == nil && !found {
-		err = notInitialized
+		err = notInitializedAt(home.path)
 	}
 	var key crypto.Key
 	if err == nil {
@@ -224,7 +231,7 @@ func holdsNoVaultData(ctx context.Context, q querier) (bool, error) {
 }
 
 // unlock resolves the master key and proves it against the stored canary.
-func unlock(env Env, home string, rec initRecords) (crypto.Key, error) {
+func unlock(env Env, home *homeDir, rec initRecords) (crypto.Key, error) {
 	key, err := resolveKey(env, home, rec)
 	if err != nil {
 		return crypto.Key{}, err

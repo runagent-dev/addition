@@ -86,7 +86,7 @@ func TestResolveHomeRejectsRelativeBases(t *testing.T) {
 
 func TestInitWithARelativeHomeCreatesNothing(t *testing.T) {
 	keyring.MockInit()
-	t.Chdir(t.TempDir())
+	t.Chdir(privateTempDir(t))
 	vars := map[string]string{"HOME": "relative"}
 	env := vault.Env{GOOS: "linux", LookupEnv: func(k string) (string, bool) { v, ok := vars[k]; return v, ok }}
 
