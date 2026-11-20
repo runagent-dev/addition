@@ -40,7 +40,7 @@ func googleLike(tokenURL string) *catalog.Provider {
 			TokenParams:         map[string]string{},
 			TokenResponseFormat: "json",
 			ClientAuthMethod:    "body",
-			Identity:            &catalog.Identity{URL: tokenURL + "/userinfo", Field: "email"},
+			Identity:            &catalog.Identity{URL: tokenURL + "/userinfo", Field: "email", SubjectField: "sub"},
 		},
 		API: catalog.API{AuthHeader: "Authorization", AuthPrefix: "Bearer"},
 	}
@@ -161,11 +161,15 @@ func TestCallbackVerify(t *testing.T) {
 		t.Errorf("mismatch err = %v, want ErrStateMismatch", err)
 	}
 
-	denied := oauth.Callback{State: "s", Error: "access_denied", ErrorDescription: "user said no"}
+	denied := oauth.Callback{State: "s", Error: "access_denied"}
 	_, err := denied.Verify("s")
 	var authErr *oauth.AuthorizationError
-	if !errors.As(err, &authErr) || authErr.Code != "access_denied" {
+	if !errors.As(err, &authErr) || authErr.Code != "access_denied" || !strings.Contains(err.Error(), "access_denied") {
 		t.Errorf("denied err = %v, want AuthorizationError access_denied", err)
+	}
+	odd := oauth.Callback{State: "s", Error: "echo-marker " + clientSecret}
+	if _, err := odd.Verify("s"); !errors.As(err, &authErr) || authErr.Code != "" || strings.Contains(err.Error(), "echo-marker") {
+		t.Errorf("an unlisted callback error = %v, want an AuthorizationError without its code", err)
 	}
 	if _, err := (oauth.Callback{State: "s"}).Verify("s"); !errors.Is(err, oauth.ErrBadRedirect) {
 		t.Errorf("missing code err = %v, want ErrBadRedirect", err)
@@ -335,15 +339,20 @@ func TestFetchIdentity(t *testing.T) {
 			w.WriteHeader(401)
 			return
 		}
-		_, _ = io.WriteString(w, `{"profile":{"email":"me@work.example"}}`)
+		_, _ = io.WriteString(w, `{"profile":{"email":"me@work.example","id":"1001"},"numeric":42}`)
 	}))
 	defer srv.Close()
 	p := googleLike(srv.URL)
-	p.OAuth2.Identity = &catalog.Identity{URL: srv.URL, Field: "profile.email"}
+	p.OAuth2.Identity = &catalog.Identity{URL: srv.URL, Field: "profile.email", SubjectField: "profile.id"}
 
 	got, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken)
-	if err != nil || got != "me@work.example" {
-		t.Fatalf("FetchIdentity = %q, %v", got, err)
+	if err != nil || got != (oauth.Identity{Subject: "1001", Display: "me@work.example"}) {
+		t.Fatalf("FetchIdentity = %+v, %v", got, err)
+	}
+
+	p.OAuth2.Identity.SubjectField = "numeric"
+	if got, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken); err != nil || got.Subject != "42" {
+		t.Errorf("a numeric subject = %+v, %v; want 42", got, err)
 	}
 
 	_, err = oauth.FetchIdentity(context.Background(), srv.Client(), p, "wrong-token")
@@ -352,14 +361,57 @@ func TestFetchIdentity(t *testing.T) {
 		t.Errorf("err = %v, want ProviderError 401", err)
 	}
 
-	p.OAuth2.Identity.Field = "profile.missing"
-	if _, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken); err == nil {
-		t.Error("a missing identity field was accepted")
+	for _, field := range []string{"Field", "SubjectField"} {
+		id := catalog.Identity{URL: srv.URL, Field: "profile.email", SubjectField: "profile.id"}
+		if field == "Field" {
+			id.Field = "profile.missing"
+		} else {
+			id.SubjectField = "profile.missing"
+		}
+		p.OAuth2.Identity = &id
+		if _, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken); !errors.As(err, &perr) || perr.Status != 200 {
+			t.Errorf("a missing %s = %v, want a malformed-response ProviderError", field, err)
+		}
 	}
 
 	p.OAuth2.Identity = nil
-	if got, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken); err != nil || got != "" {
-		t.Errorf("no identity config = %q, %v; want empty", got, err)
+	if got, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken); err != nil || got != (oauth.Identity{}) {
+		t.Errorf("no identity config = %+v, %v; want empty", got, err)
+	}
+}
+
+func TestExchangeScopeField(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply string
+		want  []string
+		bad   bool
+	}{
+		{"absent means the requested scopes", `{"access_token":"a"}`, nil, false},
+		{"empty means none granted", `{"access_token":"a","scope":""}`, []string{}, false},
+		{"listed", `{"access_token":"a","scope":"openid email"}`, []string{"openid", "email"}, false},
+		{"not a string", `{"access_token":"a","scope":["openid"]}`, nil, true},
+		{"a number", `{"access_token":"a","scope":7}`, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newTokenServer(t, jsonReply(200, tc.reply))
+			p := googleLike(ts.URL)
+			tokens, err := oauth.Exchange(context.Background(), ts.Client(), p, client, newAuthorization(t, p.OAuth2), "c")
+			if tc.bad {
+				var perr *oauth.ProviderError
+				if !errors.As(err, &perr) || perr.Status != 200 {
+					t.Errorf("err = %v, want a malformed-response ProviderError", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (tokens.Scopes == nil) != (tc.want == nil) || !slices.Equal(tokens.Scopes, tc.want) {
+				t.Errorf("scopes = %#v, want %#v", tokens.Scopes, tc.want)
+			}
+		})
 	}
 }
 
@@ -388,48 +440,103 @@ func TestRevoke(t *testing.T) {
 	}
 }
 
-func TestLoopbackReceivesTheCallback(t *testing.T) {
-	lb, err := oauth.ListenLoopback(0)
+func listen(t *testing.T, state string) *oauth.Loopback {
+	t.Helper()
+	lb, err := oauth.ListenLoopback(0, state)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lb.Close()
-	if !regexp.MustCompile(`^http://127\.0\.0\.1:\d+/callback$`).MatchString(lb.RedirectURI()) {
-		t.Fatalf("redirect URI = %q", lb.RedirectURI())
-	}
+	t.Cleanup(func() { _ = lb.Close() })
+	return lb
+}
 
-	base := strings.TrimSuffix(lb.RedirectURI(), "/callback")
-	if resp, err := http.Get(base + "/favicon.ico"); err != nil || resp.StatusCode != 404 {
-		t.Errorf("other path: %v %v", resp, err)
-	}
-	if resp, err := http.Get(lb.RedirectURI()); err != nil || resp.StatusCode != 400 {
-		t.Errorf("a callback without state: %v %v", resp, err)
-	}
-	resp, err := http.Get(lb.RedirectURI() + "?code=c1&state=s1")
+func get(t *testing.T, u string) (int, string) {
+	t.Helper()
+	resp, err := http.Get(u)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GET: %v", err)
 	}
 	page, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if !strings.Contains(string(page), "close this tab") {
-		t.Errorf("page = %q", page)
-	}
+	return resp.StatusCode, string(page)
+}
 
-	cb, err := lb.Wait(context.Background())
-	if err != nil || cb.Code != "c1" || cb.State != "s1" {
-		t.Errorf("Wait = %+v, %v", cb, err)
+func received(lb *oauth.Loopback) (oauth.Callback, bool) {
+	select {
+	case cb := <-lb.Received():
+		return cb, true
+	case <-time.After(50 * time.Millisecond):
+		return oauth.Callback{}, false
 	}
 }
 
-func TestLoopbackTimesOut(t *testing.T) {
-	lb, err := oauth.ListenLoopback(0)
-	if err != nil {
+func TestLoopbackAcceptsOnlyTheVerifiedCallback(t *testing.T) {
+	lb := listen(t, "s1")
+	if !regexp.MustCompile(`^http://127\.0\.0\.1:\d+/callback$`).MatchString(lb.RedirectURI()) {
+		t.Fatalf("redirect URI = %q", lb.RedirectURI())
+	}
+	if lb.LastRejection() != nil {
+		t.Errorf("a fresh listener has a rejection: %v", lb.LastRejection())
+	}
+
+	base := strings.TrimSuffix(lb.RedirectURI(), "/callback")
+	if status, _ := get(t, base+"/favicon.ico"); status != 404 {
+		t.Errorf("other path: %d", status)
+	}
+	if status, _ := get(t, lb.RedirectURI()); status != 400 {
+		t.Errorf("a callback without state: %d", status)
+	}
+	if status, _ := get(t, lb.RedirectURI()+"?code=forged&state=wrong"); status != 400 {
+		t.Errorf("a wrong state: %d", status)
+	}
+	if !errors.Is(lb.LastRejection(), oauth.ErrStateMismatch) {
+		t.Errorf("last rejection = %v, want ErrStateMismatch", lb.LastRejection())
+	}
+	if status, _ := get(t, lb.RedirectURI()+"?state=s1"); status != 400 {
+		t.Errorf("state without code or error: %d", status)
+	}
+	if !errors.Is(lb.LastRejection(), oauth.ErrBadRedirect) {
+		t.Errorf("last rejection = %v, want ErrBadRedirect", lb.LastRejection())
+	}
+	if _, ok := received(lb); ok {
+		t.Fatal("an invalid callback was delivered")
+	}
+
+	status, page := get(t, lb.RedirectURI()+"?code=c1&state=s1")
+	if status != 200 || !strings.Contains(page, "close this tab") {
+		t.Errorf("valid callback: %d %q", status, page)
+	}
+	if status, _ := get(t, lb.RedirectURI()+"?code=c2&state=s1"); status == 200 {
+		t.Error("a second valid callback was accepted")
+	}
+	cb, ok := received(lb)
+	if !ok || cb.Code != "c1" || cb.State != "s1" || cb.RedirectURI != lb.RedirectURI() {
+		t.Errorf("received = %+v, %v", cb, ok)
+	}
+	if _, ok := received(lb); ok {
+		t.Error("a second callback was delivered")
+	}
+}
+
+func TestLoopbackAcceptsAVerifiedDenial(t *testing.T) {
+	lb := listen(t, "s1")
+	if status, _ := get(t, lb.RedirectURI()+"?error=access_denied&state=s1"); status != 200 {
+		t.Errorf("a verified denial got %d", status)
+	}
+	cb, ok := received(lb)
+	if !ok || cb.Error != "access_denied" {
+		t.Errorf("received = %+v, %v", cb, ok)
+	}
+}
+
+func TestLoopbackStopsListeningWhenClosed(t *testing.T) {
+	lb := listen(t, "s1")
+	uri := lb.RedirectURI()
+	if err := lb.Close(); err != nil {
 		t.Fatal(err)
 	}
-	defer lb.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	if _, err := lb.Wait(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("err = %v, want DeadlineExceeded", err)
+	if resp, err := http.Get(uri + "?code=c&state=s1"); err == nil {
+		_ = resp.Body.Close()
+		t.Error("the listener still answers after Close")
 	}
 }
