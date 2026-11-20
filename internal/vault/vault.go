@@ -65,6 +65,7 @@ func Init(ctx context.Context, env Env, opts InitOptions) (InitResult, error) {
 		return InitResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	ctx = context.WithoutCancel(ctx) // once it holds the lock, Init finishes so a published key always gets its record
 	if err := home.removeKeyTemps(); err != nil {
 		return InitResult{}, err
 	}

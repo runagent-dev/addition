@@ -117,6 +117,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("open vault database: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	ctx = context.WithoutCancel(ctx) // a started migration commits whole; it is forward-only and idempotent
 
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
 		return fmt.Errorf("bootstrap meta: %w", err)
