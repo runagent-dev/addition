@@ -10,15 +10,21 @@ import (
 )
 
 type result struct {
+	args   []string
 	code   int
 	stdout string
 	stderr string
 }
 
+// command names the invocation by its first words only, since later arguments may hold codes.
+func (r result) command() string {
+	return "addn " + strings.Join(r.args[:min(2, len(r.args))], " ")
+}
+
 func run(args ...string) result {
 	var stdout, stderr bytes.Buffer
 	code := Run(args, &stdout, &stderr)
-	return result{code: code, stdout: stdout.String(), stderr: stderr.String()}
+	return result{args: args, code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
 type errorEnvelope struct {

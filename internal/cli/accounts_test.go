@@ -75,7 +75,6 @@ func TestAccountsListAndShow(t *testing.T) {
 	h.wantError(h.run("accounts", "show", "google:ghost"), ExitNeedsConnect, "not-connected")
 	h.wantError(h.run("accounts", "show", "work"), ExitUsage, "usage")
 	h.wantError(h.run("accounts", "show", "nope:work"), ExitUsage, "unknown-provider")
-	h.assertNothingLeaked()
 }
 
 func TestAccountsDefault(t *testing.T) {
@@ -116,7 +115,6 @@ func TestAccountsRemoveWithRevoke(t *testing.T) {
 		t.Errorf("audit events = %v", rows)
 	}
 	h.wantError(h.run("accounts", "remove", "google:work"), ExitNeedsConnect, "not-connected")
-	h.assertNothingLeaked()
 	assertAuditHoldsNoSecrets(t, h)
 }
 
@@ -132,7 +130,6 @@ func TestAccountsRemoveSurvivesAFailedRevoke(t *testing.T) {
 		t.Errorf("remove = %+v", out)
 	}
 	h.wantAccounts(0)
-	h.assertNothingLeaked()
 }
 
 func TestAccountsRemoveLocalOnly(t *testing.T) {
@@ -209,7 +206,6 @@ func TestAuthCheck(t *testing.T) {
 		t.Errorf("after expiry access_token = %q, want expired", c.AccessToken)
 	}
 	h.wantError(h.run("auth", "check", "google:ghost"), ExitNeedsConnect, "not-connected")
-	h.assertNothingLeaked()
 }
 
 func TestAuthCheckWithNoAccounts(t *testing.T) {
@@ -288,15 +284,15 @@ func assertAuditHoldsNoSecrets(t *testing.T, h *harness) {
 	}
 	_ = rows.Close()
 	all := dumpDB(t, h.home)
-	for _, secret := range append([]string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, workIdentity}, h.google.verifiers...) {
+	for i, secret := range append([]string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, workIdentity}, h.google.verifiers...) {
 		if secret == "" {
 			continue
 		}
 		if strings.Contains(audit.String(), secret) {
-			t.Errorf("the audit log holds %q", secret)
+			t.Errorf("the audit log holds secret #%d", i)
 		}
 		if secret != workIdentity && strings.Contains(all, secret) {
-			t.Errorf("the vault holds a plaintext secret")
+			t.Errorf("the vault holds secret #%d in plaintext", i)
 		}
 	}
 }

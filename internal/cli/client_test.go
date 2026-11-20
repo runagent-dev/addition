@@ -41,7 +41,6 @@ func TestClientAddAndList(t *testing.T) {
 	if strings.Contains(r.stdout, "secret") {
 		t.Errorf("client list mentions a secret: %s", r.stdout)
 	}
-	h.assertNothingLeaked()
 }
 
 func TestClientListIsAnEmptyArray(t *testing.T) {
@@ -57,7 +56,6 @@ func TestClientAddRejectsAWebClient(t *testing.T) {
 	if !strings.Contains(env.Error.Message, "Desktop app") {
 		t.Errorf("message %q does not say to create a Desktop app client", env.Error.Message)
 	}
-	h.assertNothingLeaked()
 }
 
 func TestClientAddRejectsBadInput(t *testing.T) {
@@ -88,5 +86,4 @@ func TestClientAddRejectsBadInput(t *testing.T) {
 			h.wantError(h.run(tc.args...), ExitUsage, tc.code)
 		})
 	}
-	h.assertNothingLeaked()
 }

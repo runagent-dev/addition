@@ -72,12 +72,14 @@ func decodeInit(t *testing.T, r result) initOutput {
 
 func assertNoLeak(t *testing.T, r result, secrets ...string) {
 	t.Helper()
-	for _, s := range secrets {
+	for i, s := range secrets {
 		if s == "" {
 			t.Fatal("assertNoLeak called with an empty secret")
 		}
-		if strings.Contains(r.stdout, s) || strings.Contains(r.stderr, s) {
-			t.Errorf("key material leaked into output\nstdout: %q\nstderr: %q", r.stdout, r.stderr)
+		for stream, out := range map[string]string{"stdout": r.stdout, "stderr": r.stderr} {
+			if strings.Contains(out, s) {
+				t.Errorf("secret #%d leaked into the %s of `%s`", i, stream, r.command())
+			}
 		}
 	}
 }

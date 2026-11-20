@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -62,50 +64,104 @@ func TestConnectLoopbackFlow(t *testing.T) {
 	if rows := auditEvents(t, h.home); !slices.Equal(rows, []string{"init", "connect"}) {
 		t.Errorf("audit events = %v", rows)
 	}
-	h.assertNothingLeaked()
 	assertAuditHoldsNoSecrets(t, h)
 }
 
-func TestConnectPrintsTheURLWhenTheBrowserFailsToOpen(t *testing.T) {
+// stderrLines decodes every stderr line, each of which must be one JSON object.
+func stderrLines(t *testing.T, r result) []map[string]any {
+	t.Helper()
+	var lines []map[string]any
+	for _, line := range strings.Split(strings.TrimRight(r.stderr, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var v map[string]any
+		if err := json.Unmarshal([]byte(line), &v); err != nil {
+			t.Fatalf("a stderr line is not a JSON object: %v", err)
+		}
+		lines = append(lines, v)
+	}
+	return lines
+}
+
+// failingLauncher is a browser launcher that starts, then exits nonzero after a moment.
+func failingLauncher(then func(authorizeURL string)) func(string) <-chan error {
+	return func(authorizeURL string) <-chan error {
+		exited := make(chan error, 1)
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			exited <- errNoBrowser
+			if then != nil {
+				then(authorizeURL)
+			}
+		}()
+		return exited
+	}
+}
+
+func TestConnectPrintsTheURLWhenTheBrowserLauncherFails(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.deps.openBrowser = func(authorizeURL string) error {
-		go func() { _ = h.browse(authorizeURL) }()
-		return errNoBrowser
-	}
+	h.deps.openBrowser = failingLauncher(func(authorizeURL string) { _ = h.visit(authorizeURL) })
 
 	r := h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
 
-	if !strings.Contains(r.stderr, h.google.srv.URL+"/authorize?") {
-		t.Errorf("stderr does not carry the authorize URL: %q", r.stderr)
+	lines := stderrLines(t, r)
+	if len(lines) != 1 || lines[0]["notice"] != "open-browser-failed" ||
+		!strings.HasPrefix(fmt.Sprint(lines[0]["authorize_url"]), h.google.srv.URL+"/authorize?") {
+		t.Errorf("stderr = %v, want one open-browser-failed notice with the authorize URL", lines)
 	}
 	if got := decodeJSON[connected](t, r); got.Identity != workIdentity {
 		t.Errorf("connect = %+v", got)
 	}
-	h.assertNothingLeaked()
+}
+
+func TestConnectBrowserFallbackThenTimeout(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	h.deps.openBrowser = failingLauncher(nil)
+	h.deps.loopbackTimeout = 200 * time.Millisecond
+
+	r := h.run("connect", "google", "--as", "work")
+
+	h.wantError(r, ExitUsage, "authorization-timeout")
+	lines := stderrLines(t, r)
+	if len(lines) != 2 || lines[0]["notice"] != "open-browser-failed" || lines[1]["error"] == nil {
+		t.Errorf("stderr = %v, want the notice, then the error envelope last", lines)
+	}
 }
 
 func TestConnectLoopbackTimesOut(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.deps.openBrowser = func(string) error { return nil }
+	h.deps.openBrowser = func(string) <-chan error { return make(chan error) }
 	h.deps.loopbackTimeout = 20 * time.Millisecond
 
 	h.wantError(h.run("connect", "google", "--as", "work"), ExitUsage, "authorization-timeout")
 	h.wantAccounts(0)
 }
 
-func TestConnectLoopbackRejectsAStateMismatch(t *testing.T) {
+// forge sends the loopback a callback carrying the wrong state.
+func forge(t *testing.T, authorizeURL string) {
+	u, _ := url.Parse(authorizeURL)
+	resp, err := http.Get(u.Query().Get("redirect_uri") + "?code=4/forged&state=not-the-state")
+	if err != nil {
+		t.Errorf("forged callback: %v", err)
+		return
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("forged callback got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestConnectLoopbackReportsAStateMismatchAtTimeout(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.deps.openBrowser = func(authorizeURL string) error {
-		u, _ := url.Parse(authorizeURL)
-		back := u.Query().Get("redirect_uri") + "?code=4/forged&state=not-the-state"
-		resp, err := http.Get(back)
-		if err == nil {
-			_ = resp.Body.Close()
-		}
-		return err
+	h.deps.loopbackTimeout = 200 * time.Millisecond
+	h.deps.openBrowser = func(authorizeURL string) <-chan error {
+		forge(t, authorizeURL)
+		return make(chan error)
 	}
 
 	h.wantError(h.run("connect", "google", "--as", "work"), ExitUsage, "state-mismatch")
@@ -113,6 +169,42 @@ func TestConnectLoopbackRejectsAStateMismatch(t *testing.T) {
 		t.Error("a forged callback reached the token endpoint")
 	}
 	h.wantAccounts(0)
+}
+
+func TestConnectLoopbackIgnoresAForgeryBeforeTheRealCallback(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	h.deps.openBrowser = func(authorizeURL string) <-chan error {
+		forge(t, authorizeURL)
+		return h.browse(authorizeURL)
+	}
+
+	got := decodeJSON[connected](t, h.mustRun("connect", "google", "--as", "work", "--services", "gmail"))
+	if got.Identity != workIdentity || len(h.google.exchanges) != 1 {
+		t.Errorf("connect = %+v after %d exchanges", got, len(h.google.exchanges))
+	}
+}
+
+func TestConnectLoopbackStopsListeningBeforeTheExchange(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	var redirectURI string
+	stillListening := false
+	h.deps.openBrowser = func(authorizeURL string) <-chan error {
+		redirectURI = mustQueryParam(t, authorizeURL, "redirect_uri")
+		return h.browse(authorizeURL)
+	}
+	h.google.onToken = func() {
+		if resp, err := http.Get(redirectURI + "?code=again&state=x"); err == nil {
+			_ = resp.Body.Close()
+			stillListening = true
+		}
+	}
+
+	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	if stillListening {
+		t.Error("the loopback listener still answered during the token exchange")
+	}
 }
 
 func (h *harness) startTwoStep(args ...string) pendingOut {
@@ -155,7 +247,6 @@ func TestTwoStepFlow(t *testing.T) {
 			t.Error("the PKCE verifier is in the database in plaintext")
 		}
 	}
-	h.assertNothingLeaked()
 	assertAuditHoldsNoSecrets(t, h)
 }
 
@@ -215,6 +306,11 @@ func TestCompleteRejectsBadPastes(t *testing.T) {
 	if len(h.google.exchanges) != 0 {
 		t.Error("a bad paste reached the token endpoint")
 	}
+
+	got := decodeJSON[connected](t, h.mustRun("connect", "--complete", landed))
+	if got.Identity != workIdentity {
+		t.Errorf("after bad pastes, complete = %+v", got)
+	}
 }
 
 func TestCompleteAccessDenied(t *testing.T) {
@@ -235,11 +331,11 @@ func TestConnectTokenExchangeRejected(t *testing.T) {
 	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
 
 	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamClient, "token-exchange-rejected")
-	if !strings.Contains(env.Error.Message, "invalid_grant") {
-		t.Errorf("message %q does not name the provider error", env.Error.Message)
+	if !strings.Contains(env.Error.Message, "invalid_grant") || !strings.Contains(env.Error.Message, "HTTP 400") {
+		t.Errorf("message %q does not name the status and the provider error", env.Error.Message)
 	}
 	h.wantAccounts(0)
-	h.assertNothingLeaked()
+	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
 }
 
 func TestConnectNetworkFailure(t *testing.T) {
@@ -248,7 +344,10 @@ func TestConnectNetworkFailure(t *testing.T) {
 	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
 	h.google.srv.Close()
 
-	h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
+	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
+	if env.Error.Message != "network error contacting the token endpoint" {
+		t.Errorf("message = %q", env.Error.Message)
+	}
 	h.wantAccounts(0)
 }
 
@@ -273,7 +372,6 @@ func TestConnectScopesNotGranted(t *testing.T) {
 	if !slices.Equal(show.Scopes, got.Scopes) {
 		t.Errorf("stored scopes = %v, want %v", show.Scopes, got.Scopes)
 	}
-	h.assertNothingLeaked()
 }
 
 func TestReconnectRequestsTheScopeUnion(t *testing.T) {
@@ -295,19 +393,68 @@ func TestReconnectRequestsTheScopeUnion(t *testing.T) {
 	if rows := auditEvents(t, h.home); !slices.Equal(rows, []string{"init", "connect", "connect"}) {
 		t.Errorf("audit events = %v", rows)
 	}
-	h.assertNothingLeaked()
 }
 
-func TestReconnectRefusesADifferentIdentity(t *testing.T) {
+func TestReconnectRefusesADifferentSubject(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
-	h.google.identity = "someone-else@example.com"
+	h.google.subject = "2002"
 
 	h.wantError(h.run("connect", "google", "--as", "work", "--services", "drive"), ExitUsage, "identity-mismatch")
 	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "google:work"))
 	if show.Identity != workIdentity || slices.Contains(show.Scopes, scopeDrive) {
 		t.Errorf("the account changed: %+v", show)
+	}
+}
+
+func TestReconnectFollowsTheSubjectThroughAnEmailRename(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	h.google.identity = "renamed@work.example"
+
+	got := decodeJSON[connected](t, h.mustRun("connect", "google", "--as", "work", "--services", "drive"))
+	if got.Created || got.Identity != "renamed@work.example" || !containsAll(got.Scopes, scopeDrive) {
+		t.Errorf("reconnect after a rename = %+v", got)
+	}
+}
+
+func TestConnectNeedsASubject(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	h.google.subject = ""
+
+	h.wantError(h.run("connect", "google", "--as", "work", "--services", "gmail"), ExitUpstreamClient, "identity-rejected")
+	h.wantAccounts(0)
+}
+
+func TestConnectScopeResponse(t *testing.T) {
+	cases := []struct {
+		name  string
+		reply func([]string) (any, bool)
+		exit  int
+		code  string
+	}{
+		{"absent grants what was requested", func([]string) (any, bool) { return nil, false }, ExitOK, ""},
+		{"empty grants nothing", func([]string) (any, bool) { return "", true }, ExitNeedsConnect, "scopes-not-granted"},
+		{"not a string is malformed", func(g []string) (any, bool) { return g, true }, ExitUpstreamClient, "token-exchange-rejected"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.addClient()
+			h.google.scopeReply = tc.reply
+
+			r := h.run("connect", "google", "--as", "work", "--services", "gmail")
+			if tc.exit == ExitOK {
+				if got := decodeJSON[connected](t, r); r.code != ExitOK || !containsAll(got.Scopes, gmailScopes...) {
+					t.Errorf("exit %d, connect = %+v", r.code, got)
+				}
+				return
+			}
+			h.wantError(r, tc.exit, tc.code)
+		})
 	}
 }
 

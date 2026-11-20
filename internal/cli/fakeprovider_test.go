@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,9 @@ const (
 	fakeAccessToken  = "ya29.fake-access-token-0001"
 	fakeRefreshToken = "1//fake-refresh-token-0001"
 	workIdentity     = "me@work.example"
+	workSubject      = "1001"
+	// echoMarker tags provider diagnostics that repeat what addn sent; it must never be shown.
+	echoMarker = "echo-marker"
 )
 
 const (
@@ -52,11 +56,17 @@ type fakeGoogle struct {
 
 	mu          sync.Mutex
 	identity    string
+	subject     string
 	deny        bool
+	echo        bool
 	grant       func(requested []string) []string
+	scopeReply  func(granted []string) (value any, present bool)
 	tokenStatus int
+	userinfoBad bool
 	revokeFails bool
+	onToken     func()
 	codes       map[string]issuedCode
+	issued      []string
 	authorizes  []url.Values
 	exchanges   []url.Values
 	verifiers   []string
@@ -65,7 +75,7 @@ type fakeGoogle struct {
 }
 
 func newFakeGoogle(t *testing.T) *fakeGoogle {
-	f := &fakeGoogle{t: t, identity: workIdentity, codes: map[string]issuedCode{}}
+	f := &fakeGoogle{t: t, identity: workIdentity, subject: workSubject, codes: map[string]issuedCode{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/authorize", f.authorize)
 	mux.HandleFunc("/token", f.token)
@@ -87,11 +97,17 @@ func (f *fakeGoogle) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply := url.Values{"state": {q.Get("state")}}
-	if f.deny {
+	switch {
+	case f.deny && f.echo:
+		reply.Set("error", echoMarker+" "+q.Get("code_challenge"))
+		reply.Set("error_description", echoMarker+" "+q.Encode())
+	case f.deny:
 		reply.Set("error", "access_denied")
-	} else {
+		reply.Set("error_description", echoMarker+" the user said no")
+	default:
 		code := fmt.Sprintf("4/fake-code-%d", len(f.authorizes))
 		f.codes[code] = issuedCode{challenge: q.Get("code_challenge"), redirectURI: q.Get("redirect_uri"), scopes: strings.Fields(q.Get("scope"))}
+		f.issued = append(f.issued, code)
 		reply.Set("code", code)
 		reply.Set("scope", q.Get("scope"))
 	}
@@ -99,7 +115,19 @@ func (f *fakeGoogle) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back.String(), http.StatusFound)
 }
 
+// echoError answers like a provider whose diagnostics repeat the request it was sent.
+func echoError(w http.ResponseWriter, status int, sent string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": "invalid_request", "error_description": echoMarker + " " + sent, "error_uri": "https://x.example/?" + sent,
+	})
+}
+
 func (f *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
+	if f.onToken != nil {
+		f.onToken()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	_ = r.ParseForm()
@@ -114,6 +142,10 @@ func (f *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
 		form.Get("client_id") == fakeClientID && form.Get("client_secret") == fakeClientSecret &&
 		form.Get("redirect_uri") == issued.redirectURI &&
 		base64.RawURLEncoding.EncodeToString(sum[:]) == issued.challenge
+	if f.echo {
+		echoError(w, http.StatusBadRequest, r.PostForm.Encode())
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if !valid {
 		status := f.tokenStatus
@@ -129,20 +161,36 @@ func (f *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
 	if f.grant != nil {
 		granted = f.grant(granted)
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	reply := map[string]any{
 		"access_token": fakeAccessToken, "refresh_token": fakeRefreshToken, "token_type": "Bearer",
 		"expires_in": 3599, "scope": strings.Join(granted, " "),
-	})
+	}
+	if f.scopeReply != nil {
+		if value, present := f.scopeReply(granted); present {
+			reply["scope"] = value
+		} else {
+			delete(reply, "scope")
+		}
+	}
+	_ = json.NewEncoder(w).Encode(reply)
 }
 
 func (f *fakeGoogle) userinfo(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.userinfoBad {
+		echoError(w, http.StatusUnauthorized, r.Header.Get("Authorization"))
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer "+fakeAccessToken {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"sub": "1001", "email": f.identity, "email_verified": true})
+	info := map[string]any{"email": f.identity, "email_verified": true}
+	if f.subject != "" {
+		info["sub"] = f.subject
+	}
+	_ = json.NewEncoder(w).Encode(info)
 }
 
 func (f *fakeGoogle) revoke(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +198,10 @@ func (f *fakeGoogle) revoke(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	_ = r.ParseForm()
 	f.revoked = append(f.revoked, r.PostForm.Get("token"))
-	if f.revokeFails {
+	switch {
+	case f.echo:
+		echoError(w, http.StatusBadRequest, r.PostForm.Encode())
+	case f.revokeFails:
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"invalid_token"}`))
 	}
@@ -216,12 +267,15 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 // harness is an initialised vault, a fake Google and the deps that wire addn to them.
+// When the test ends it checks every command it ran for leaked secrets.
 type harness struct {
-	t       *testing.T
-	home    string
-	google  *fakeGoogle
-	clock   *fakeClock
-	deps    deps
+	t      *testing.T
+	home   string
+	google *fakeGoogle
+	clock  *fakeClock
+	deps   deps
+
+	mu      sync.Mutex
 	results []result
 }
 
@@ -240,12 +294,19 @@ func newHarness(t *testing.T) *harness {
 		openBrowser:     h.browse,
 		loopbackTimeout: 5 * time.Second,
 	}
+	t.Cleanup(h.assertNothingLeaked)
 	h.mustRun("init", "--key-file")
 	return h
 }
 
 // browse is the default injected opener: a browser that consents and follows the redirect home.
-func (h *harness) browse(authorizeURL string) error {
+func (h *harness) browse(authorizeURL string) <-chan error {
+	exited := make(chan error, 1)
+	exited <- h.visit(authorizeURL)
+	return exited
+}
+
+func (h *harness) visit(authorizeURL string) error {
 	resp, err := http.Get(authorizeURL)
 	if err != nil {
 		return err
@@ -256,8 +317,10 @@ func (h *harness) browse(authorizeURL string) error {
 func (h *harness) run(args ...string) result {
 	var stdout, stderr bytes.Buffer
 	code := execute(args, &stdout, &stderr, h.deps)
-	r := result{code: code, stdout: stdout.String(), stderr: stderr.String()}
+	r := result{args: args, code: code, stdout: stdout.String(), stderr: stderr.String()}
+	h.mu.Lock()
 	h.results = append(h.results, r)
+	h.mu.Unlock()
 	return r
 }
 
@@ -275,11 +338,16 @@ func (h *harness) wantError(r result, exit int, code string) errorEnvelope {
 	if r.code != exit {
 		h.t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", r.code, exit, r.stdout, r.stderr)
 	}
-	env := decodeError(h.t, r.stderr)
+	env := decodeError(h.t, lastLine(r.stderr))
 	if env.Error.Code != code {
 		h.t.Errorf("error.code = %q, want %q (message %q)", env.Error.Code, code, env.Error.Message)
 	}
 	return env
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	return lines[len(lines)-1]
 }
 
 func (h *harness) addClient() {
@@ -287,19 +355,41 @@ func (h *harness) addClient() {
 	h.mustRun("client", "add", "google", "--file", writeClientFile(h.t, "installed"))
 }
 
-// assertNothingLeaked checks every command this harness ran for secrets, PKCE verifiers included.
+var base64URLRun = regexp.MustCompile(`[A-Za-z0-9_-]{43,}`)
+
+// assertNothingLeaked checks every command this harness ran for the client secret, the tokens,
+// every authorization code, echoed provider diagnostics, and any PKCE verifier, including one
+// that never reached the token endpoint: no 43-character run may hash to an issued challenge.
 func (h *harness) assertNothingLeaked() {
 	h.t.Helper()
-	secrets := []string{fakeClientSecret, fakeAccessToken, fakeRefreshToken}
+	secrets := []string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, echoMarker}
+	challenges := map[string]bool{}
 	h.google.mu.Lock()
 	for _, v := range h.google.verifiers {
 		if v != "" {
 			secrets = append(secrets, v)
 		}
 	}
+	secrets = append(secrets, h.google.issued...)
+	for _, q := range h.google.authorizes {
+		challenges[q.Get("code_challenge")] = true
+	}
 	h.google.mu.Unlock()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for _, r := range h.results {
 		assertNoLeak(h.t, r, secrets...)
+		for stream, out := range map[string]string{"stdout": r.stdout, "stderr": r.stderr} {
+			for _, run := range base64URLRun.FindAllString(out, -1) {
+				for i := 0; i+43 <= len(run); i++ {
+					sum := sha256.Sum256([]byte(run[i : i+43]))
+					if challenges[base64.RawURLEncoding.EncodeToString(sum[:])] {
+						h.t.Errorf("a PKCE verifier leaked into the %s of `%s`", stream, r.command())
+					}
+				}
+			}
+		}
 	}
 }
 
