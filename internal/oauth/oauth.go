@@ -33,22 +33,36 @@ var (
 	ErrStateMismatch = errors.New("the redirect's state does not match this authorization")
 )
 
-// AuthorizationError is an error the provider reported in the redirect, such as access_denied.
+// AuthorizationError is the provider refusing consent in the redirect. Code is an allowlisted
+// OAuth error identifier, or empty; the provider's own text is never kept.
 type AuthorizationError struct {
-	Code        string
-	Description string
+	Code string
 }
 
 func (e *AuthorizationError) Error() string {
-	return describe("authorization failed", e.Code, e.Description)
+	return withCode("the provider refused the authorization", e.Code)
 }
 
-func describe(prefix, code, description string) string {
-	msg := prefix + ": " + code
-	if description != "" {
-		msg += " (" + description + ")"
+func withCode(msg, code string) string {
+	if code != "" {
+		msg += ": " + code
 	}
 	return msg
+}
+
+// knownErrorCodes are the RFC 6749 and RFC 6750 error identifiers addn repeats to the user.
+var knownErrorCodes = map[string]bool{
+	"invalid_request": true, "invalid_client": true, "invalid_grant": true, "unauthorized_client": true,
+	"unsupported_grant_type": true, "invalid_scope": true, "access_denied": true, "server_error": true,
+	"temporarily_unavailable": true, "invalid_token": true,
+}
+
+// allowlisted returns code when it is a known OAuth error identifier, else "".
+func allowlisted(code string) string {
+	if knownErrorCodes[code] {
+		return code
+	}
+	return ""
 }
 
 // NewAuthorization starts a request with a random state and, when the provider supports it, a PKCE verifier.
@@ -126,11 +140,10 @@ func splitScopes(cfg *catalog.OAuth2, s string) []string {
 
 // Callback is what the provider sent back to the redirect URI.
 type Callback struct {
-	RedirectURI      string
-	Code             string
-	State            string
-	Error            string
-	ErrorDescription string
+	RedirectURI string
+	Code        string
+	State       string
+	Error       string
 }
 
 // ParseCallback reads a redirect URL the browser landed on.
@@ -148,22 +161,27 @@ func ParseCallback(raw string) (Callback, error) {
 }
 
 func callbackFromQuery(q url.Values) Callback {
-	return Callback{
-		Code: q.Get("code"), State: q.Get("state"),
-		Error: q.Get("error"), ErrorDescription: q.Get("error_description"),
+	return Callback{Code: q.Get("code"), State: q.Get("state"), Error: q.Get("error")}
+}
+
+// check is Verify without handing out the code: nil for a code or a provider refusal meant for state.
+func (cb Callback) check(state string) error {
+	if !constantTimeEqual(cb.State, state) {
+		return ErrStateMismatch
 	}
+	if cb.Code == "" && cb.Error == "" {
+		return ErrBadRedirect
+	}
+	return nil
 }
 
 // Verify checks the callback belongs to the authorization with state and returns its code.
 func (cb Callback) Verify(state string) (string, error) {
-	if !constantTimeEqual(cb.State, state) {
-		return "", ErrStateMismatch
+	if err := cb.check(state); err != nil {
+		return "", err
 	}
 	if cb.Error != "" {
-		return "", &AuthorizationError{Code: cb.Error, Description: cb.ErrorDescription}
-	}
-	if cb.Code == "" {
-		return "", ErrBadRedirect
+		return "", &AuthorizationError{Code: allowlisted(cb.Error)}
 	}
 	return cb.Code, nil
 }
@@ -179,24 +197,43 @@ func constantTimeEqual(a, b string) bool {
 	return diff == 0
 }
 
-// ProviderError is a provider refusing a request: an error status or an unusable body.
+// ProviderError is a provider refusing a request or answering with something unusable.
+// Code is an allowlisted OAuth error identifier or empty; Problem is written by addn.
 type ProviderError struct {
-	Op          string
-	Status      int
-	Code        string
-	Description string
+	Op      string
+	Status  int
+	Code    string
+	Problem string
 }
 
 func (e *ProviderError) Error() string {
-	return describe(fmt.Sprintf("%s rejected (HTTP %d)", e.Op, e.Status), e.Code, e.Description)
+	msg := withCode(fmt.Sprintf("%s failed (HTTP %d)", e.Op, e.Status), e.Code)
+	if e.Problem != "" {
+		msg += ": " + e.Problem
+	}
+	return msg
 }
 
-// NetworkError is a request that never got an HTTP response.
+// NetworkError is a request that got no HTTP response. RequestSent is false only when the
+// request certainly never reached the provider in full.
 type NetworkError struct {
-	Op  string
-	Err error
+	Op          string
+	RequestSent bool
+	err         error
 }
 
-func (e *NetworkError) Error() string { return e.Op + ": " + e.Err.Error() }
+func (e *NetworkError) Error() string { return "network error contacting the " + endpointNames[e.Op] }
 
-func (e *NetworkError) Unwrap() error { return e.Err }
+func (e *NetworkError) Unwrap() error { return e.err }
+
+const (
+	OpExchange = "token exchange"
+	OpIdentity = "identity lookup"
+	OpRevoke   = "revoke"
+)
+
+var endpointNames = map[string]string{
+	OpExchange: "token endpoint",
+	OpIdentity: "identity endpoint",
+	OpRevoke:   "revoke endpoint",
+}

@@ -99,7 +99,10 @@ func TestProviderDiagnosticsAreLocallyAuthored(t *testing.T) {
 type echoTransport struct{}
 
 func (echoTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	body, _ := io.ReadAll(r.Body)
+	var body []byte
+	if r.Body != nil {
+		body, _ = io.ReadAll(r.Body)
+	}
 	return nil, fmt.Errorf("dial tcp: echo-marker %s %s %s", r.URL, body, r.Header.Get("Authorization"))
 }
 

@@ -128,28 +128,31 @@ func loadTarget(ctx context.Context, s *vault.Store, provider *catalog.Provider,
 }
 
 func connectViaLoopback(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget) error {
-	lb, err := oauth.ListenLoopback(0)
+	auth, err := oauth.NewAuthorization(t.provider.OAuth2, "", t.scopes)
+	if err != nil {
+		return err
+	}
+	lb, err := oauth.ListenLoopback(0, auth.State)
 	if err != nil {
 		return &Error{Code: "loopback", Message: "listen on 127.0.0.1: " + err.Error(), Exit: ExitInternal}
 	}
 	defer lb.Close()
-	auth, err := oauth.NewAuthorization(t.provider.OAuth2, lb.RedirectURI(), t.scopes)
-	if err != nil {
-		return err
-	}
+	auth.RedirectURI = lb.RedirectURI()
 	authorizeURL := auth.URL(t.provider.OAuth2, t.client)
 	if err := d.openBrowser(authorizeURL); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Could not open a browser. Open this URL to authorize addn:\n%s\n", authorizeURL)
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), d.loopbackTimeout)
 	defer cancel()
-	cb, err := lb.Wait(ctx)
-	if errors.Is(err, context.DeadlineExceeded) {
+	var cb oauth.Callback
+	select {
+	case cb = <-lb.Received():
+	case <-ctx.Done():
+		if rejected := lb.LastRejection(); rejected != nil {
+			return oauthError(rejected)
+		}
 		return &Error{Code: "authorization-timeout", Exit: ExitUsage, Message: fmt.Sprintf(
 			"no authorization arrived within %s; run connect again, or use --no-browser on a headless machine", d.loopbackTimeout)}
-	}
-	if err != nil {
-		return err
 	}
 	code, err := cb.Verify(auth.State)
 	if err != nil {
@@ -253,7 +256,7 @@ func finishConnect(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget, 
 	if granted == nil {
 		granted = auth.Scopes
 	}
-	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: identity, Scopes: granted}
+	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: identity.Display, Scopes: granted}
 	err = s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
 		acct, created, err := saveAccount(ctx, tx, result)
 		if err != nil {

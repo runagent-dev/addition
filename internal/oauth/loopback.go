@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -14,20 +15,26 @@ const callbackPath = "/callback"
 const donePage = `<!doctype html><meta charset="utf-8"><title>addn</title>
 <p>addn received the authorization response. You can close this tab.</p>`
 
-// Loopback is an RFC 8252 redirect listener on 127.0.0.1 that takes the first callback carrying a state.
+// Loopback is an RFC 8252 redirect listener on 127.0.0.1. It answers 400 to any callback that
+// is not for its state, and delivers the first verified one: a code or a provider refusal.
 type Loopback struct {
 	listener  net.Listener
 	server    *http.Server
+	state     string
 	callbacks chan Callback
+
+	mu            sync.Mutex
+	accepted      bool
+	lastRejection error
 }
 
-// ListenLoopback listens on 127.0.0.1:port; port 0 picks a free one.
-func ListenLoopback(port int) (*Loopback, error) {
+// ListenLoopback listens on 127.0.0.1:port for the callback of the authorization with state; port 0 picks a free one.
+func ListenLoopback(port int, state string) (*Loopback, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return nil, err
 	}
-	l := &Loopback{listener: ln, callbacks: make(chan Callback, 1)}
+	l := &Loopback{listener: ln, state: state, callbacks: make(chan Callback, 1)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+callbackPath, l.handle)
 	l.server = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
@@ -41,29 +48,35 @@ func (l *Loopback) RedirectURI() string {
 
 func (l *Loopback) handle(w http.ResponseWriter, r *http.Request) {
 	cb := callbackFromQuery(r.URL.Query())
-	if cb.State == "" {
-		http.Error(w, "not an OAuth redirect", http.StatusBadRequest)
+	cb.RedirectURI = l.RedirectURI()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := cb.check(l.state); err != nil {
+		l.lastRejection = err
+		http.Error(w, "not the OAuth redirect addn is waiting for", http.StatusBadRequest)
 		return
 	}
-	cb.RedirectURI = l.RedirectURI()
-	select {
-	case l.callbacks <- cb:
-	default:
+	if l.accepted {
+		http.Error(w, "addn already received the authorization response", http.StatusConflict)
+		return
 	}
+	l.accepted = true
+	l.callbacks <- cb
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(donePage))
 }
 
-// Wait returns the first callback, or ctx's error when it ends first.
-func (l *Loopback) Wait(ctx context.Context) (Callback, error) {
-	select {
-	case cb := <-l.callbacks:
-		return cb, nil
-	case <-ctx.Done():
-		return Callback{}, ctx.Err()
-	}
+// Received yields the one verified callback.
+func (l *Loopback) Received() <-chan Callback { return l.callbacks }
+
+// LastRejection is why the most recent invalid callback was refused, or nil if none was.
+func (l *Loopback) LastRejection() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastRejection
 }
 
+// Close stops listening; it is safe to call more than once.
 func (l *Loopback) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

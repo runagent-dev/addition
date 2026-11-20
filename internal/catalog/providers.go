@@ -39,10 +39,12 @@ type OAuth2 struct {
 	Identity             *Identity             `yaml:"identity"`
 }
 
-// Identity names the endpoint that tells who an access token belongs to, and the dot-path to read.
+// Identity names the endpoint that tells who an access token belongs to. SubjectField is the
+// stable account id that aliases match on; Field is a display name, such as an email.
 type Identity struct {
-	URL   string `yaml:"url"`
-	Field string `yaml:"field"`
+	URL          string `yaml:"url"`
+	Field        string `yaml:"field"`
+	SubjectField string `yaml:"subject_field"`
 }
 
 // TokenResponseMapping holds dot-paths into a non-standard token response.

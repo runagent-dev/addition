@@ -2,11 +2,12 @@ package oauth
 
 import "net/http"
 
-// adapter holds a provider's token-exchange quirks: request shaping and error detection, never token extraction.
+// adapter holds a provider's token-exchange quirks: request shaping and spotting errors inside
+// a 2xx response, never token extraction. A non-2xx status is always an error.
 type adapter interface {
 	beforeTokenExchange(req *http.Request)
-	isError(status int, body map[string]any) bool
-	errorDetail(body map[string]any) (code, description string)
+	isErrorBody(body map[string]any) bool
+	errorCode(body map[string]any) string
 }
 
 // adapters is keyed by provider id; Google and unknown providers use the standard behaviour.
@@ -23,13 +24,11 @@ type defaultAdapter struct{}
 
 func (defaultAdapter) beforeTokenExchange(*http.Request) {}
 
-func (defaultAdapter) isError(status int, _ map[string]any) bool { return status >= 400 }
+func (defaultAdapter) isErrorBody(map[string]any) bool { return false }
 
-func (defaultAdapter) errorDetail(body map[string]any) (string, string) {
+func (defaultAdapter) errorCode(body map[string]any) string {
 	code, _ := body["error"].(string)
-	if code == "" {
-		return "unknown_error", ""
-	}
-	description, _ := body["error_description"].(string)
-	return code, description
+	return code
 }
+
+func isSuccess(status int) bool { return status >= 200 && status < 300 }

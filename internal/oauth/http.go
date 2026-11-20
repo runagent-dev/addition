@@ -6,21 +6,30 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/runagent-dev/addition/internal/catalog"
 )
 
-// Tokens is a parsed token response. Scopes is nil when the provider did not say what it granted.
+// Tokens is a parsed token response. Scopes is nil when the response has no scope field,
+// which RFC 6749 §5.1 means the requested scopes; an empty, non-nil Scopes is a grant of none.
 type Tokens struct {
 	AccessToken  string
 	RefreshToken string
 	TokenType    string
 	ExpiresIn    time.Duration
 	Scopes       []string
+}
+
+// Identity is who an access token belongs to: a stable Subject and a Display name, such as an email.
+type Identity struct {
+	Subject string
+	Display string
 }
 
 var ErrRevokeUnsupported = errors.New("the provider has no revoke endpoint")
@@ -57,28 +66,38 @@ func Exchange(ctx context.Context, hc *http.Client, p *catalog.Provider, client 
 	adapter := adapterFor(p.ID)
 	adapter.beforeTokenExchange(req)
 
-	const op = "token exchange"
-	status, body, err := send(hc, req, op)
+	status, body, err := send(hc, req, OpExchange)
 	if err != nil {
 		return Tokens{}, err
 	}
 	parsed := parseBody(body, cfg.TokenResponseFormat)
-	if adapter.isError(status, parsed) {
-		code, description := adapter.errorDetail(parsed)
-		return Tokens{}, &ProviderError{Op: op, Status: status, Code: code, Description: description}
+	if !isSuccess(status) || adapter.isErrorBody(parsed) {
+		return Tokens{}, &ProviderError{Op: OpExchange, Status: status, Code: allowlisted(adapter.errorCode(parsed))}
 	}
 	return extractTokens(cfg, parsed, status)
 }
 
+// send runs one back-channel request. It never follows a redirect, so a request body holding
+// a secret or a token goes only to the URL in the catalog.
 func send(hc *http.Client, req *http.Request, op string) (int, []byte, error) {
-	resp, err := hc.Do(req)
+	noRedirects := *hc
+	noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	var sent atomic.Bool
+	trace := &httptrace.ClientTrace{WroteRequest: func(info httptrace.WroteRequestInfo) {
+		if info.Err == nil {
+			sent.Store(true)
+		}
+	}}
+	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+
+	resp, err := noRedirects.Do(req)
 	if err != nil {
-		return 0, nil, &NetworkError{Op: op, Err: err}
+		return 0, nil, &NetworkError{Op: op, RequestSent: sent.Load(), err: err}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return 0, nil, &NetworkError{Op: op, Err: err}
+		return 0, nil, &NetworkError{Op: op, RequestSent: true, err: err}
 	}
 	return resp.StatusCode, body, nil
 }
@@ -106,10 +125,12 @@ func extractTokens(cfg *catalog.OAuth2, body map[string]any, status int) (Tokens
 	if m := cfg.TokenResponseMapping; m != nil {
 		paths = *m
 	}
+	malformed := func(problem string) error {
+		return &ProviderError{Op: OpExchange, Status: status, Problem: problem}
+	}
 	access, _ := lookup(body, paths.AccessToken).(string)
 	if access == "" {
-		return Tokens{}, &ProviderError{Op: "token exchange", Status: status, Code: "malformed_token_response",
-			Description: "no access token at '" + paths.AccessToken + "'"}
+		return Tokens{}, malformed("the response has no access token at '" + paths.AccessToken + "'")
 	}
 	t := Tokens{AccessToken: access}
 	t.RefreshToken, _ = lookup(body, paths.RefreshToken).(string)
@@ -117,10 +138,21 @@ func extractTokens(cfg *catalog.OAuth2, body map[string]any, status int) (Tokens
 	if seconds, ok := asSeconds(lookup(body, paths.ExpiresIn)); ok {
 		t.ExpiresIn = time.Duration(seconds) * time.Second
 	}
-	if scope, _ := lookup(body, "scope").(string); scope != "" {
-		t.Scopes = splitScopes(cfg, scope)
+	switch scope := lookup(body, "scope").(type) {
+	case nil:
+	case string:
+		t.Scopes = nonNil(splitScopes(cfg, scope))
+	default:
+		return Tokens{}, malformed("the response's scope is not a string")
 	}
 	return t, nil
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // lookup follows a dot-path through nested JSON objects.
@@ -151,15 +183,15 @@ func asSeconds(v any) (int64, bool) {
 }
 
 // FetchIdentity reads who the access token belongs to from the provider's identity endpoint.
-// A provider without one has no identity, reported as "".
-func FetchIdentity(ctx context.Context, hc *http.Client, p *catalog.Provider, accessToken string) (string, error) {
+// A provider without one has no identity, reported as the zero Identity.
+func FetchIdentity(ctx context.Context, hc *http.Client, p *catalog.Provider, accessToken string) (Identity, error) {
 	id := p.OAuth2.Identity
 	if id == nil {
-		return "", nil
+		return Identity{}, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, id.URL, nil)
 	if err != nil {
-		return "", err
+		return Identity{}, err
 	}
 	header, prefix := p.API.AuthHeader, p.API.AuthPrefix
 	if header == "" {
@@ -168,21 +200,34 @@ func FetchIdentity(ctx context.Context, hc *http.Client, p *catalog.Provider, ac
 	req.Header.Set(header, strings.TrimSpace(prefix+" "+accessToken))
 	req.Header.Set("Accept", "application/json")
 
-	const op = "identity lookup"
-	status, body, err := send(hc, req, op)
+	status, body, err := send(hc, req, OpIdentity)
 	if err != nil {
-		return "", err
+		return Identity{}, err
 	}
 	parsed := parseBody(body, "json")
-	if status >= 400 {
-		code, description := defaultAdapter{}.errorDetail(parsed)
-		return "", &ProviderError{Op: op, Status: status, Code: code, Description: description}
+	if !isSuccess(status) {
+		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Code: allowlisted(defaultAdapter{}.errorCode(parsed))}
 	}
-	identity, _ := lookup(parsed, id.Field).(string)
-	if identity == "" {
-		return "", &ProviderError{Op: op, Status: status, Code: "malformed_identity_response", Description: "no string at '" + id.Field + "'"}
+	subject, ok := identifier(lookup(parsed, id.SubjectField))
+	if !ok {
+		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Problem: "the response has no subject at '" + id.SubjectField + "'"}
 	}
-	return identity, nil
+	display, _ := lookup(parsed, id.Field).(string)
+	if display == "" {
+		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Problem: "the response has no string at '" + id.Field + "'"}
+	}
+	return Identity{Subject: subject, Display: display}, nil
+}
+
+// identifier accepts a non-empty string or a JSON number, which some providers use for account ids.
+func identifier(v any) (string, bool) {
+	switch x := v.(type) {
+	case string:
+		return x, x != ""
+	case json.Number:
+		return x.String(), true
+	}
+	return "", false
 }
 
 // Revoke asks the provider to invalidate token (RFC 7009).
@@ -197,14 +242,12 @@ func Revoke(ctx context.Context, hc *http.Client, p *catalog.Provider, token str
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	const op = "revoke"
-	status, body, err := send(hc, req, op)
+	status, body, err := send(hc, req, OpRevoke)
 	if err != nil {
 		return err
 	}
-	if status >= 400 {
-		code, description := defaultAdapter{}.errorDetail(parseBody(body, "json"))
-		return &ProviderError{Op: op, Status: status, Code: code, Description: description}
+	if !isSuccess(status) {
+		return &ProviderError{Op: OpRevoke, Status: status, Code: allowlisted(defaultAdapter{}.errorCode(parseBody(body, "json")))}
 	}
 	return nil
 }

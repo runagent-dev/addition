@@ -314,8 +314,8 @@ func TestExchangeRejectsAResponseWithoutAnAccessToken(t *testing.T) {
 
 	_, err := oauth.Exchange(context.Background(), ts.Client(), p, client, newAuthorization(t, p.OAuth2), "c")
 	var perr *oauth.ProviderError
-	if !errors.As(err, &perr) || perr.Code != "malformed_token_response" {
-		t.Errorf("err = %v, want a malformed_token_response ProviderError", err)
+	if !errors.As(err, &perr) || perr.Status != 200 || perr.Code != "" || perr.Problem == "" {
+		t.Errorf("err = %#v, want a malformed-response ProviderError", err)
 	}
 }
 

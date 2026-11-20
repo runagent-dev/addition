@@ -29,10 +29,12 @@ oauth2:
     refresh_token: "refresh_token"
     expires_in: "expires_in"
 
-  # Optional. After connecting, GET url with the new token and store the value at field (dot-path).
+  # Optional. After connecting, GET url with the new token. subject_field (dot-path) is the stable
+  # account id an alias is bound to; field is shown to the user, e.g. an email.
   identity:
     url: ""
     field: ""
+    subject_field: ""
 
 api:
   base_url: ""

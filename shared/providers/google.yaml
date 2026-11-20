@@ -23,6 +23,7 @@ oauth2:
   identity:
     url: "https://openidconnect.googleapis.com/v1/userinfo"
     field: "email"
+    subject_field: "sub"
 
 api:
   base_url: "https://www.googleapis.com"

@@ -115,7 +115,8 @@ func validateOAuth2(o fieldChecker) {
 		if id, ok := o.mapping("identity"); ok {
 			id.nonEmptyString("url")
 			id.nonEmptyString("field")
-			id.onlyKeys("url", "field")
+			id.nonEmptyString("subject_field")
+			id.onlyKeys("url", "field", "subject_field")
 		}
 	}
 }
