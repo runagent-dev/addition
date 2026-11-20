@@ -102,3 +102,38 @@ func TestConcurrentImmediateTxsSerialize(t *testing.T) {
 		t.Errorf("counter = %s, want %s (lost updates)", got.AccessToken, want)
 	}
 }
+
+func TestWithImmediateTxHonoursCancellation(t *testing.T) {
+	s, _ := newStore(t)
+	acct, err := s.CreateAccount(context.Background(), vault.Account{Provider: "google", Alias: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("already cancelled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		called := false
+		err := s.WithImmediateTx(ctx, func(*vault.Tx) error { called = true; return nil })
+		if !errors.Is(err, context.Canceled) || called {
+			t.Fatalf("err = %v, called = %v; want context.Canceled without running fn", err, called)
+		}
+	})
+
+	t.Run("cancelled during fn", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		err := s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
+			if err := tx.PutCredential(context.Background(), acct.ID, vault.Credential{AccessToken: "discarded"}); err != nil {
+				return err
+			}
+			cancel()
+			return nil
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+		if _, err := s.GetCredential(context.Background(), acct.ID); !errors.Is(err, vault.ErrNotFound) {
+			t.Fatalf("write from a cancelled transaction was committed (err = %v)", err)
+		}
+	})
+}
