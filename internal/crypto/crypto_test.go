@@ -237,3 +237,35 @@ func mustEncrypt(t *testing.T, key crypto.Key, plaintext []byte) string {
 	}
 	return blob
 }
+
+func TestAADBindsTheBlobToItsContext(t *testing.T) {
+	here, there := []byte("vault/accounts/1/access"), []byte("vault/accounts/2/access")
+	blob, err := crypto.EncryptWithAAD(keyA, []byte("token"), here)
+	if err != nil {
+		t.Fatalf("EncryptWithAAD: %v", err)
+	}
+
+	got, err := crypto.DecryptWithAAD(keyA, blob, here)
+	if err != nil || string(got) != "token" {
+		t.Fatalf("DecryptWithAAD = %q, %v; want token", got, err)
+	}
+	for name, aad := range map[string][]byte{"other context": there, "no context": nil} {
+		if _, err := crypto.DecryptWithAAD(keyA, blob, aad); !errors.Is(err, crypto.ErrDecrypt) {
+			t.Errorf("%s: err = %v, want ErrDecrypt", name, err)
+		}
+	}
+	if _, err := crypto.Decrypt(keyA, blob); !errors.Is(err, crypto.ErrDecrypt) {
+		t.Errorf("nil-AAD Decrypt of an AAD blob: err = %v, want ErrDecrypt", err)
+	}
+	if raw := decode(t, blob); len(raw) != 12+16+len("token") {
+		t.Errorf("AAD blob is %d bytes, want iv||tag||ciphertext", len(raw))
+	}
+}
+
+func TestNilAADIsTheSDKFormat(t *testing.T) {
+	blob := mustEncrypt(t, keyA, []byte("sdk"))
+	got, err := crypto.DecryptWithAAD(keyA, blob, nil)
+	if err != nil || string(got) != "sdk" {
+		t.Errorf("DecryptWithAAD(nil) of an Encrypt blob = %q, %v", got, err)
+	}
+}

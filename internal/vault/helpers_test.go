@@ -33,9 +33,11 @@ func newFakeEnv(t *testing.T) *fakeEnv {
 
 func (f *fakeEnv) set(key, value string) { f.vars[key] = value }
 
+func (f *fakeEnv) unset(key string) { delete(f.vars, key) }
+
 func (f *fakeEnv) env() vault.Env {
 	return vault.Env{
-		Getenv: func(k string) string { return f.vars[k] },
+		LookupEnv: func(k string) (string, bool) { v, ok := f.vars[k]; return v, ok },
 		GOOS:   "linux",
 		Now:    func() time.Time { return testNow },
 	}
@@ -66,6 +68,29 @@ func newStore(t *testing.T) (*vault.Store, *fakeEnv) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{KeyFile: true})
 	return mustOpen(t, f), f
+}
+
+// vaultID reads the random ID that names the vault's keychain entry.
+func vaultID(t *testing.T, home string) string {
+	t.Helper()
+	var id string
+	if err := rawDB(t, home).QueryRow(`SELECT value FROM meta WHERE key = 'vault_id'`).Scan(&id); err != nil {
+		t.Fatalf("read vault_id: %v", err)
+	}
+	return id
+}
+
+// keychainKey returns the vault's key from the mock keychain, or "" when it has none.
+func keychainKey(t *testing.T, home string) string {
+	t.Helper()
+	key, err := keyring.Get(vault.KeychainService, vaultID(t, home))
+	if errors.Is(err, keyring.ErrNotFound) {
+		return ""
+	}
+	if err != nil {
+		t.Fatalf("keychain: %v", err)
+	}
+	return key
 }
 
 func rawDB(t *testing.T, home string) *sql.DB {

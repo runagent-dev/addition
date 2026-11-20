@@ -2,13 +2,14 @@ package vault_test
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/runagent-dev/addition/internal/crypto"
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
@@ -178,48 +179,176 @@ func TestCredentials(t *testing.T) {
 	}
 }
 
-func TestAudit(t *testing.T) {
-	ctx := context.Background()
-	s, f := newStore(t)
-	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+type auditRow struct{ event, provider, alias, details, at string }
 
-	if err := s.Audit(ctx, "connect", &acct, map[string]any{"scopes": []string{"gmail"}}); err != nil {
-		t.Fatalf("Audit: %v", err)
-	}
-	if err := s.Audit(ctx, "client.add", nil, nil); err != nil {
-		t.Fatalf("Audit without account: %v", err)
-	}
-	_ = s.RemoveAccount(ctx, "google", "work")
-
-	rows, err := rawDB(t, f.home).Query(`SELECT event, COALESCE(provider,''), COALESCE(alias,''), details, created_at FROM audit_log WHERE event IN ('connect','client.add') ORDER BY id`)
+func auditRows(t *testing.T, home string) []auditRow {
+	t.Helper()
+	rows, err := rawDB(t, home).Query(`SELECT event, COALESCE(provider,''), COALESCE(alias,''), details, created_at FROM audit_log WHERE event != 'init' ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	type row struct{ event, provider, alias, details, at string }
-	var got []row
+	var got []auditRow
 	for rows.Next() {
-		var r row
+		var r auditRow
 		if err := rows.Scan(&r.event, &r.provider, &r.alias, &r.details, &r.at); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, r)
 	}
-	if len(got) != 2 {
-		t.Fatalf("audit rows = %+v, want 2", got)
+	return got
+}
+
+func TestAudit(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStore(t)
+	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+
+	events := []vault.AuditEvent{
+		vault.ConnectEvent{AccountID: acct.ID},
+		vault.RefreshEvent{AccountID: acct.ID, Outcome: vault.RefreshNeedsReauth},
+		vault.RevokeEvent{AccountID: acct.ID},
 	}
-	if got[0].event != "connect" || got[0].provider != "google" || got[0].alias != "work" {
-		t.Errorf("connect row = %+v, want google/work kept after the account was removed", got[0])
+	for _, ev := range events {
+		if err := s.Audit(ctx, ev); err != nil {
+			t.Fatalf("Audit(%T): %v", ev, err)
+		}
 	}
-	var details map[string][]string
-	if err := json.Unmarshal([]byte(got[0].details), &details); err != nil || details["scopes"][0] != "gmail" {
-		t.Errorf("details = %q, want JSON with scopes", got[0].details)
+	_ = s.RemoveAccount(ctx, "google", "work")
+
+	got := auditRows(t, f.home)
+	want := []auditRow{
+		{"connect", "google", "work", "{}", ""},
+		{"refresh", "google", "work", `{"outcome":"needs-reauth"}`, ""},
+		{"revoke", "google", "work", "{}", ""},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("audit rows = %+v, want %d", got, len(want))
+	}
+	for i := range want {
+		want[i].at = got[i].at
+		if got[i] != want[i] {
+			t.Errorf("row %d = %+v, want %+v (kept after the account was removed)", i, got[i], want[i])
+		}
 	}
 	if at, err := time.Parse(time.RFC3339Nano, got[0].at); err != nil || !at.Equal(testNow) {
 		t.Errorf("created_at = %q, want the injected clock", got[0].at)
 	}
-	if got[1].provider != "" || got[1].alias != "" || got[1].details != "{}" {
-		t.Errorf("account-less row = %+v, want no account and {} details", got[1])
+}
+
+func TestAuditRejectsUnknownValues(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStore(t)
+	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+
+	bad := map[string]vault.AuditEvent{
+		"unknown outcome":    vault.RefreshEvent{AccountID: acct.ID, Outcome: "ok-ish"},
+		"unknown key source": vault.InitEvent{KeySource: "paper"},
+		"missing account":    vault.ConnectEvent{AccountID: 9999},
+		"no account":         vault.RevokeEvent{},
+	}
+	for name, ev := range bad {
+		if err := s.Audit(ctx, ev); err == nil {
+			t.Errorf("%s: Audit accepted it", name)
+		}
+	}
+	if rows := auditRows(t, f.home); len(rows) != 0 {
+		t.Errorf("rejected events were written: %+v", rows)
+	}
+}
+
+// Every caller-controlled string an audit entry point accepts carries the marker.
+func TestAuditNeverPersistsCallerStrings(t *testing.T) {
+	const marker = "ya29.SYNTHETIC-TOKEN-MARKER"
+	ctx := context.Background()
+	s, f := newStore(t)
+	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+
+	attempts := []vault.AuditEvent{
+		vault.InitEvent{KeySource: marker},
+		vault.ConnectEvent{AccountID: acct.ID},
+		vault.RefreshEvent{AccountID: acct.ID, Outcome: marker},
+		vault.RefreshEvent{AccountID: acct.ID, Outcome: vault.RefreshOK},
+		vault.RevokeEvent{AccountID: acct.ID},
+	}
+	for _, ev := range attempts {
+		_ = s.Audit(ctx, ev)
+		_ = s.WithImmediateTx(ctx, func(tx *vault.Tx) error { return tx.Audit(ctx, ev) })
+	}
+
+	var n int
+	if err := rawDB(t, f.home).QueryRow(`SELECT count(*) FROM audit_log WHERE instr(event || COALESCE(provider,'') || COALESCE(alias,'') || details || created_at, ?) > 0`, marker).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d audit rows contain the marker", n)
+	}
+	if strings.Contains(dumpAllText(t, f.home), marker) {
+		t.Error("the marker reached the database")
+	}
+}
+
+func TestSecretsAreBoundToTheirRowAndField(t *testing.T) {
+	ctx := context.Background()
+	cases := map[string]struct {
+		swap  string
+		check func(s *vault.Store, a, b vault.Account) error
+	}{
+		"access token copied to another account": {
+			`UPDATE credentials SET access_token_encrypted = (SELECT access_token_encrypted FROM credentials WHERE account_id = :a) WHERE account_id = :b`,
+			func(s *vault.Store, _, b vault.Account) error { _, err := s.GetCredential(ctx, b.ID); return err },
+		},
+		"refresh token copied into the access column": {
+			`UPDATE credentials SET access_token_encrypted = refresh_token_encrypted WHERE account_id = :a`,
+			func(s *vault.Store, a, _ vault.Account) error { _, err := s.GetCredential(ctx, a.ID); return err },
+		},
+		"access token copied into the refresh column": {
+			`UPDATE credentials SET refresh_token_encrypted = access_token_encrypted WHERE account_id = :a`,
+			func(s *vault.Store, a, _ vault.Account) error { _, err := s.GetCredential(ctx, a.ID); return err },
+		},
+		"client secret copied to another provider": {
+			`UPDATE oauth_clients SET client_secret_encrypted = (SELECT client_secret_encrypted FROM oauth_clients WHERE provider = 'google') WHERE provider = 'github'`,
+			func(s *vault.Store, _, _ vault.Account) error { _, err := s.GetOAuthClient(ctx, "github"); return err },
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, f := newStore(t)
+			a, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "a"})
+			b, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "b"})
+			for _, acct := range []vault.Account{a, b} {
+				if err := s.PutCredential(ctx, acct.ID, vault.Credential{AccessToken: "access-" + acct.Alias, RefreshToken: "refresh-" + acct.Alias}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, p := range []string{"google", "github"} {
+				if err := s.PutOAuthClient(ctx, vault.OAuthClient{Provider: p, ClientID: p, ClientSecret: "secret-" + p}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := rawDB(t, f.home).Exec(tc.swap, sql.Named("a", a.ID), sql.Named("b", b.ID)); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := tc.check(s, a, b); !errors.Is(err, crypto.ErrDecrypt) {
+				t.Errorf("err = %v, want ErrDecrypt for a moved blob", err)
+			}
+		})
+	}
+}
+
+func TestAccountIDsAreNeverReused(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	first, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+	_ = s.RemoveAccount(ctx, "google", "work")
+
+	second, err := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID <= first.ID {
+		t.Errorf("recreated account got id %d, want one above %d", second.ID, first.ID)
 	}
 }
 

@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,7 +32,27 @@ func isolatedHome(t *testing.T) string {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	t.Setenv("ADDN_MASTER_KEY", "")
+	_ = os.Unsetenv("ADDN_MASTER_KEY")
 	return home
+}
+
+// keychainKey returns the key stored under the vault's recorded ID.
+func keychainKey(t *testing.T, home string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(home, "addition.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var id string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'vault_id'`).Scan(&id); err != nil {
+		t.Fatalf("read vault_id: %v", err)
+	}
+	key, err := keyring.Get(vault.KeychainService, id)
+	if err != nil {
+		t.Fatalf("keychain: %v", err)
+	}
+	return key
 }
 
 func decodeInit(t *testing.T, r result) initOutput {
@@ -96,11 +119,65 @@ func TestInitWithKeychain(t *testing.T) {
 	if got.KeySource != "keychain" || !got.Created || got.Home != home {
 		t.Errorf("init = %+v, want key_source=keychain created=true home=%s", got, home)
 	}
-	key, err := keyring.Get(vault.KeychainService, home)
-	if err != nil {
-		t.Fatalf("keychain: %v", err)
+	assertNoLeak(t, r, keychainKey(t, home))
+}
+
+func TestInitReportsTheRecordedSourceWhenEnvUnlocks(t *testing.T) {
+	home := isolatedHome(t)
+	decodeInit(t, run("init"))
+	key := keychainKey(t, home)
+	t.Setenv("ADDN_MASTER_KEY", key)
+
+	r := run("init")
+
+	if got := decodeInit(t, r); got.KeySource != "keychain" || got.Created {
+		t.Errorf("init = %+v, want the recorded keychain source", got)
 	}
 	assertNoLeak(t, r, key)
+}
+
+func TestInitRejectsASetButEmptyEnvKey(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("ADDN_MASTER_KEY", "")
+
+	r := run("init", "--key-file")
+
+	if r.code != ExitUsage {
+		t.Fatalf("exit code = %d, want %d (stderr %q)", r.code, ExitUsage, r.stderr)
+	}
+	if env := decodeError(t, r.stderr); env.Error.Code != "invalid-master-key" {
+		t.Errorf("error.code = %q, want invalid-master-key", env.Error.Code)
+	}
+}
+
+func TestInitRejectsAnInsecureHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows relies on profile ACLs")
+	}
+	home := isolatedHome(t)
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o777); err != nil {
+		t.Fatal(err)
+	}
+
+	r := run("init", "--key-file")
+
+	if r.code != ExitUsage {
+		t.Fatalf("exit code = %d, want %d (stderr %q)", r.code, ExitUsage, r.stderr)
+	}
+	if env := decodeError(t, r.stderr); env.Error.Code != "insecure-home" {
+		t.Errorf("error.code = %q, want insecure-home", env.Error.Code)
+	}
+}
+
+func TestCorruptVaultIsInternal(t *testing.T) {
+	failure := vaultError(fmt.Errorf("%w: schema_version is not a valid version", vault.ErrCorrupt))
+
+	if failure.Exit != ExitInternal || failure.Code != "vault" {
+		t.Errorf("got exit %d code %q, want exit %d code vault", failure.Exit, failure.Code, ExitInternal)
+	}
 }
 
 func TestInitWithEnvKey(t *testing.T) {

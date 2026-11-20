@@ -60,7 +60,7 @@ func TestOpenResolvesEachKeySource(t *testing.T) {
 	t.Run("env overrides the keychain", func(t *testing.T) {
 		f := newFakeEnv(t)
 		mustInit(t, f, vault.InitOptions{})
-		stored, _ := keyring.Get(vault.KeychainService, f.home)
+		stored := keychainKey(t, f.home)
 		keyring.MockInit()
 		f.set("ADDN_MASTER_KEY", stored)
 		mustOpen(t, f)
@@ -92,7 +92,7 @@ func TestOpenRejectsAnInvalidEnvKey(t *testing.T) {
 func TestOpenNeverUsesAnUnrecordedKeyFile(t *testing.T) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{})
-	stored, _ := keyring.Get(vault.KeychainService, f.home)
+	stored := keychainKey(t, f.home)
 	if err := os.WriteFile(filepath.Join(f.home, "master.key"), []byte(stored), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestOpenFailsLoudlyWhenNoKeySourceIsAvailable(t *testing.T) {
 		"env vault, env unset": func(t *testing.T, f *fakeEnv) {
 			f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
 			mustInit(t, f, vault.InitOptions{})
-			f.set("ADDN_MASTER_KEY", "")
+			f.unset("ADDN_MASTER_KEY")
 		},
 		"key file vault, file deleted": func(t *testing.T, f *fakeEnv) {
 			mustInit(t, f, vault.InitOptions{KeyFile: true})
@@ -194,5 +194,82 @@ func TestRefusesADatabaseFromANewerBinary(t *testing.T) {
 	}
 	if _, err := vault.Init(context.Background(), f.env(), vault.InitOptions{}); !errors.Is(err, vault.ErrSchemaTooNew) {
 		t.Errorf("Init err = %v, want ErrSchemaTooNew", err)
+	}
+}
+
+func TestOpenTreatsASetButEmptyEnvKeyAsAnError(t *testing.T) {
+	f := newFakeEnv(t)
+	mustInit(t, f, vault.InitOptions{KeyFile: true})
+	f.set("ADDN_MASTER_KEY", "")
+
+	if err := openErr(t, f); !errors.Is(err, crypto.ErrInvalidKey) {
+		t.Fatalf("err = %v, want ErrInvalidKey for a set-but-empty ADDN_MASTER_KEY", err)
+	}
+}
+
+func TestOpenUsesOnlyTheRecordedSource(t *testing.T) {
+	f := newFakeEnv(t)
+	mustInit(t, f, vault.InitOptions{})
+	if err := os.WriteFile(filepath.Join(f.home, "master.key"), []byte(keychainKey(t, f.home)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = rawDB(t, f.home).Exec(`UPDATE meta SET value = 'file' WHERE key = 'key_source'`)
+	_ = keyring.Set(vault.KeychainService, vaultID(t, f.home), strings.Repeat("e", 64))
+
+	mustOpen(t, f)
+}
+
+func TestAKeychainVaultSurvivesRelocation(t *testing.T) {
+	f := newFakeEnv(t)
+	mustInit(t, f, vault.InitOptions{})
+	moved := filepath.Join(t.TempDir(), "moved-home")
+	if err := os.Rename(f.home, moved); err != nil {
+		t.Fatal(err)
+	}
+	f.set("ADDN_HOME", moved)
+
+	mustOpen(t, f)
+}
+
+func TestHomePathPunctuationIsNotParsedAsDSN(t *testing.T) {
+	f := newFakeEnv(t)
+	parent := t.TempDir()
+	f.home = filepath.Join(parent, "we?ird#na%me")
+	f.set("ADDN_HOME", f.home)
+
+	mustInit(t, f, vault.InitOptions{KeyFile: true})
+	mustOpen(t, f)
+
+	if _, err := os.Stat(filepath.Join(f.home, "addition.db")); err != nil {
+		t.Errorf("addition.db is not inside the punctuated home: %v", err)
+	}
+	entries, _ := os.ReadDir(parent)
+	if len(entries) != 1 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("parent dir holds %v, want only the home", names)
+	}
+}
+
+func TestRejectsACorruptSchemaVersion(t *testing.T) {
+	for _, version := range []string{"-1", "0", "one"} {
+		t.Run(version, func(t *testing.T) {
+			s, f := newStore(t)
+			_ = s.Close()
+			if _, err := rawDB(t, f.home).Exec(`UPDATE meta SET value = ? WHERE key = 'schema_version'`, version); err != nil {
+				t.Fatal(err)
+			}
+
+			err := openErr(t, f)
+
+			if !errors.Is(err, vault.ErrCorrupt) {
+				t.Fatalf("err = %v, want ErrCorrupt", err)
+			}
+			if strings.Contains(err.Error(), version) && version != "0" {
+				t.Errorf("error %q echoes the raw value", err)
+			}
+		})
 	}
 }

@@ -37,7 +37,7 @@ func TestResolveHome(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			env := vault.Env{GOOS: tc.goos, Getenv: func(k string) string { return tc.vars[k] }}
+			env := vault.Env{GOOS: tc.goos, LookupEnv: func(k string) (string, bool) { v, ok := tc.vars[k]; return v, ok }}
 			got, err := vault.ResolveHome(env)
 			if err != nil {
 				t.Fatalf("ResolveHome: %v", err)
@@ -53,7 +53,7 @@ func TestResolveHomeFailsWithoutABase(t *testing.T) {
 	cases := map[string]string{"linux": "linux", "darwin": "darwin", "windows": "windows"}
 	for name, goos := range cases {
 		t.Run(name, func(t *testing.T) {
-			env := vault.Env{GOOS: goos, Getenv: func(string) string { return "" }}
+			env := vault.Env{GOOS: goos, LookupEnv: func(string) (string, bool) { return "", false }}
 			if got, err := vault.ResolveHome(env); err == nil {
 				t.Errorf("ResolveHome = %q, want an error", got)
 			}
@@ -62,11 +62,8 @@ func TestResolveHomeFailsWithoutABase(t *testing.T) {
 }
 
 func TestResolveHomeMakesADDNHomeAbsolute(t *testing.T) {
-	env := vault.Env{GOOS: "linux", Getenv: func(k string) string {
-		if k == "ADDN_HOME" {
-			return "relative/home"
-		}
-		return ""
+	env := vault.Env{GOOS: "linux", LookupEnv: func(k string) (string, bool) {
+		return "relative/home", k == "ADDN_HOME"
 	}}
 	got, err := vault.ResolveHome(env)
 	if err != nil {
