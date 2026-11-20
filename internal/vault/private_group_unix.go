@@ -44,8 +44,8 @@ func (a accountSources) checkPrivateGroup(gid uint32) error {
 		return fmt.Errorf("it is named %q, not %q", g.Name, u.Username)
 	}
 	listed := false
-	err = scanAccountFile(a.groupFile, func(f []string) error {
-		if len(f) < 4 || f[2] != id {
+	err = scanAccountFile(a.groupFile, groupFormat, func(f []string) error {
+		if !sameGID(f[groupFormat.gid], gid) {
 			return nil
 		}
 		listed = true
@@ -62,8 +62,8 @@ func (a accountSources) checkPrivateGroup(gid uint32) error {
 	if err != nil {
 		return err
 	}
-	return scanAccountFile(a.passwdFile, func(f []string) error {
-		if len(f) >= 4 && f[3] == id && f[0] != u.Username {
+	return scanAccountFile(a.passwdFile, passwdFormat, func(f []string) error {
+		if sameGID(f[passwdFormat.gid], gid) && f[0] != u.Username {
 			return fmt.Errorf("%s has it as their primary group", f[0])
 		}
 		return nil
@@ -74,8 +74,23 @@ func cannotVerify(err error) error {
 	return fmt.Errorf("addn cannot verify it has no other members (%v; accounts known only through NSS cannot be checked)", err)
 }
 
-// scanAccountFile calls fn with the colon-separated fields of each entry in an /etc/group or /etc/passwd file.
-func scanAccountFile(path string, fn func(fields []string) error) error {
+// accountFormat is an account file's field count and the index of its numeric gid field.
+type accountFormat struct{ fields, gid int }
+
+var (
+	groupFormat  = accountFormat{fields: 4, gid: 2}
+	passwdFormat = accountFormat{fields: 7, gid: 3}
+)
+
+// sameGID compares numerically, as the kernel does, so a zero-padded "01000" still matches 1000.
+func sameGID(field string, gid uint32) bool {
+	n, err := strconv.ParseUint(field, 10, 32)
+	return err == nil && uint32(n) == gid
+}
+
+// scanAccountFile calls fn with the fields of each entry in an /etc/group or /etc/passwd file,
+// refusing to vouch for a file with entries it cannot parse unambiguously.
+func scanAccountFile(path string, format accountFormat, fn func(fields []string) error) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return cannotVerify(err)
@@ -90,7 +105,11 @@ func scanAccountFile(path string, fn func(fields []string) error) error {
 		case strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-"):
 			return cannotVerify(fmt.Errorf("%s includes NIS entries", path))
 		}
-		if err := fn(strings.Split(line, ":")); err != nil {
+		f := strings.Split(line, ":")
+		if len(f) != format.fields || !numeric(f[format.gid]) {
+			return cannotVerify(fmt.Errorf("%s has an entry addn cannot parse", path))
+		}
+		if err := fn(f); err != nil {
 			return err
 		}
 	}
@@ -98,4 +117,9 @@ func scanAccountFile(path string, fn func(fields []string) error) error {
 		return cannotVerify(err)
 	}
 	return nil
+}
+
+func numeric(field string) bool {
+	_, err := strconv.ParseUint(field, 10, 32)
+	return err == nil
 }
