@@ -164,9 +164,9 @@ can use the same day.
 | # | Milestone | Ships | Usable after merge? |
 |---|---|---|---|
 | M0 | Repo reshape | TS/Python removed from `main`, this plan adopted, CLAUDE.md + README rewritten, Go module + cobra root with `addn version` and the JSON error envelope, CI | — |
-| M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; `addn providers`, `addn tools` | browse only |
-| M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM, master-key resolution, `addn init`, `addn client add/list` | — |
-| M3 | Connect | loopback + paste-back OAuth, PKCE, state, Google incremental scopes, `addn connect / accounts / auth check` | accounts connected |
+| M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; identity root of each provider; `effect:` tag and CLI `command:` name per toolkit; Google Drive provider + metadata toolkit; `addn providers`, `addn tools` | browse only |
+| M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
+| M3 | Connect | `addn client add/list`, loopback + paste-back OAuth, PKCE, state, Google incremental scopes, `addn connect / accounts / auth check` | accounts connected |
 | **M4** | **Raw call** | `addn call`: token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming | **✅ agents can hit any Google API** |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
