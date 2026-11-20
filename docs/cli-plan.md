@@ -142,8 +142,9 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
 - **Default:** RFC 8252 loopback redirect on `127.0.0.1:<random port>`, PKCE S256,
   `state` validated and discarded. The listener answers 400 to any callback that is
-  not for its state and accepts exactly one verified one (a code or a denial), then
-  closes before the code is exchanged.
+  not for its state, or that carries both or neither of `code` and `error`, and
+  accepts exactly one verified one (a code or a denial), then closes before the code
+  is exchanged.
 - **Headless / SSH, in two steps:** `addn connect … --no-browser` stores a pending
   authorization in the vault (state, sealed PKCE verifier, alias, scopes, redirect
   URI; 10-minute expiry) and prints `{authorize_url, expires_at, next}`. The user
@@ -151,18 +152,22 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   with the URL the browser landed on (the localhost page fails to load; the address
   bar still carries `code` + `state`). `--complete` checks the pasted URL before
   touching the pending row, so a bad paste leaves it usable; it then claims the row
-  exclusively, and deletes it in the transaction that stores the account. A request
-  that never reached the token endpoint releases the claim for a retry; any other
-  failure deletes the row. No port forwarding needed, and the agent never holds the
-  flow open.
+  exclusively, and deletes it in the transaction that stores the account. The claim
+  is released for a retry only when a DNS, dial or TLS failure left the token request
+  without a connection; any other failure deletes the row. A denial deletes the row
+  only if no completion holds the claim (else `authorization-in-progress`). No port
+  forwarding needed, and the agent never holds the flow open.
 - **Identity is data:** `oauth2.identity: {url, field, subject_field}` in the provider
   YAML names the endpoint read with the new token, a display field and the stable
   subject (Google: OpenID `userinfo`, `email`, `sub`). An alias is bound to its
   subject, so an email rename re-consents fine and a different account is refused.
+  An account stored without a subject is bound on re-consent and keeps only the new
+  tokens.
 - **Stale re-consent:** a completion is refused (`stale-authorization`) if the alias
   gained scopes after the authorization started that it did not ask for.
-- **Back channel:** token, userinfo and revoke requests never follow redirects and
-  need a 2xx. Error messages are addn's own: the operation, the HTTP status and at
+- **Back channel:** token, userinfo and revoke requests go straight to the HTTP
+  transport, so no redirect is followed, and need a 2xx; any 3xx is a refusal.
+  `addn` discards the standard library's logger, so `net/http` never writes to stderr. Error messages are addn's own: the operation, the HTTP status and at
   most an RFC 6749/6750 error identifier, never the provider's text.
 - **Exit codes for connect:** `2` for a bad or mismatched paste, a state mismatch,
   an unknown, used, expired, in-progress or stale authorization, or a timeout; `3`
