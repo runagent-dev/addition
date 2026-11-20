@@ -1,13 +1,18 @@
 # Cross-language AES-256-GCM interoperability fixture.
 # Wire format: base64(iv[12] || tag[16] || ciphertext)
-# Both TS and Python implementations must be able to decrypt these vectors.
+# Every implementation (TS, Python, Go) must be able to decrypt these vectors.
 #
-# ts_vector was produced by Node.js built-in crypto with a fixed all-zero IV
-# so the output is reproducible (real usage always generates a random IV).
+# Each vector was produced with a fixed IV so the output is reproducible
+# (real usage always generates a random IV).
 
 key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 ts_vector:
   plaintext: "cross-language test"
   ciphertext: "AAAAAAAAAAAAAAAAkYVkCrlmv7W4K4V0JEYKm9LfakffkENCfeUwn4QCZsygO9k="
-  note: "Encrypted by the TypeScript implementation (Node.js aes-256-gcm)"
+  note: "Encrypted by the TypeScript implementation (Node.js aes-256-gcm), all-zero IV"
+
+py_vector:
+  plaintext: "python → go 🔐"
+  ciphertext: "AQIDBAUGBwgJCgsMqzzn/rK6UXANZhBCgW8pbdJBCCNX03Zfn/l41/fBzhn4kQ=="
+  note: "Encrypted by the Python implementation (cryptography AESGCM), IV 0x01..0x0c"

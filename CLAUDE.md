@@ -116,7 +116,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 ## 6. Core invariants (must never silently break)
 
 1. **Encryption wire format:** `base64(iv[12] || tag[16] || ciphertext)`, AES-256-GCM, 32-byte key parsed from 64 hex chars. `crypto_interop.yaml` pins it.
-2. **Master key never silently downgrades.** Resolution: `ADDN_MASTER_KEY` → OS keychain → key file only if opted in at `addn init --key-file`. Otherwise fail loudly.
+2. **Master key never silently downgrades.** A set `ADDN_MASTER_KEY` always wins (set-but-empty is an error); otherwise only the source recorded at `addn init` is used (`keychain`, indexed by the vault ID, or an opted-in `master.key`). No fallback chain. Fail loudly when it is unavailable. Vault secrets are AES-GCM with AAD binding vault ID, table, row and column.
 3. **`extends` merge semantics:** scalars override, arrays **replace**, `id` and `name` come from the child.
 4. **Path interpolation:** params named in `{}` are **consumed** — stripped from body/query.
 5. **401 retry:** exactly once, and only when a refresh token exists. Never loop.

@@ -59,7 +59,7 @@ func newRoot() *cobra.Command {
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpCommand(newHelpCmd(root))
-	root.AddCommand(newVersionCmd(), newProvidersCmd(), newToolsCmd())
+	root.AddCommand(newVersionCmd(), newProvidersCmd(), newToolsCmd(), newInitCmd())
 	return root
 }
 

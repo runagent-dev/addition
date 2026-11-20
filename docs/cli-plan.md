@@ -92,7 +92,7 @@ From the market research (Nov 2026):
 | `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
 | `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), granted scopes, status |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
-| `audit_log` | connect / refresh / revoke / tool-call events; never token values |
+| `audit_log` | connect / refresh / revoke / tool-call events by account id and provider id; never token values or aliases |
 
 The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
@@ -100,13 +100,42 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
 - Wire format unchanged: `base64(iv[12] || tag[16] || ciphertext)`, AES-256-GCM.
   The existing `crypto_interop.yaml` fixture still applies.
-- Master key resolution, in order: `ADDN_MASTER_KEY` env → OS keychain
-  (`go-keyring`) → key file `$ADDN_HOME/master.key` (0600) **only if the user
-  opted in at `addn init --key-file`**. Headless Linux without a secret service
-  is a first-class case (it's our own dev setup), so the key-file path must be
-  good, not a fallback hack.
+- Master key resolution: a set `ADDN_MASTER_KEY` always wins (set but empty is
+  an error, not "absent"). Otherwise the vault unlocks only from the source
+  `addn init` recorded in `meta`: OS keychain (`go-keyring`) by default, or the
+  key file `$ADDN_HOME/master.key` (0600) **only if the user opted in at
+  `addn init --key-file`**. There is no keychain → file search, so a first run
+  and its rerun always agree. Headless Linux without a secret service is a
+  first-class case (it's our own dev setup), so the key-file path must be good,
+  not a fallback hack.
 - If the keychain is unavailable and no opt-in exists: fail loudly. Never
   silently downgrade to plaintext.
+- The keychain entry is named by a random `vault_id` kept in `meta`, not by the
+  home path, so a vault moved to a new `ADDN_HOME` still finds its key.
+- Vault secrets are sealed with versioned AAD naming the vault ID, table, row
+  and column, so a blob copied to another account or column fails to decrypt.
+  The nil-AAD helpers stay for SDK interop and the fixture.
+- Safe path (Unix): the data dir must be absolute (relative `ADDN_HOME`,
+  `XDG_DATA_HOME` or `HOME` is a usage error) and is resolved to a
+  symlink-free path before use. Every ancestor from `/` must be owned by root
+  or the user and not group- or world-writable, except a root-owned sticky
+  dir such as `/tmp` (OpenSSH StrictModes). A user-owned ancestor may be
+  group-writable (never world-writable) when its group is the user's private
+  group: their primary gid, named after them, with no other member in
+  `/etc/group` or `/etc/passwd`; if that cannot be read or verified (e.g.
+  NSS-only accounts), addn refuses. The dir itself must be the user's
+  and 0700; the DB, any `-wal`/`-shm`/`-journal` and the key file must be
+  regular, the user's and 0600 or stricter. Otherwise addn refuses with
+  `insecure-home`. SQLite opens the resolved path; key-file reads and writes
+  go through one directory fd, and the key is published with an atomic
+  no-replace rename (link fallback) under the SQLite writer lock, which is
+  also held while leftover `.master.key-*` names are removed.
+  On Windows the profile check runs on the nearest existing ancestor's
+  resolved path before any directory is created.
+- Windows (v0.1): the key lives in Credential Manager or `ADDN_MASTER_KEY`;
+  `--key-file` and file-backed vaults are refused. The data dir must be
+  inside `%USERPROFILE%` and relies on the profile's inherited ACLs. Private
+  DACLs, and with them key files, are a follow-up.
 
 ### 2.3 OAuth on any machine
 
