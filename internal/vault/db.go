@@ -93,6 +93,9 @@ var beforeWriterLock = func() {}
 // beginWriterTx takes the SQLite writer lock (BEGIN IMMEDIATE) that every write and key publication holds.
 // The lock ignores caller cancellation; database/sql would otherwise roll back and release it mid-work.
 func beginWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	beforeWriterLock()
 	return db.BeginTx(context.WithoutCancel(ctx), nil)
 }
