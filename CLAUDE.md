@@ -135,7 +135,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 ```bash
 go test ./...                 # all tests (older local Go fetches the pinned toolchain)
 go vet ./...
-gofmt -l .                    # must print nothing
+"$(go env GOROOT)/bin/gofmt" -l .   # must print nothing
 go run ./cmd/addn version
 go build -o addn ./cmd/addn
 ```
