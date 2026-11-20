@@ -218,3 +218,107 @@ func TestToolsAreAcceptedWithEveryEffect(t *testing.T) {
 		}
 	}
 }
+
+func TestToolkitStrictDecoding(t *testing.T) {
+	swap := func(old, new string) string {
+		return acmeToolkit(strings.Replace(validTool, old, new, 1))
+	}
+	parameterless := func(paramsLine string) string {
+		return acmeToolkit(`  - id: ping
+    name: "Ping"
+    description: "Ping"
+    operation: "GET /ping"
+    effect: read
+` + paramsLine)
+	}
+
+	cases := []struct {
+		name      string
+		toolkit   string
+		fragments []string
+	}{
+		{"unknown tool key", parameterless("    paramz: []\n"), []string{"acme.yaml", `tool "ping"`, "paramz"}},
+		{"unknown toolkit key", "provider: acme\nnmae: A\nname: A\ndescription: d\ntools: []\n", []string{"acme.yaml", "nmae"}},
+		{"unknown param key", swap("        required: true\n", "        required: true\n        requird: true\n"), []string{`tool "get_widget"`, `param "widgetId"`, "requird"}},
+		{"params omitted", parameterless(""), []string{`tool "ping"`, "params"}},
+		{"params null", parameterless("    params: null\n"), []string{`tool "ping"`, "params"}},
+		{"params a mapping", parameterless("    params: {}\n"), []string{`tool "ping"`, "params"}},
+		{"integer id", swap("id: get_widget", "id: 123"), []string{"acme.yaml", "tool #1", "id"}},
+		{"required yes", swap("required: true", "required: yes"), []string{`tool "get_widget"`, `param "widgetId"`, "required"}},
+		{"required banana", swap("required: true", "required: banana"), []string{"acme.yaml", `tool "get_widget"`, `param "widgetId"`, "required"}},
+		{"enum null", swap("required: true\n", "required: true\n        enum: null\n"), []string{`tool "get_widget"`, "enum"}},
+		{"transform empty", swap("effect: read", "effect: read\n    transform: \"\""), []string{`tool "get_widget"`, "transform"}},
+		{"transform a number", swap("effect: read", "effect: read\n    transform: 7"), []string{`tool "get_widget"`, "transform"}},
+		{"name a number", swap(`name: "Get widget"`, "name: 5"), []string{`tool "get_widget"`, "name"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wantLoadError(t, toolkitFS(map[string]string{"acme.yaml": tc.toolkit}), tc.fragments...)
+		})
+	}
+}
+
+func TestToolkitAcceptsNullTransformAndPagination(t *testing.T) {
+	tool := strings.Replace(validTool, "effect: read", "effect: read\n    transform: null\n    pagination: null\n    response: null", 1)
+	c := mustLoad(t, toolkitFS(map[string]string{"acme.yaml": acmeToolkit(tool)}))
+	tk, _ := c.Toolkit("acme")
+	if got := tk.Tools[0]; got.Transform != "" || got.Pagination != nil || got.Response != nil {
+		t.Errorf("tool = %+v, want transform, pagination and response unset", got)
+	}
+}
+
+func TestIntegerEnumAcceptsIntegralFloats(t *testing.T) {
+	tool := `  - id: list_widgets
+    name: "List"
+    description: "List widgets"
+    operation: "GET /widgets"
+    effect: read
+    params:
+      - name: n
+        type: integer
+        required: false
+        enum: [1.0, 2e0, 3]
+        description: "Page size"
+`
+	c := mustLoad(t, toolkitFS(map[string]string{"acme.yaml": acmeToolkit(tool)}))
+	tk, _ := c.Toolkit("acme")
+	if got := tk.Tools[0].Params[0].Enum; !slices.Equal(got, []any{1, 2, 3}) {
+		t.Errorf("enum = %#v, want [1 2 3]", got)
+	}
+
+	fractional := strings.Replace(tool, "[1.0, 2e0, 3]", "[1.5]", 1)
+	wantLoadError(t, toolkitFS(map[string]string{"acme.yaml": acmeToolkit(fractional)}), `param "n"`, "enum", "1.5")
+}
+
+func TestToolkitRejectsUnusableDefinitions(t *testing.T) {
+	swap := func(old, new string) string {
+		return acmeToolkit(strings.Replace(validTool, old, new, 1))
+	}
+	optionalPlaceholder := func(extra string) string {
+		return swap("        required: true\n", "        required: false\n"+extra)
+	}
+
+	cases := []struct {
+		name      string
+		toolkit   string
+		fragments []string
+	}{
+		{"kebab names collide", acmeToolkit(validTool + strings.Replace(validTool, "id: get_widget", "id: get-widget", 1)),
+			[]string{"acme.yaml", "get-widget", "get_widget"}},
+		{"duplicate param", swap(`        description: "Widget ID"`+"\n", `        description: "Widget ID"`+"\n"+
+			"      - name: widgetId\n        type: string\n        required: false\n        description: \"again\"\n"),
+			[]string{`tool "get_widget"`, `param "widgetId"`, "duplicate"}},
+		{"unclosed brace", swap("GET /widgets/{widgetId}", "GET /widgets/{widgetId"), []string{`tool "get_widget"`, "unbalanced"}},
+		{"stray closing brace", swap("GET /widgets/{widgetId}", "GET /widgets/{widgetId}}"), []string{`tool "get_widget"`, "unbalanced"}},
+		{"optional placeholder without default", optionalPlaceholder(""), []string{`tool "get_widget"`, "widgetId", "required"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wantLoadError(t, toolkitFS(map[string]string{"acme.yaml": tc.toolkit}), tc.fragments...)
+		})
+	}
+
+	t.Run("optional placeholder with default loads", func(t *testing.T) {
+		mustLoad(t, toolkitFS(map[string]string{"acme.yaml": optionalPlaceholder("        default: w1\n")}))
+	})
+}

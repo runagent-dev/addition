@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 	"testing"
@@ -95,10 +96,11 @@ func TestToolsListsEveryTool(t *testing.T) {
 			t.Errorf("no tools listed for %s", p)
 		}
 	}
-	for i := 1; i < len(rows); i++ {
-		if rows[i-1].Provider > rows[i].Provider {
-			t.Fatalf("rows not grouped by provider id: %q before %q", rows[i-1].Provider, rows[i].Provider)
-		}
+	sorted := slices.IsSortedFunc(rows, func(a, b toolRow) int {
+		return cmp.Or(cmp.Compare(a.Provider, b.Provider), cmp.Compare(a.Tool, b.Tool))
+	})
+	if !sorted {
+		t.Errorf("rows are not sorted by (provider, tool)")
 	}
 }
 

@@ -280,3 +280,21 @@ func TestProviderLoadErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderEmptyExtendsIsRoot(t *testing.T) {
+	for _, marker := range []string{"extends: null", `extends: ""`, "extends:"} {
+		t.Run(marker, func(t *testing.T) {
+			c := mustLoad(t, providerFS(map[string]string{"base.yaml": baseProvider + marker + "\n"}))
+			p, _ := c.Provider("base")
+			if p.Extends != "" {
+				t.Errorf("extends = %q, want empty", p.Extends)
+			}
+			if root, _ := c.IdentityRoot("base"); root != "base" {
+				t.Errorf("identity root = %q, want base", root)
+			}
+		})
+	}
+	t.Run("non-string extends fails", func(t *testing.T) {
+		wantLoadError(t, providerFS(map[string]string{"base.yaml": baseProvider + "extends: 3\n"}), "base.yaml", "extends")
+	})
+}
