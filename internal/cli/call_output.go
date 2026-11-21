@@ -19,6 +19,7 @@ import (
 // directory without replacing anything unless --force. A symlink at the target is never written through.
 type outputFile struct {
 	path     string
+	given    string // the -o argument as the user wrote it, which the summary reports
 	name     string
 	force    bool
 	dir      *os.Root
@@ -48,7 +49,7 @@ func openOutputFile(path string, force bool) (*outputFile, error) {
 	if err != nil {
 		return nil, badOutput("bad-output", "cannot open the directory of %s: %v", abs, err)
 	}
-	out := &outputFile{path: abs, name: name, force: force, dir: dir}
+	out := &outputFile{path: abs, given: path, name: name, force: force, dir: dir}
 	if err := out.prepare(); err != nil {
 		out.discard()
 		return nil, err
@@ -154,7 +155,7 @@ func (o *outputFile) save(cmd *cobra.Command, resp *proxy.Response, guard *proxy
 		return err
 	}
 	return writeJSON(cmd.OutOrStdout(), savedSummary{
-		Status: resp.Status, ContentType: resp.Header.Get("Content-Type"), Bytes: size, Path: o.path,
+		Status: resp.Status, ContentType: resp.Header.Get("Content-Type"), Bytes: size, Path: o.given,
 	})
 }
 
@@ -184,6 +185,8 @@ func (o *outputFile) publish() error {
 		}
 		return badOutput("bad-output", "cannot publish %s: %v", o.path, err)
 	}
+	_ = o.dir.Remove(o.tempName)
+	o.tempName = ""
 	return nil
 }
 
