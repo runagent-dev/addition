@@ -21,6 +21,7 @@ var (
 	ErrInsecureHome        = errors.New("the data dir is not private to this user")
 	ErrKeyFileUnsupported  = errors.New("key files are not supported on Windows yet; use the Windows Credential Manager (the default keychain source) or set ADDITION_MASTER_KEY")
 	ErrSchemaTooNew        = errors.New("the vault was written by a newer version of Addition")
+	ErrSchemaOlder         = errors.New("the vault schema is older than this version of Addition; any command that opens it for writing upgrades it")
 	ErrCorrupt             = errors.New("the vault database is corrupt")
 	ErrNotFound            = errors.New("not found")
 	ErrAliasTaken          = errors.New("alias already in use for this provider")
@@ -158,8 +159,22 @@ func notInitializedAt(home string) error {
 	return fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
 }
 
+// OpenOptions tune how Open treats the data dir.
+type OpenOptions struct {
+	// ReadOnly opens without any side effect: no migration, no cleanup of key temp files, no files
+	// created. A database older than this binary is ErrSchemaOlder, and the store must not be written.
+	ReadOnly bool
+	// KeepKeyTemps leaves the temp files an interrupted key publication left, instead of removing them.
+	KeepKeyTemps bool
+}
+
 // Open unlocks an initialised vault, applying any pending migrations.
 func Open(ctx context.Context, env Env) (*Store, error) {
+	return OpenWith(ctx, env, OpenOptions{})
+}
+
+// OpenWith is Open with options.
+func OpenWith(ctx context.Context, env Env, opts OpenOptions) (*Store, error) {
 	env = env.withDefaults()
 	home, err := openHome(env, false)
 	if err != nil {
@@ -171,11 +186,13 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	db, err := openDB(ctx, home.path)
+	db, err := openExistingDB(ctx, home, opts)
 	if err != nil {
 		return nil, err
 	}
-	err = withWriterLock(ctx, db, home.removeKeyTemps)
+	if !opts.ReadOnly && !opts.KeepKeyTemps {
+		err = withWriterLock(ctx, db, home.removeKeyTemps)
+	}
 	var rec initRecords
 	var found bool
 	if err == nil {
@@ -193,6 +210,13 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 		return nil, err
 	}
 	return &Store{ops: ops{q: db, key: key, vaultID: rec.vaultID, now: env.Now}, db: db, source: rec.source}, nil
+}
+
+func openExistingDB(ctx context.Context, home *homeDir, opts OpenOptions) (*sql.DB, error) {
+	if opts.ReadOnly {
+		return openReadOnlyDB(ctx, home.path)
+	}
+	return openDB(ctx, home.path)
 }
 
 func (s *Store) Close() error { return s.db.Close() }

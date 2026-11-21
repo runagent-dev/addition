@@ -87,7 +87,7 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 		rep.Checks = append(rep.Checks, doctorCheck{ID: "vault", Status: checkFail, Summary: "the data dir cannot be located", Fix: fixHome})
 		return finishDoctor(cmd, rep)
 	}
-	store, err := vault.Open(ctx, d.env)
+	store, err := vault.OpenWith(ctx, d.env, vault.OpenOptions{ReadOnly: true})
 	if err != nil {
 		failed, ok := openFailureChecks(err)
 		if !ok {
@@ -115,13 +115,25 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	rep.Checks = append(rep.Checks, accounts.checks...)
 	rep.Checks = append(rep.Checks, session.cloudSetupChecks(accounts.all)...)
 	if live {
-		probes, err := session.liveChecks(cmd, d, accounts)
+		probes, err := liveProbes(cmd, d, cat, store, accounts)
 		if err != nil {
 			return err
 		}
 		rep.Checks = append(rep.Checks, probes...)
 	}
 	return finishDoctor(cmd, rep)
+}
+
+// liveProbes reopens the vault for writing, since a probe may refresh a token and is audited, and
+// leaves everything else in the data dir as it is.
+func liveProbes(cmd *cobra.Command, d deps, cat *catalog.Catalog, inspected *vault.Store, accts checkedAccounts) ([]doctorCheck, error) {
+	_ = inspected.Close()
+	store, err := vault.OpenWith(cmd.Context(), d.env, vault.OpenOptions{KeepKeyTemps: true})
+	if err != nil {
+		return nil, vaultError(err)
+	}
+	defer store.Close()
+	return (&accountSession{catalog: cat, store: store}).liveChecks(cmd, d, accts)
 }
 
 // finishDoctor decides ok and next from the checks, prints the report and, unless ok, fails with exit 3.
@@ -156,6 +168,9 @@ func openFailureChecks(err error) (checks []doctorCheck, ok bool) {
 			continue
 		}
 		failed := doctorCheck{ID: f.check, Status: checkFail, Summary: f.summary, Fix: f.fix}
+		if f.err == vault.ErrSchemaOlder {
+			failed.Status, failed.actionable = checkWarn, true
+		}
 		if f.check == "vault" {
 			return []doctorCheck{failed, {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}, true
 		}
@@ -172,6 +187,7 @@ var openFailures = []struct {
 	{vault.ErrNotInitialized, "vault", "there is no vault in the data dir yet", fixInitVault},
 	{vault.ErrCorrupt, "vault", "the vault database is corrupt or only partly initialised", "restore the vault from a backup, or move it aside and run `addition init`"},
 	{vault.ErrSchemaTooNew, "vault", "the vault was written by a newer version of addition", "upgrade addition"},
+	{vault.ErrSchemaOlder, "vault", "the vault schema is older than this addition; any command that opens it for writing upgrades it", "addition accounts list"},
 	{vault.ErrInsecureHome, "vault", "the data dir is not private to this user", "make the data dir accessible to your user only (chmod 700)"},
 	{vault.ErrNoMasterKey, "master-key", "the master key is not available from its recorded source", "restore the master key (OS keychain entry, key file or ADDITION_MASTER_KEY)"},
 	{vault.ErrWrongMasterKey, "master-key", "the master key does not match this vault", "set ADDITION_MASTER_KEY to the key this vault was created with"},

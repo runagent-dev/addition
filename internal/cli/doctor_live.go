@@ -65,7 +65,8 @@ func (a *accountSession) liveChecks(cmd *cobra.Command, d deps, accts checkedAcc
 
 // probe sends the app's probe request through the same path as `addition call` and classifies the answer.
 func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Provider, acct vault.Account) (doctorCheck, error) {
-	ctx := cmd.Context()
+	ctx, cancel := context.WithTimeout(cmd.Context(), probeTimeout)
+	defer cancel()
 	target, err := proxy.ResolveURL(provider.API, provider.API.ProbePath, nil)
 	if err != nil {
 		return doctorCheck{}, callRequestError(err)
@@ -86,17 +87,29 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, http.MethodGet, resp.Status)
-	return probeVerdict(acct, provider.API, resp), nil
+	return probeVerdict(acct, provider.API, resp, a.storedSecrets(ctx, acct, provider)), nil
 }
 
-func probeVerdict(acct vault.Account, api catalog.API, resp *proxy.Response) doctorCheck {
+// storedSecrets are the refresh token and OAuth client secret a response must never repeat.
+func (a *accountSession) storedSecrets(ctx context.Context, acct vault.Account, provider *catalog.Provider) []string {
+	var secrets []string
+	if cred, found, err := a.credential(ctx, acct); err == nil && found && cred.RefreshToken != "" {
+		secrets = append(secrets, cred.RefreshToken)
+	}
+	if client, err := a.store.GetOAuthClient(ctx, provider.IdentityRoot); err == nil && client.ClientSecret != "" {
+		secrets = append(secrets, client.ClientSecret)
+	}
+	return secrets
+}
+
+func probeVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, secrets []string) doctorCheck {
 	switch {
 	case resp.Status >= 200 && resp.Status <= 299:
 		return doctorCheck{Status: checkOK, Code: checkOK, Summary: fmt.Sprintf("the API accepted the account's token (HTTP %d)", resp.Status)}
 	case resp.Status == http.StatusUnauthorized:
 		return probeNeedsReauth(acct, "the API rejected the account's token (HTTP 401)")
 	case resp.Status == http.StatusForbidden:
-		return forbiddenVerdict(acct, api, resp)
+		return forbiddenVerdict(acct, api, resp, secrets)
 	}
 	return unavailableVerdict(fmt.Sprintf("the API answered HTTP %d, so the account could not be checked", resp.Status))
 }
@@ -109,8 +122,11 @@ func unavailableVerdict(summary string) doctorCheck {
 	return doctorCheck{Status: checkWarn, Code: probeUnavailable, Summary: summary}
 }
 
-func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response) doctorCheck {
-	disabled, project := readServiceDisabled(resp)
+func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, secrets []string) doctorCheck {
+	disabled, project, err := readServiceDisabled(resp, secrets)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return unavailableVerdict("the API did not finish answering in time, so the account could not be checked")
+	}
 	if disabled && api.Service != "" {
 		return doctorCheck{
 			Status: checkFail, Code: probeAPIDisabled, Fix: "enable " + api.Service + " in the Cloud project", Hint: activationURL(api.Service, project),
@@ -131,25 +147,48 @@ type errorDetails struct {
 	} `json:"error"`
 }
 
-// readServiceDisabled reads only the reason and activation link of a Google error. The body goes
-// through the echo guard, and only a project id of the expected shape is taken from it.
-func readServiceDisabled(resp *proxy.Response) (disabled bool, project string) {
+// readServiceDisabled takes from a Google error only whether its reason is SERVICE_DISABLED and a
+// project id of the expected shape from its activation link; nothing else is repeated. The body is
+// withheld, as if it had no such reason, when it repeats a token or secret in any form, raw or JSON-escaped.
+// A non-nil err means the body could not be read; it is context.DeadlineExceeded when the probe ran out of time.
+func readServiceDisabled(resp *proxy.Response, secrets []string) (disabled bool, project string, err error) {
 	if hasContentCoding(resp.Header) {
-		return false, ""
+		return false, "", nil
 	}
-	guard := proxy.NewEchoGuard(resp.Tokens)
+	guard := proxy.NewEchoGuard(append(slices.Clone(resp.Tokens), secrets...))
 	inspected := io.LimitReader(resp.Body, maxProbeErrorBody+int64(guard.Lookahead()))
 	data, err := io.ReadAll(io.LimitReader(guard.Reader(inspected), maxProbeErrorBody))
+	if err != nil {
+		return false, "", err
+	}
+	var generic any
 	var body errorDetails
-	if err != nil || json.Unmarshal(data, &body) != nil {
-		return false, ""
+	if json.Unmarshal(data, &generic) != nil || json.Unmarshal(data, &body) != nil || decodedLeaks(generic, guard) {
+		return false, "", nil
 	}
 	for _, detail := range body.Error.Details {
 		if detail.Reason == reasonServiceDisabled {
-			return true, projectOf(detail.Metadata.ActivationURL)
+			return true, projectOf(detail.Metadata.ActivationURL), nil
 		}
 	}
-	return false, ""
+	return false, "", nil
+}
+
+// decodedLeaks reports whether any decoded key or string of a JSON value repeats a guarded secret.
+func decodedLeaks(v any, guard *proxy.EchoGuard) bool {
+	switch v := v.(type) {
+	case string:
+		return guard.Leaks(v)
+	case []any:
+		return slices.ContainsFunc(v, func(item any) bool { return decodedLeaks(item, guard) })
+	case map[string]any:
+		for key, item := range v {
+			if guard.Leaks(key) || decodedLeaks(item, guard) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // projectOf returns the project of a Google console link, or "" when the link or the id is not what Google sends.
@@ -172,6 +211,8 @@ func probeFailure(acct vault.Account, err error) (doctorCheck, error) {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return doctorCheck{}, interrupted()
+	case errors.Is(err, context.DeadlineExceeded):
+		return unavailableVerdict("the API did not answer in time, so the account could not be checked"), nil
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken), errors.Is(err, proxy.ErrNoCredential):
 		return probeNeedsReauth(acct, "the account's tokens cannot be refreshed; it must be reconnected"), nil
 	case errors.Is(err, proxy.ErrNoOAuthClient):
