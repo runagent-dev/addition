@@ -3,12 +3,17 @@ package installscript
 import (
 	"archive/tar"
 	"bytes"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -81,28 +86,82 @@ func (h *harness) serveArchive(archive []byte) {
 	h.rel.reseal(latest)
 }
 
-func TestTruncatedScriptNeverInstalls(t *testing.T) {
-	h := newHarness(t)
-	h.rel.publish(t, latest, "0.3.0")
+func distinctShells(t *testing.T) [][]string {
+	t.Helper()
+	var shells [][]string
+	seen := map[string]bool{}
+	for _, argv := range [][]string{{"sh"}, {"dash"}, {"bash"}, {"busybox", "sh"}} {
+		path, err := exec.LookPath(argv[0])
+		if err != nil {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			real = path
+		}
+		key := real + " " + strings.Join(argv[1:], " ")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		shells = append(shells, append([]string{path}, argv[1:]...))
+	}
+	return shells
+}
+
+func TestTruncatedScriptNeverRunsAnything(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join(scriptDir(t), "install.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	finalStatement := bytes.LastIndex(script, []byte("\n{\n")) + 1
-	if finalStatement == 0 {
-		t.Fatal("install.sh must end in a { ... } group that only parses when complete")
+	for _, shell := range distinctShells(t) {
+		t.Run(strings.Join(shell[:1], "")+strings.Join(shell[1:], " "), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.rel.publish(t, latest, "0.3.0")
+			// A prefix that only misses the final newline is the complete script.
+			cuts := make(chan int)
+			var reported atomic.Int32
+			var wg sync.WaitGroup
+			for w := 0; w < 6; w++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for cut := range cuts {
+						r := h.run(withShell(shell...), func(i *invocation) { i.stdin = bytes.NewReader(script[:cut]) })
+						if r.stdout != "" && reported.Add(1) <= 5 {
+							t.Errorf("script cut at byte %d of %d wrote to stdout: %q", cut, len(script), r.stdout)
+						}
+					}
+				}()
+			}
+			for cut := 0; cut < len(script)-1; cut++ {
+				cuts <- cut
+			}
+			close(cuts)
+			wg.Wait()
+
+			if reqs := h.rel.requested(); len(reqs) != 0 {
+				t.Errorf("a truncated script reached the network: %v", reqs)
+			}
+			h.assertNothingInstalled()
+		})
 	}
+}
 
-	for cut := finalStatement; cut < len(script)-1; cut++ {
-		r := h.run(func(i *invocation) { i.stdin = bytes.NewReader(script[:cut]) })
-
-		if r.stdout != "" || (cut > finalStatement && r.code == 0) {
-			t.Fatalf("script cut at byte %d of %d: exit %d, stdout %q\nstderr: %s", cut, len(script), r.code, r.stdout, r.stderr)
+func TestNothingExecutableSitsOutsideTheClosingBraceGroup(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(scriptDir(t), "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := bytes.Index(script, []byte("\n{\n"))
+	if open < 0 || !bytes.HasSuffix(script, []byte("\n}\n")) {
+		t.Fatal("install.sh must be one { ... } group")
+	}
+	for _, line := range strings.Split(string(script[:open]), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			t.Errorf("executable text before the group: %q", line)
 		}
-		if reqs := h.rel.requested(); len(reqs) != 0 {
-			t.Fatalf("script cut at byte %d reached the network: %v", cut, reqs)
-		}
-		h.assertNothingInstalled()
 	}
 }
 
@@ -212,13 +271,55 @@ func TestOtherRegularMembersAreIgnored(t *testing.T) {
 }
 
 func TestRejectsABinaryAboveTheSizeCap(t *testing.T) {
+	for name, size := range map[string]int64{"one byte over": 200<<20 + 1, "far over": 300 << 20} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.rel.publish(t, latest, "0.3.0")
+			h.serveArchive(archiveWithBinarySize(t, size))
+
+			assertFailure(t, h.run(), "binary-too-large", 1)
+
+			h.assertNothingInstalled()
+		})
+	}
+}
+
+func TestRejectsArchiveListingsAboveTheCaps(t *testing.T) {
+	many := []entry{regular("addition", "bin")}
+	for i := 0; i < 10_000; i++ {
+		many = append(many, regular(fmt.Sprintf("f%d", i), ""))
+	}
+	long := []entry{regular("addition", "bin")}
+	for i := 0; i < 4; i++ {
+		long = append(long, regular(strings.Repeat(string(rune('a'+i)), 300_000), ""))
+	}
+	for name, entries := range map[string][]entry{"too many members": many, "too many listing bytes": long} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.rel.publish(t, latest, "0.3.0")
+			h.serveArchive(rawTarGz(t, entries...))
+
+			assertFailure(t, h.run(), "archive-invalid", 1)
+
+			h.assertNothingInstalled()
+		})
+	}
+}
+
+func TestFailsClosedWhenTheFileSizeLimitCannotBeEnforced(t *testing.T) {
 	h := newHarness(t)
 	h.rel.publish(t, latest, "0.3.0")
-	h.serveArchive(archiveWithBinarySize(t, 201<<20))
+	sh := hostTool(t, "sh")
 
-	assertFailure(t, h.run(), "binary-too-large", 1)
+	r := h.run(withShell(sh, "-c", `ulimit -Hf 8 || exit 77; exec "$@"`, "_", sh))
 
-	h.assertNothingInstalled()
+	if r.code == 77 {
+		t.Skip("this shell cannot lower its hard file size limit")
+	}
+	assertFailure(t, r, "install-failed", 1)
+	if reqs := h.rel.requested(); len(reqs) != 0 {
+		t.Errorf("requests = %v, want none", reqs)
+	}
 }
 
 func TestRejectsDownloadsAboveTheSizeCaps(t *testing.T) {
@@ -292,6 +393,9 @@ func TestDownloadersGetEachURLAfterEndOfOptions(t *testing.T) {
 	for _, line := range lines {
 		if !strings.Contains(line, " -- http://") {
 			t.Errorf("curl %s: the URL must follow --", line)
+		}
+		if !strings.Contains(line, "--proto =https,http --proto-redir =https,http") {
+			t.Errorf("curl %s: a loopback base allows http and nothing else", line)
 		}
 	}
 }
@@ -443,7 +547,7 @@ func TestErrorEnvelopeEscapesEveryControlCharacter(t *testing.T) {
 }
 
 func TestAcceptsOnlyReleaseVersionSyntax(t *testing.T) {
-	for _, v := range []string{"0.1.0", "v1.20.300", "v1.2.3-rc.1", "1.2.3-beta", "10.0.0-0.3.7"} {
+	for _, v := range []string{"0.1.0", "v1.20.300", "v1.2.3-rc.1", "1.2.3-beta", "10.0.0-0.3.7", "1.2.3-rc-1", "1.2.3-0a", "1.0.0-x.7.z.92", "1.0.0-alpha.beta-1", "1.2.3-0"} {
 		t.Run(v, func(t *testing.T) {
 			h := newHarness(t)
 			tag := "v" + strings.TrimPrefix(v, "v")
@@ -488,4 +592,146 @@ func TestInstallsWithTheRealWget(t *testing.T) {
 	}
 
 	decodeSuccess(t, h.run())
+}
+
+func TestTrailingNewlineInTheInstallDirIsKept(t *testing.T) {
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	dir := h.install + "/bin\n"
+
+	r := h.run(withEnv("ADDITION_INSTALL_DIR", dir), withPath(h.tools.dir, dir))
+	got := decodeSuccess(t, r)
+
+	if want := dir + "/addition"; got.Path != want {
+		t.Errorf("path = %q, want %q", got.Path, want)
+	}
+	if !got.OnPath {
+		t.Error("on_path = false although the directory is first on PATH")
+	}
+	if _, err := os.Stat(dir + "/addition"); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestOnPathIsJudgedFromTheCallersDirectoryAndPATH(t *testing.T) {
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	work := t.TempDir()
+
+	r := h.run(
+		withEnv("ADDITION_INSTALL_DIR", "./bin"),
+		withPath(h.tools.dir, "./bin"),
+		func(i *invocation) { i.dir = work },
+	)
+
+	if got := decodeSuccess(t, r); !got.OnPath {
+		t.Errorf("on_path = false although ./bin is on PATH and is where it installed:\n%s", r.stderr)
+	}
+}
+
+func TestOnPathIsFalseForARelativePATHEntryElsewhere(t *testing.T) {
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	work := t.TempDir()
+
+	r := h.run(
+		withEnv("ADDITION_INSTALL_DIR", "./bin"),
+		withPath(h.tools.dir, "./other"),
+		func(i *invocation) { i.dir = work },
+	)
+
+	if got := decodeSuccess(t, r); got.OnPath {
+		t.Error("on_path = true although only ./other is on PATH")
+	}
+}
+
+type tlsRelease struct {
+	srv      *httptest.Server
+	redirect map[string]string
+	caFile   string
+}
+
+// newTLSRelease serves rel over https; paths in redirect answer 302 to the mapped URL.
+func newTLSRelease(t *testing.T, rel *release, redirect map[string]string) *tlsRelease {
+	t.Helper()
+	tr := &tlsRelease{redirect: redirect}
+	tr.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if to, ok := tr.redirect[req.URL.Path]; ok {
+			http.Redirect(w, req, to, http.StatusFound)
+			return
+		}
+		body := rel.get(req.URL.Path)
+		if body == nil {
+			http.NotFound(w, req)
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(tr.srv.Close)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tr.srv.Certificate().Raw})
+	tr.caFile = filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(tr.caFile, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return tr
+}
+
+func TestRedirectsMayNotLeaveHTTPS(t *testing.T) {
+	downloaders := map[string]func(t *testing.T, h *harness, tr *tlsRelease) []func(*invocation){
+		"curl": func(t *testing.T, h *harness, tr *tlsRelease) []func(*invocation) {
+			return []func(*invocation){withEnv("CURL_CA_BUNDLE", tr.caFile), withEnv("SSL_CERT_FILE", tr.caFile)}
+		},
+		"wget": func(t *testing.T, h *harness, tr *tlsRelease) []func(*invocation) {
+			wget, err := exec.LookPath("wget")
+			if err != nil {
+				t.Skip("wget not installed")
+			}
+			_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+			if err := os.Symlink(wget, filepath.Join(h.tools.dir, "wget")); err != nil {
+				t.Fatal(err)
+			}
+			rc := filepath.Join(t.TempDir(), "wgetrc")
+			if err := os.WriteFile(rc, []byte("ca_certificate = "+tr.caFile+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return []func(*invocation){withEnv("WGETRC", rc)}
+		},
+	}
+	for name, setup := range downloaders {
+		t.Run(name, func(t *testing.T) {
+			cases := []struct {
+				label, target string
+				ok            bool
+			}{
+				{"https to https", "/blob/archive", true},
+				{"https to http", "PLAIN" + linuxArchive, false},
+				{"https to ftp", "ftp://127.0.0.1:9/addition.tar.gz", false},
+			}
+			for _, c := range cases {
+				t.Run(c.label, func(t *testing.T) {
+					h := newHarness(t)
+					h.rel.publish(t, latest, "0.3.0")
+					h.rel.set("/blob/archive", h.rel.get(linuxArchive))
+					target := strings.Replace(c.target, "PLAIN", h.rel.srv.URL, 1)
+					tr := newTLSRelease(t, h.rel, map[string]string{linuxArchive: target})
+					h.rel.mu.Lock()
+					h.rel.requests = nil
+					h.rel.mu.Unlock()
+					mods := append(setup(t, h, tr), withEnv("ADDITION_BASE_URL", tr.srv.URL))
+
+					r := h.run(mods...)
+
+					if c.ok {
+						decodeSuccess(t, r)
+						return
+					}
+					assertFailure(t, r, "download-failed", 5)
+					if reqs := h.rel.requested(); len(reqs) != 0 {
+						t.Errorf("the redirect was followed: %v", reqs)
+					}
+					h.assertNothingInstalled()
+				})
+			}
+		})
+	}
 }

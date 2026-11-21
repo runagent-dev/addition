@@ -463,7 +463,7 @@ func TestPinnedPrereleaseVersion(t *testing.T) {
 func TestRejectsAnInvalidVersionBeforeAnyRequest(t *testing.T) {
 	for _, bad := range []string{
 		"latest-ish/../x", "1.0", "v", "1.0.0 ", "$(id)", "1abc.2abc.3abc", "1.2", "1.2.3.4", "1..3", ".1.2",
-		"1.2.3-", "1.2.3-rc_1", "1.2.3-rc-1", "vv1.2.3", "1.2.3+build", "bad\tversion", "1.2.3\n",
+		"1.2.3-", "1.2.3-rc_1", "1.2.3-.rc", "1.2.3-rc..1", "1.2.3-rc.", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-rc.01", "vv1.2.3", "1.2.3+build", "bad\tversion", "1.2.3\n",
 	} {
 		t.Run(bad, func(t *testing.T) {
 			h := newHarness(t)
