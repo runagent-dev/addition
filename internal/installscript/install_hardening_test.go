@@ -311,7 +311,7 @@ func TestFailsClosedWhenTheFileSizeLimitCannotBeEnforced(t *testing.T) {
 	h.rel.publish(t, latest, "0.3.0")
 	sh := hostTool(t, "sh")
 
-	r := h.run(withShell(sh, "-c", `ulimit -Hf 8 || exit 77; exec "$@"`, "_", sh))
+	r := h.run(withShell(sh, "-c", `ulimit -f 8 || exit 77; exec "$@"`, "_", sh))
 
 	if r.code == 77 {
 		t.Skip("this shell cannot lower its hard file size limit")
