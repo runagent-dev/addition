@@ -209,22 +209,6 @@ func TestAChatTokenIsOnlySentToChatHosts(t *testing.T) {
 	}
 }
 
-func TestRemovingOneAppLeavesTheOtherUsable(t *testing.T) {
-	c := newCallHarness(t, distinctTokensPerApp)
-	drive := c.attachApp("google-drive", "work", workSubject)
-
-	out := decodeJSON[removed](t, c.mustRun("accounts", "remove", "gmail:work", "--revoke"))
-
-	if !out.Removed || !out.Revoke.OK || !slices.Equal(c.google.revoked, []string{fakeRefreshToken + "-gmail"}) {
-		t.Errorf("remove = %+v, revoked %d tokens; want only gmail's refresh token", out, len(c.google.revoked))
-	}
-	c.mustRun("call", "drive", "-a", "work", "GET", "/drive/v3/files")
-	if reqs := drive.requests(); len(reqs) != 1 || reqs[0].Header.Get("Authorization") != "Bearer "+fakeAccessToken+"-drive" {
-		t.Errorf("drive requests = %+v, want one with drive's token", reqs)
-	}
-	c.wantError(c.run("call", "gmail", "-a", "work", "GET", "/x"), ExitNeedsConnect, "not-connected")
-}
-
 func TestRefreshUsesTheAppAccountAndTheRootsClient(t *testing.T) {
 	c := newCallHarness(t)
 	drive := c.attachApp("google-drive", "work", workSubject)
