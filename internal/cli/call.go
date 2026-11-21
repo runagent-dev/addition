@@ -68,25 +68,44 @@ func newCallCmd(d deps) *cobra.Command {
 	return cmd
 }
 
-func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags) error {
-	ctx := cmd.Context()
+// callRequest is everything about a call that can be checked before the vault is opened.
+type callRequest struct {
+	method string
+	header http.Header
+	body   []byte
+	out    *outputFile
+}
+
+func prepareCall(stdin io.Reader, rawMethod string, f callFlags) (callRequest, error) {
 	method, err := proxy.ParseMethod(rawMethod)
 	if err != nil {
-		return callRequestError(err)
+		return callRequest{}, callRequestError(err)
 	}
 	header, err := proxy.ParseHeaders(f.headers)
 	if err != nil {
-		return callRequestError(err)
+		return callRequest{}, callRequestError(err)
 	}
-	body, err := readRequestBody(cmd.InOrStdin(), f)
+	if header.Get("User-Agent") == "" {
+		header.Set("User-Agent", "addn/"+Version)
+	}
+	body, err := readRequestBody(stdin, f)
+	if err != nil {
+		return callRequest{}, err
+	}
+	req := callRequest{method: method, header: header, body: body}
+	if f.output != "" {
+		if req.out, err = checkOutputFile(f.output, f.force); err != nil {
+			return callRequest{}, err
+		}
+	}
+	return req, nil
+}
+
+func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags) error {
+	ctx := cmd.Context()
+	req, err := prepareCall(cmd.InOrStdin(), rawMethod, f)
 	if err != nil {
 		return err
-	}
-	var out *outputFile
-	if f.output != "" {
-		if out, err = checkOutputFile(f.output, f.force); err != nil {
-			return err
-		}
 	}
 	a, err := openAccountSession(ctx, d)
 	if err != nil {
@@ -97,13 +116,13 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	if err != nil {
 		return err
 	}
-	provider, _ := a.catalog.Provider(acct.Provider)
+	provider, found := a.catalog.Provider(acct.Provider)
+	if !found {
+		return &Error{Code: "unknown-provider", Exit: ExitUsage, Message: fmt.Sprintf("%s is no longer in the provider catalog", acct.Provider)}
+	}
 	target, err := proxy.ResolveURL(provider.API, rawPath, f.query)
 	if err != nil {
 		return callRequestError(err)
-	}
-	if header.Get("User-Agent") == "" {
-		header.Set("User-Agent", "addn/"+Version)
 	}
 
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
@@ -112,16 +131,16 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 		return callFailure(acct, err)
 	}
 	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, Renewer: tokens, Now: d.now, Sleep: d.sleep}
-	resp, err := engine.Do(ctx, proxy.Request{Method: method, URL: target, Header: header, Body: body}, token)
-	if status, sent := sentStatus(err); err != nil && sent {
-		recordCall(ctx, cmd, a.store, acct, method, status)
-	}
+	resp, err := engine.Do(ctx, proxy.Request{Method: req.method, URL: target, Header: req.header, Body: req.body}, token)
 	if err != nil {
+		if status, sent := sentStatus(err); sent {
+			recordCall(ctx, cmd, a.store, acct, req.method, status)
+		}
 		return callFailure(acct, err)
 	}
 	defer resp.Body.Close()
-	recordCall(ctx, cmd, a.store, acct, method, resp.Status)
-	return deliver(cmd, resp, out)
+	recordCall(ctx, cmd, a.store, acct, req.method, resp.Status)
+	return deliver(cmd, resp, req.out)
 }
 
 // sentStatus is the status to audit for a request that failed after being sent: 0 for no response.
@@ -173,7 +192,7 @@ func callFailure(acct vault.Account, err error) error {
 	if reqErr, ok := errors.AsType[*proxy.RequestError](err); ok {
 		return callRequestError(reqErr)
 	}
-	return &Error{Code: "internal", Message: "the call failed inside addn", Exit: ExitInternal}
+	return vaultError(err)
 }
 
 func upstreamExit(status int) int {
@@ -318,7 +337,7 @@ func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
 		return networkFailure()
 	}
-	if !isTextual(resp.Header.Get("Content-Type"), head) {
+	if len(head) > 0 && !isTextual(resp.Header.Get("Content-Type"), head) {
 		return &Error{Code: "binary-response", Exit: ExitUsage,
 			Message: "the response is not text or JSON; repeat the call with -o <file> to save it"}
 	}

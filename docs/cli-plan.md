@@ -93,7 +93,7 @@ From the market research (Nov 2026):
 | `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), the provider's stable subject id, granted scopes, status |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
 | `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, the alias's scopes at the start, redirect URI, claim marker, expiry |
-| `audit_log` | connect / refresh / revoke / tool-call events by account id and provider id; never token values or aliases |
+| `audit_log` | connect / refresh / revoke / call events by account id and provider id; never token values, aliases, paths or queries |
 
 The `user_id` multi-tenancy column from the SDK becomes the account alias.
 
@@ -190,7 +190,57 @@ provider rotated the refresh token but before the commit, the stored token is
 stale: the next refresh gets `invalid_grant`, and the account is marked
 `needs-reauth` (exit 3). It never retries in a loop.
 
-### 2.5 Command grammar
+### 2.5 `addn call`
+
+`addn call [-a <alias>] <METHOD> <path> [--query k=v]… [--data @file|-|<json>] [-H 'Name: value']… [-o file] [--force]`
+sends one authenticated request to a provider API. It lives in `internal/proxy`; `internal/cli/call.go` is the
+thin command.
+
+**Account.** `-a` names the alias; without it the provider's default account, else its only account, is used.
+`--provider` (any service id resolves to its identity root) narrows an alias that exists under several providers.
+An unknown provider, an ambiguous alias and several accounts without a default are usage errors (exit `2`); an
+alias or provider with no account is `not-connected` (exit `3`).
+
+**URL.** `<path>` is absolute from the API host (`/calendar/v3/calendars/primary/events`, resolved against the
+host of the provider's `api.base_url`) or an `https` URL whose host is listed in the provider's `api.allowed_hosts`
+(default: the host of `api.base_url`). A listed host matches case-insensitively, without a trailing dot, on port 443.
+Any other host or scheme, userinfo, a `//host` path, or an opaque URL is `host-not-allowed` (exit `2`), and nothing is
+sent: not the request, and not a token refresh either. The access token is only ever sent to a listed host over https.
+`--query` pairs are appended after the path's own query. `-H` may not set `Authorization`, `Host`, `Cookie`,
+`Proxy-*`, `Content-Length`, `Transfer-Encoding` or a method-override header (`forbidden-header`, exit `2`).
+`--data` is a literal body, `@file` or `-` for stdin, capped at 64 MiB; the body is buffered so it can be replayed,
+and defaults to `Content-Type: application/json`.
+
+**Token.** A token that expires within 60 s is refreshed first, under the vault writer lock: the credential is
+re-read inside the transaction, so a refresh another process already committed is reused and the token endpoint is
+hit once per rotation. A rotated refresh token is stored in the same transaction as the new access token, and a
+`refresh` audit event records `ok`, `failed` or `needs-reauth`. `invalid_grant` marks the account `needs-reauth`
+and ends in exit `3`; it is never retried. Later calls fail with exit `3` before any request.
+
+**Retries.** A `401` renews the token once (re-reading what another process stored first) and resends; a second
+`401` is an upstream error. With no refresh token, a `401` is exit `3`. A `429` is retried up to three times,
+waiting for `Retry-After` (seconds or an HTTP date) or, without it, 1 s, 2 s, 4 s with jitter, never more than
+30 s. Nothing else is retried: not `5xx`, not network errors. Redirects are never followed: a `3xx` is an upstream
+failure and its body is not read.
+
+**Output.** A `2xx` text, JSON or XML body is streamed to stdout verbatim, exit `0`. Any other `2xx` body is refused
+as `binary-response` (exit `2`) unless `-o` is given. `-o` writes a `0600` temp file in the target's directory and
+renames it into place once the body is complete, then prints `{"status","content_type","bytes","path"}`. It is
+checked before anything is sent: an existing file needs `--force`, and a symlink at the target is always refused.
+A non-2xx answer writes no file; its body (at most 1 MiB) goes to stdout verbatim, stderr gets the envelope
+`{"error":{"code":"upstream-error","message":"HTTP <status>"}}`, and the exit is `4` for 4xx/3xx and `5` for 5xx.
+A network, DNS or TLS failure is `network` (exit `5`); error text never contains the URL, query, headers or tokens.
+
+**Audit.** One `call` event per command, after the final response head arrives: account id, method and final
+status (`0` when none arrived). A failed audit write is reported as a `{"notice":"audit-failed"}` line on stderr
+and does not change the result.
+
+`addn auth check --live` runs the same refresh-if-needed path for each account and asks the provider's identity
+endpoint whether the token works: each row gains `live` and `live_reason` (`ok`, `needs-reauth`, `no-refresh-token`,
+`no-credential`, `no-oauth-client`, `refresh-rejected`, `token-rejected`, `identity-rejected`, `network`,
+`no-identity-endpoint`), never provider text.
+
+### 2.6 Command grammar
 
 ```
 addn <provider> <tool> [-a <alias>] [--param value …] [-o file] [--all]
@@ -236,7 +286,7 @@ can use the same day.
 | M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; identity root of each provider; `effect:` tag and CLI `command:` name per toolkit; Google Drive provider + metadata toolkit; `addn providers`, `addn tools` | browse only |
 | M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
 | M3 | Connect | `addn client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` (local status only) | accounts connected |
-| **M4** | **Raw call** | `addn call`: token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming | **✅ agents can hit any Google API** |
+| **M4** | **Raw call** | `addn call` (§2.5): host allow-list, token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming, `call` audit event; `auth check --live` | **✅ agents can hit any Google API** |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
 | M7 | Agent surface + release | `addn skill install` (SKILL.md for Claude Code / Codex / generic), `addn tools --json` schemas, goreleaser binaries (linux/mac/windows, amd64/arm64), install script, README | ✅ **v0.1.0** |

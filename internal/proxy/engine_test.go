@@ -427,3 +427,16 @@ func TestEngineStopsWaitingWhenCancelled(t *testing.T) {
 		t.Errorf("err = %v, want context.Canceled", err)
 	}
 }
+
+func TestEngineGivesUpOnAServerThatNeverAnswers(t *testing.T) {
+	up := newUpstream(t, func(_ int, _ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	e := newEngine(&fakeRenewer{}, &sleeps{})
+	e.Client = &http.Client{Timeout: 50 * time.Millisecond}
+
+	_, err := e.Do(context.Background(), proxy.Request{Method: "GET", URL: up.url("/")}, "t")
+
+	var nerr *proxy.NetworkError
+	if !errors.As(err, &nerr) {
+		t.Errorf("err = %#v, want a NetworkError once the client's timeout passes", err)
+	}
+}

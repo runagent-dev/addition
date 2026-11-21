@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -308,4 +309,45 @@ func TestCallDecodesAsJSONWhenTheUpstreamIsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &v); err != nil || v["ok"] != true {
 		t.Errorf("stdout = %q, %v", r.stdout, err)
 	}
+}
+
+func TestCallAnEmptyBodyIsNeverBinary(t *testing.T) {
+	c := newCallHarness(t)
+	c.api.respond(status(200, "", "Content-Type", "application/pdf"))
+
+	for _, method := range []string{"HEAD", "GET"} {
+		if r := c.call("-a", "work", method, "/drive/v3/files/1?alt=media"); r.code != ExitOK || r.stdout != "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q", method, r.code, r.stdout, r.stderr)
+		}
+	}
+}
+
+func TestCallSniffsABodyWithoutAContentType(t *testing.T) {
+	untyped := func(body string) func(int, http.ResponseWriter, *http.Request) {
+		return func(_ int, w http.ResponseWriter, _ *http.Request) {
+			w.Header()["Content-Type"] = nil
+			_, _ = w.Write([]byte(body))
+		}
+	}
+	c := newCallHarness(t)
+
+	c.api.respond(untyped("plain words"))
+	if r := c.call("-a", "work", "GET", "/x"); r.code != ExitOK || r.stdout != "plain words" {
+		t.Errorf("text: exit %d, stdout %q", r.code, r.stdout)
+	}
+	c.api.respond(untyped("PK\x03\x04\x00\x00binary"))
+	c.wantError(c.call("-a", "work", "GET", "/x"), ExitUsage, "binary-response")
+}
+
+func TestCallReportsABodyThatBreaksMidStreamAsANetworkError(t *testing.T) {
+	c := newCallHarness(t)
+	c.api.respond(func(_ int, w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1000000")
+		_, _ = w.Write([]byte(`{"partial":`))
+	})
+
+	r := c.call("-a", "work", "GET", "/x")
+
+	c.wantError(r, ExitUpstreamServer, "network")
 }
