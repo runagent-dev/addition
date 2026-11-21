@@ -177,3 +177,39 @@ func TestCallRefusesAnAccountThatNeedsReauthWithoutSendingAnything(t *testing.T)
 		t.Errorf("%d requests, message %q; want a local refusal that names `addn connect`", c.transport.total(), env.Error.Message)
 	}
 }
+
+func TestTheMissingAppDiagnosticNeverRepeatsAnArgument(t *testing.T) {
+	const secret = "PRIVATE-QUERY-VALUE"
+	cases := map[string][]string{
+		"method and a path with a secret query": {"call", "GET", "/x?key=" + secret},
+		"method alone":                          {"call", "GET"},
+		"method, path and an extra":             {"call", "GET", "/x?key=" + secret, "/extra"},
+		"method, path and two extras":           {"call", "POST", "/x?key=" + secret, "/extra", "more"},
+		"lowercase method":                      {"call", "get", "/x?key=" + secret},
+		"secret in the path":                    {"call", "GET", "/files/" + secret},
+		"flags before the method":               {"call", "-a", "work", "GET", "/x?key=" + secret},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newCallHarness(t)
+
+			r := c.run(args...)
+
+			env := c.wantError(r, ExitUsage, "app-required")
+			if !strings.Contains(env.Error.Message, "addn call <app> <METHOD> <path>") || !strings.Contains(env.Error.Message, "gmail") {
+				t.Errorf("message %q must show the correct form and the connected apps", env.Error.Message)
+			}
+			if strings.Contains(r.stdout+r.stderr, secret) || len(c.api.requests()) != 0 {
+				t.Errorf("the secret leaked or a request was sent\nstdout: %s\nstderr: %s", r.stdout, r.stderr)
+			}
+		})
+	}
+}
+
+func TestCallWithTheAppButAMissingPartIsAUsageError(t *testing.T) {
+	c := newCallHarness(t)
+
+	for _, args := range [][]string{{"call"}, {"call", "gmail"}, {"call", "gmail", "GET"}, {"call", "gmail", "GET", "/x", "/extra"}} {
+		c.wantError(c.run(args...), ExitUsage, "usage")
+	}
+}
