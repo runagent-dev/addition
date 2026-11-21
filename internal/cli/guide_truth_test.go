@@ -3,6 +3,7 @@ package cli
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -78,7 +79,9 @@ func shellWords(line string) []string {
 	return words
 }
 
-func isPlaceholder(s string) bool { return strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">") }
+func isPlaceholder(s string) bool {
+	return strings.HasPrefix(s, "$") || (strings.HasPrefix(s, "<") && strings.HasSuffix(s, ">"))
+}
 
 // checkCommandLine reports what is wrong with one documented command, or "".
 func checkCommandLine(root *cobra.Command, c *catalog.Catalog, topics []string, line string) string {
@@ -319,6 +322,123 @@ func TestGuideDoesNotAdvertiseUnshippedFeatures(t *testing.T) {
 			if strings.Contains(body, planned) {
 				t.Errorf("%s mentions %q outside a Coming list", topic.ID, planned)
 			}
+		}
+	}
+}
+
+var bashBlock = regexp.MustCompile("(?s)```bash\n(.*?)```")
+
+func bashBlocks(body string) []string {
+	var blocks []string
+	for _, m := range bashBlock.FindAllStringSubmatch(body, -1) {
+		blocks = append(blocks, m[1])
+	}
+	return blocks
+}
+
+func TestGuideBashBlocksParse(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not installed")
+	}
+	g, _ := loadedGuide(t)
+	for _, topic := range g.Topics() {
+		for i, block := range bashBlocks(topic.Body) {
+			cmd := exec.Command(bash, "-n")
+			cmd.Stdin = strings.NewReader(block)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("%s: bash block %d does not parse: %v\n%s\n%s", topic.ID, i+1, err, out, block)
+			}
+		}
+	}
+}
+
+var (
+	quotedSpan       = regexp.MustCompile(`'[^']*'|"[^"]*"`)
+	trailingComment  = regexp.MustCompile(`(^|\s)#.*$`)
+	anglePlaceholder = regexp.MustCompile(`<[A-Za-z]`)
+)
+
+func TestGuideBashPlaceholdersAreQuotedOrVariables(t *testing.T) {
+	g, _ := loadedGuide(t)
+	for _, topic := range g.Topics() {
+		for _, block := range bashBlocks(topic.Body) {
+			for line := range strings.SplitSeq(block, "\n") {
+				bare := trailingComment.ReplaceAllString(quotedSpan.ReplaceAllString(line, "''"), "")
+				if anglePlaceholder.MatchString(bare) {
+					t.Errorf("%s: unquoted <placeholder> in %q; use a quoted \"$VARIABLE\"", topic.ID, line)
+				}
+			}
+		}
+	}
+}
+
+func TestPaginatedRecipesRepeatTheirQueryAndAskForTheToken(t *testing.T) {
+	g, _ := loadedGuide(t)
+	pages := 0
+	for _, topic := range g.Topics() {
+		for _, block := range bashBlocks(topic.Body) {
+			for line := range strings.SplitSeq(block, "\n") {
+				if !strings.Contains(line, "pageToken=") {
+					continue
+				}
+				pages++
+				if strings.Contains(line, "fields=") && !strings.Contains(line, "nextPageToken") {
+					t.Errorf("%s: a paginated call whose fields mask drops nextPageToken: %q", topic.ID, line)
+				}
+				if topic.ID == "gmail" && !strings.Contains(line, "q=") {
+					t.Errorf("gmail: the next page must repeat the search query: %q", line)
+				}
+			}
+		}
+	}
+	if pages < 3 {
+		t.Errorf("found %d paginated examples, want one per list-style app", pages)
+	}
+}
+
+func TestAccessTokenStatesAreDocumentedFromTheCode(t *testing.T) {
+	src, err := os.ReadFile("check.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, fn, _ := strings.Cut(string(src), "func accessTokenState")
+	fn, _, _ = strings.Cut(fn, "\n}\n")
+	states := regexp.MustCompile(`return "([a-z-]+)"`).FindAllStringSubmatch(fn, -1)
+	if len(states) < 5 {
+		t.Fatalf("found %d states in accessTokenState; the scan is broken", len(states))
+	}
+	g, _ := loadedGuide(t)
+	accounts, _ := g.Topic("accounts")
+	for _, m := range states {
+		if !strings.Contains(accounts.Body, "`"+m[1]+"`") {
+			t.Errorf("accounts.md does not document access_token state %q", m[1])
+		}
+	}
+}
+
+func TestGuideStatesTheContractsReviewersFoundMissing(t *testing.T) {
+	required := map[string][]string{
+		"overview":     {"addition init --key-file", "ADDITION_MASTER_KEY", "keychain-unavailable", "on_path", "Windows", "field level", "unsupported-encoding"},
+		"connect":      {"read -r", `"$URL"`, "history", "one-use"},
+		"accounts":     {"created_at", "updated_at", "stored state", "live", "legacy-account", "same Cloud project", "local guard"},
+		"call":         {"unsupported-encoding", "1 MiB", "empty", "content_type", "raw"},
+		"google-chat":  {"SERVICE_DISABLED", "app configuration", "nextPageToken", "any page size", "pageSize=50"},
+		"google-drive": {"about", "explicit"},
+	}
+	g, _ := loadedGuide(t)
+	for id, phrases := range required {
+		topic, _ := g.Topic(id)
+		for _, phrase := range phrases {
+			if !strings.Contains(topic.Body, phrase) {
+				t.Errorf("%s lacks %q", id, phrase)
+			}
+		}
+	}
+	overview, _ := g.Topic("overview")
+	for _, wrong := range []string{"encrypted SQLite file", "Commands print JSON on stdout."} {
+		if strings.Contains(overview.Body, wrong) {
+			t.Errorf("overview still says %q", wrong)
 		}
 	}
 }

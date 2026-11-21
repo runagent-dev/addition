@@ -84,26 +84,56 @@ func TestLoadRejectsMissingCoreTopic(t *testing.T) {
 	}
 }
 
-func TestAppsTopicListsEveryConnectableApp(t *testing.T) {
+func tableRows(body string) []string {
+	var rows []string
+	for line := range strings.SplitSeq(body, "\n") {
+		if strings.HasPrefix(line, "| `") {
+			rows = append(rows, line)
+		}
+	}
+	return rows
+}
+
+func TestAppsTopicListsOnlyTheGoogleApps(t *testing.T) {
 	c := shippedCatalog(t)
 	g, err := Load(shared.Guide, c)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	apps, _ := g.Topic("apps")
+	table := strings.Join(tableRows(apps.Body), "\n")
 	for _, p := range c.Providers() {
-		listed := strings.Contains(apps.Body, "`"+p.ID+"`")
-		if c.Connectable(p.ID) != listed {
-			t.Errorf("%s: connectable=%v but listed=%v", p.ID, c.Connectable(p.ID), listed)
+		listed := strings.Contains(table, "| `"+p.ID+"` |")
+		want := p.IdentityRoot == "google" && c.Connectable(p.ID)
+		if listed != want {
+			t.Errorf("%s: in the supported table = %v, want %v", p.ID, listed, want)
 		}
 	}
-	for _, want := range []string{"drive", "www.googleapis.com", "gmail.readonly", "addition guide <id>"} {
+	for _, want := range []string{"drive", "www.googleapis.com", "gmail.readonly", "Recipe `addition guide <id>`"} {
 		if !strings.Contains(apps.Body, want) {
 			t.Errorf("apps topic lacks %q:\n%s", want, apps.Body)
 		}
 	}
 	if strings.Contains(apps.Body, "https://www.googleapis.com/auth/") {
 		t.Error("scopes are not shortened")
+	}
+}
+
+func TestAppsTopicMentionsOtherProvidersOnOneUnsupportedLine(t *testing.T) {
+	g, _ := Load(shared.Guide, shippedCatalog(t))
+	apps, _ := g.Topic("apps")
+	var mentions []string
+	for line := range strings.SplitSeq(apps.Body, "\n") {
+		if strings.Contains(line, "`github`") || strings.Contains(line, "`slack`") {
+			mentions = append(mentions, line)
+		}
+	}
+	if len(mentions) != 1 || !strings.Contains(mentions[0], "not supported in this release") ||
+		!strings.Contains(mentions[0], "`github`") || !strings.Contains(mentions[0], "`slack`") {
+		t.Errorf("github and slack must share one line saying they are not supported in this release, got %q", mentions)
+	}
+	if strings.Contains(apps.Body, "Apps this binary can connect") || strings.Contains(apps.Body, "use `addition call`") {
+		t.Error("the apps topic still advertises every catalog entry")
 	}
 }
 
