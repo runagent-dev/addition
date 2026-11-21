@@ -465,7 +465,10 @@ plus `effect:` tags on tools (used from Phase 2, cheap to add now).
     `addition` is taken too, so there is no crate.
 11. **Release integrity (M7a):** one sha256 `checksums.txt` per release plus a GitHub artifact attestation
     (`gh attestation verify`) for every archive and the checksums file. No cosign: it adds a key or identity policy
-    to manage for no gain over GitHub's own attestation. The installer verifies the checksum on every run.
+    to manage for no gain over GitHub's own attestation. The installer checks the archive against the `checksums.txt`
+    from the same release origin on every run and does not verify the attestation. Releases are built reproducibly
+    (commit-derived dates and file times), attested, and only then published, by separate jobs with least privilege;
+    a tag must be a release tag on a commit reachable from `main`.
 12. **Install script:** non-interactive, no `sudo`, installs one file to `~/.local/bin` by default, and never edits shell
     rc files; when the directory is not on `PATH` it prints the line to add. Archive names carry no version, so
     `releases/latest/download/<asset>` is a stable URL. Windows users take the `.zip` for now.

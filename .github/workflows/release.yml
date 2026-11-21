@@ -4,47 +4,145 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}
+
+env:
+  RELEASE_TAG_REGEX: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
+  GO_IMAGE: golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf
+  GORELEASER_IMAGE: goreleaser/goreleaser:v2.20.3@sha256:3019e0e61c99808e42ce60c9cf77f7882685ffd2bd09d18ef6da8f9c9810e71c
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Same pinned image and git-archive feed as ci.yml.
-      - name: verify
+      - name: tag is a release tag on main
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ $RELEASE_TAG_REGEX ]]; then
+            echo "::error::tag '$TAG' is not a SemVer 2.0 release tag such as v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+          git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::$GITHUB_SHA is not on main; release tags must point at merged commits"
+            exit 1
+          fi
+      - name: gofmt, vet, test
         shell: bash
         run: |
-          git archive HEAD | docker run -i --rm golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf sh -euc '
+          git archive HEAD | docker run -i --rm "$GO_IMAGE" sh -euc '
             mkdir /src && cd /src && tar -x
             unformatted="$(gofmt -l .)"
             if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
             go vet ./...
             go test ./...
           '
-      # GoReleaser needs the tag and history, so the whole checkout goes in; dist/ comes back as a tar on stdout.
-      - name: goreleaser
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # No token reaches goreleaser; it only builds, and builds the tag that triggered this run.
+      # dist/ comes back as a tar on stdout.
+      - name: goreleaser build
         shell: bash
+        env:
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
         run: |
-          tar -c . | docker run -i --rm -e GITHUB_TOKEN --entrypoint sh \
-            goreleaser/goreleaser:v2.20.3@sha256:3019e0e61c99808e42ce60c9cf77f7882685ffd2bd09d18ef6da8f9c9810e71c -euc '
+          tar -c . | docker run -i --rm -e GORELEASER_CURRENT_TAG --entrypoint sh "$GORELEASER_IMAGE" -euc '
             mkdir /src && cd /src && tar -x
             git config --global --add safe.directory /src
-            goreleaser release --clean >&2
+            goreleaser release --clean --skip=publish >&2
             tar -c dist
           ' | tar -x
+      - name: dist holds the seven assets, built from this tag
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/check-release-dist.sh dist "$TAG"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-files
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/CHANGELOG.md
+          if-no-files-found: error
+          retention-days: 7
+
+  attest:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
+          path: dist
+      - name: files match checksums.txt
+        shell: bash
+        run: |
+          cd dist
+          sha256sum -c checksums.txt
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.txt
+
+  publish:
+    needs: [verify, build, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
+          path: dist
+      - name: create the release from exactly the attested files
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum -c checksums.txt
+          archives=(*.tar.gz *.zip)
+          if [ "${#archives[@]}" -ne 6 ]; then
+            echo "::error::expected 6 archives, found ${#archives[@]}"
+            exit 1
+          fi
+          flags=(--verify-tag --title "$TAG")
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          if [ -s CHANGELOG.md ]; then flags+=(--notes-file CHANGELOG.md); else flags+=(--generate-notes); fi
+          gh release create "$TAG" "${archives[@]}" checksums.txt "${flags[@]}"

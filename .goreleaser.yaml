@@ -10,13 +10,15 @@ builds:
       - CGO_ENABLED=0
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
       - -trimpath
+      - -buildvcs=false
     ldflags:
       - -s -w
       - -X github.com/runagent-dev/addition/internal/cli.Version={{ .Version }}
       - -X github.com/runagent-dev/addition/internal/cli.Commit={{ .FullCommit }}
-      - -X github.com/runagent-dev/addition/internal/cli.Date={{ .Date }}
+      - -X github.com/runagent-dev/addition/internal/cli.Date={{ .CommitDate }}
 
 # Version-less names keep releases/latest/download/<asset> stable for install.sh.
 archives:
@@ -27,21 +29,26 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+    builds_info:
+      mtime: "{{ .CommitDate }}"
     files:
-      - LICENSE
-      - NOTICE
-      - README.md
+      - src: LICENSE
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: NOTICE
+        info:
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          mtime: "{{ .CommitDate }}"
 
 checksum:
   name_template: checksums.txt
   algorithm: sha256
 
+# Publishing is done by .github/workflows/release.yml from the attested files; goreleaser only builds.
 release:
-  github:
-    owner: runagent-dev
-    name: addition
-  draft: false
-  prerelease: auto
+  disable: true
 
 changelog:
   sort: asc

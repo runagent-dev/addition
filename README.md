@@ -20,14 +20,28 @@ edit your shell rc files; when the directory is not on your `PATH` it prints the
 | `ADDITION_VERSION` | latest release | `v0.1.0` or `0.1.0` pins a release |
 | `ADDITION_INSTALL_DIR` | `$HOME/.local/bin` | where the binary goes; created if missing |
 | `ADDITION_BASE_URL` | `https://github.com/runagent-dev/addition/releases` | releases URL, for mirrors and tests |
+| `ADDITION_ALLOW_WGET` | unset | `1` lets the installer use wget when curl is missing (less safe, see below) |
 
-Re-running the script upgrades in place. Every download is checked against the release's
-`checksums.txt` (sha256) and refused on a mismatch, and every release file carries a GitHub
-artifact attestation:
+Re-running the script upgrades in place. The installer verifies one thing: the sha256 of the
+archive against the `checksums.txt` published next to it. Both files come from the same release
+origin, so with `ADDITION_BASE_URL` pointing at a mirror, the mirror has to be trusted. It also
+refuses an archive whose members are not plain files with exactly one `addition`, and caps the
+download at 100 MiB and the binary at 200 MiB. It does not verify provenance. A release has seven uploaded assets (four `tar.gz`, two `zip`
+and `checksums.txt`), and each carries a GitHub artifact attestation; the source archives GitHub
+adds to every release are not attested. Check an asset separately:
 
 ```bash
-gh attestation verify addition_linux_amd64.tar.gz --repo runagent-dev/addition
+gh attestation verify addition_linux_amd64.tar.gz \
+  --repo runagent-dev/addition \
+  --signer-workflow runagent-dev/addition/.github/workflows/release.yml
 ```
+
+The installer needs curl, tar, gzip, and sha256sum or shasum. Downloads use curl only, which is
+held to HTTPS across redirects. Without curl it stops with `no-downloader`; set `ADDITION_ALLOW_WGET=1`
+to use wget instead. That is less safe: wget may follow an https to http redirect.
+
+Keep the install directory writable by you alone: the installer checks the destination and then
+replaces it, and does not defend against another user changing the directory in between. How releases are cut and verified: [docs/RELEASING.md](docs/RELEASING.md).
 
 Other ways in:
 
@@ -57,6 +71,11 @@ addition providers                                      # apps addition knows
 addition tools                                          # curated tools, as JSON
 addition version
 ```
+
+No desktop keyring (a Linux server without a Secret Service)? Plain `addition init` fails with
+`keychain-unavailable`. Keep the master key in a file instead, `addition init --key-file` (it goes to
+`$ADDITION_HOME/master.key`, mode 0600), or export `ADDITION_MASTER_KEY` (64 hex characters) and run
+`addition init` as usual; the variable must then stay set for every later command.
 
 `addition doctor` prints one JSON report: `ok`, a list of `checks` (vault, master key,
 OAuth client, each account) and `next`, the single command to run now. It exits 3 when you need to act.

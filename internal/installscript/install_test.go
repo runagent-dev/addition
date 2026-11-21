@@ -25,7 +25,7 @@ import (
 // scriptTools is every external command install.sh may use; tests put only these on PATH.
 var scriptTools = []string{
 	"awk", "basename", "cat", "chmod", "cp", "dirname", "gzip", "mkdir", "mktemp",
-	"mv", "rm", "sed", "tar", "tr",
+	"mv", "rm", "sed", "tar", "tr", "wc", "grep",
 }
 
 var platforms = []struct{ os, arch string }{
@@ -257,6 +257,8 @@ type invocation struct {
 	env   map[string]string
 	path  []string
 	stdin io.Reader
+	shell []string
+	dir   string
 }
 
 type result struct {
@@ -275,8 +277,15 @@ func (h *harness) run(mods ...func(*invocation)) result {
 	for _, mod := range mods {
 		mod(inv)
 	}
-	cmd := exec.Command(hostTool(h.t, "sh"), "install.sh")
-	cmd.Dir = scriptDir(h.t)
+	shell := inv.shell
+	if shell == nil {
+		shell = []string{hostTool(h.t, "sh")}
+	}
+	cmd := exec.Command(shell[0], append(append([]string(nil), shell[1:]...), filepath.Join(scriptDir(h.t), "install.sh"))...)
+	cmd.Dir = inv.dir
+	if cmd.Dir == "" {
+		cmd.Dir = scriptDir(h.t)
+	}
 	cmd.Env = []string{"PATH=" + strings.Join(inv.path, ":")}
 	for k, v := range inv.env {
 		if v != "-unset-" {
@@ -284,7 +293,7 @@ func (h *harness) run(mods ...func(*invocation)) result {
 		}
 	}
 	if inv.stdin != nil {
-		cmd.Args = []string{cmd.Args[0]}
+		cmd.Args = shell
 		cmd.Stdin = inv.stdin
 	}
 	var stdout, stderr bytes.Buffer
@@ -310,7 +319,8 @@ func scriptDir(t *testing.T) string {
 	return dir
 }
 
-func withEnv(k, v string) func(*invocation) { return func(i *invocation) { i.env[k] = v } }
+func withShell(argv ...string) func(*invocation) { return func(i *invocation) { i.shell = argv } }
+func withEnv(k, v string) func(*invocation)      { return func(i *invocation) { i.env[k] = v } }
 func withPath(dirs ...string) func(*invocation) {
 	return func(i *invocation) { i.path = dirs }
 }
@@ -451,7 +461,10 @@ func TestPinnedPrereleaseVersion(t *testing.T) {
 }
 
 func TestRejectsAnInvalidVersionBeforeAnyRequest(t *testing.T) {
-	for _, bad := range []string{"latest-ish/../x", "1.0", "v", "1.0.0 ", "$(id)"} {
+	for _, bad := range []string{
+		"latest-ish/../x", "1.0", "v", "1.0.0 ", "$(id)", "1abc.2abc.3abc", "1.2", "1.2.3.4", "1..3", ".1.2",
+		"1.2.3-", "1.2.3-rc_1", "1.2.3-.rc", "1.2.3-rc..1", "1.2.3-rc.", "01.2.3", "1.02.3", "1.2.03", "1.2.3-01", "1.2.3-rc.01", "vv1.2.3", "1.2.3+build", "bad\tversion", "1.2.3\n",
+	} {
 		t.Run(bad, func(t *testing.T) {
 			h := newHarness(t)
 
@@ -490,7 +503,7 @@ func TestOnPathIsFalseAndStderrExplainsHowToFixIt(t *testing.T) {
 	if got.OnPath {
 		t.Error("on_path = true, want false when the install dir is not on PATH")
 	}
-	if !strings.Contains(r.stderr, `export PATH="`+h.install+`:$PATH"`) {
+	if !strings.Contains(r.stderr, `export PATH='`+h.install+`':"$PATH"`) {
 		t.Errorf("stderr does not say how to add the directory to PATH:\n%s", r.stderr)
 	}
 	for _, rc := range []string{".bashrc", ".zshrc", ".profile"} {
@@ -648,19 +661,39 @@ func TestUnsupportedPlatformsAreRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-func TestWgetIsUsedWhenThereIsNoCurl(t *testing.T) {
+func TestWgetIsUsedWhenThereIsNoCurlAndTheUserOptsIn(t *testing.T) {
 	h := newHarness(t)
 	h.rel.publish(t, "/latest/download", "0.3.0")
 	curl := hostTool(t, "curl")
 	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
-	h.tools.writeShim(t, "wget", fmt.Sprintf(`[ "$1" = -q ] && [ "$2" = -O ] || { echo "unexpected wget args: $*" >&2; exit 3; }
-exec %s -fsSL -o "$3" "$4"
+	h.tools.writeShim(t, "wget", fmt.Sprintf(`[ "$1" = --help ] && exit 0
+[ "$1" = -q ] && [ "$2" = -O ] && [ "$4" = -- ] || { echo "unexpected wget args: $*" >&2; exit 3; }
+exec %s -fsSL -o "$3" -- "$5"
 `, curl))
 
-	got := decodeSuccess(t, h.run())
+	got := decodeSuccess(t, h.run(withEnv("ADDITION_ALLOW_WGET", "1")))
 
 	if got.Version != "0.3.0" {
 		t.Errorf("version = %q", got.Version)
+	}
+}
+
+func TestNoCurlIsAnErrorEvenWhenWgetIsInstalled(t *testing.T) {
+	for _, optIn := range []string{"", "0", "yes"} {
+		t.Run("ADDITION_ALLOW_WGET="+optIn, func(t *testing.T) {
+			h := newHarness(t)
+			_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+			h.tools.writeShim(t, "wget", "exit 0\n")
+
+			got := assertFailure(t, h.run(withEnv("ADDITION_ALLOW_WGET", optIn)), "no-downloader", 2)
+
+			if !strings.Contains(got.Error.Message, "install curl") {
+				t.Errorf("message %q should say to install curl", got.Error.Message)
+			}
+			if reqs := h.rel.requested(); len(reqs) != 0 {
+				t.Errorf("requests = %v, want none", reqs)
+			}
+		})
 	}
 }
 
@@ -668,10 +701,7 @@ func TestNoCurlAndNoWgetIsAnError(t *testing.T) {
 	h := newHarness(t)
 	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
 
-	assertFailure(t, h.run(), "no-downloader", 1)
-	if reqs := h.rel.requested(); len(reqs) != 0 {
-		t.Errorf("requests = %v, want none", reqs)
-	}
+	assertFailure(t, h.run(withEnv("ADDITION_ALLOW_WGET", "1")), "no-downloader", 2)
 }
 
 func TestShasumIsUsedWhenThereIsNoSha256sum(t *testing.T) {

@@ -73,9 +73,14 @@ func TestResolveBuild(t *testing.T) {
 			want: buildDetails{Version: "1.0.0", Commit: "c0ffee", Date: "2026-02-03T00:00:00Z"},
 		},
 		{
-			name: "go install records the module version and vcs data",
+			name: "build info carrying a module version and vcs settings",
 			info: embedded,
 			want: buildDetails{Version: "0.4.2", Commit: "deadbeef", Date: "2026-01-02T03:04:05Z"},
+		},
+		{
+			name: "go install of a module version records the version but no vcs data",
+			info: buildInfoWith("v0.0.0-20261121100000-0123456789ab", nil),
+			want: buildDetails{Version: "0.0.0-20261121100000-0123456789ab", Commit: "unknown", Date: "unknown"},
 		},
 		{
 			name: "plain go build is a dev build that still knows its commit",
