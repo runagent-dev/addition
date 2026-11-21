@@ -219,7 +219,11 @@ func emittedErrorCodes(t *testing.T) []string {
 		if err != nil {
 			return err
 		}
-		for _, re := range []*regexp.Regexp{codeLiteral, badOutputs, tableCodes} {
+		patterns := []*regexp.Regexp{codeLiteral, badOutputs, tableCodes}
+		if filepath.Base(path) == "doctor.go" {
+			patterns = patterns[:2] // its tables name check ids, not error codes
+		}
+		for _, re := range patterns {
 			for _, m := range re.FindAllStringSubmatch(string(src), -1) {
 				found[m[1]] = true
 			}
