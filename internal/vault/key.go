@@ -56,7 +56,7 @@ func resolveKey(env Env, home *homeDir, rec initRecords) (crypto.Key, error) {
 		}
 		return key, err
 	default:
-		return crypto.Key{}, fmt.Errorf("%w: this vault was initialised with %s; set it to the same key", ErrNoMasterKey, envMasterKey)
+		return crypto.Key{}, fmt.Errorf("%w: this vault was initialised with a key from the environment; set %s to that key", ErrNoMasterKey, envMasterKey)
 	}
 }
 

@@ -43,7 +43,7 @@ addition/
 ├── README.md
 ├── docs/cli-plan.md        # direction + phases + milestones (authoritative)
 ├── go.mod                  # module github.com/runagent-dev/addition
-├── cmd/addition/               # main package; thin
+├── cmd/addition/           # main package; thin
 ├── internal/               # all implementation packages (cli, catalog, vault, oauth, proxy, …)
 └── shared/                 # language-agnostic data, embedded into the binary
     ├── providers/          # provider config YAML
