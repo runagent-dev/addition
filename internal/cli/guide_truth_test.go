@@ -419,7 +419,7 @@ func TestAccessTokenStatesAreDocumentedFromTheCode(t *testing.T) {
 
 func TestGuideStatesTheContractsReviewersFoundMissing(t *testing.T) {
 	required := map[string][]string{
-		"overview":     {"addition init --key-file", "ADDITION_MASTER_KEY", "keychain-unavailable", "on_path", "Windows", "field level", "unsupported-encoding"},
+		"overview":     {"addition init --key-file", "ADDITION_MASTER_KEY", "keychain-unavailable", "on_path", "Windows", "field level"},
 		"connect":      {"read -r", `"$URL"`, "history", "one-use"},
 		"accounts":     {"created_at", "updated_at", "stored state", "live", "legacy-account", "same Cloud project", "local guard"},
 		"call":         {"unsupported-encoding", "1 MiB", "empty", "content_type", "raw"},

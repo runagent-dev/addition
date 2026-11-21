@@ -13,7 +13,7 @@ After installing, run `addition guide`. The full manual is built into the binary
 
 ## Guide
 
-- [overview](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/overview.md): What addition is, how to think about it, and the six steps of a first run.
+- [overview](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/overview.md): What addition is, how to think about it, and the first run: install, init, client add, connect, call.
 - [connect](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/connect.md): Connect an app's account on a headless machine: hand the consent link to the human and finish with the pasted URL.
 - [call](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/call.md): The contract of `addition call`: arguments, output, exit codes and what it refuses.
 - [accounts](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/accounts.md): List, inspect, check, default and remove connected accounts, and read their status and scope fields.

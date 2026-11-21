@@ -174,19 +174,32 @@ const googleScopePrefix = "https://www.googleapis.com/auth/"
 // identityScopes are requested by every app only to learn who signed in.
 var identityScopes = []string{"openid", "userinfo.email"}
 
+// supportedRoot is the identity root whose apps this release supports.
+const supportedRoot = "google"
+
 func renderApps(c *catalog.Catalog, recipes []Topic) string {
 	var b strings.Builder
-	b.WriteString("Apps this binary can connect, generated from its catalog.\n\n# Apps\n\n")
+	b.WriteString("Apps supported in this release: the Google apps, generated from this binary's catalog.\n\n# Apps\n\n")
 	b.WriteString("Connect one with `addition connect <app> --as <alias>`; `<app>` is the id or the command name. ")
 	b.WriteString("Scopes are shown without the Google `…/auth/` prefix; `openid` and `userinfo.email` are also requested, to learn who signed in.\n\n")
 	b.WriteString("| App id | Command name | API host | Scopes | Recipe `addition guide <id>` |\n|---|---|---|---|---|\n")
-	for _, p := range c.Providers() {
-		if !c.Connectable(p.ID) || p.OAuth2 == nil {
-			continue
-		}
+	for _, p := range c.Apps(supportedRoot) {
 		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n", p.ID, commandName(c, p), apiHost(p), scopeSummary(p), recipeLink(recipes, p.ID))
 	}
+	if others := unsupportedApps(c); len(others) > 0 {
+		fmt.Fprintf(&b, "\nOther catalog entries (%s) are not supported in this release.\n", strings.Join(others, ", "))
+	}
 	return b.String()
+}
+
+func unsupportedApps(c *catalog.Catalog) []string {
+	var ids []string
+	for _, p := range c.Providers() {
+		if p.IdentityRoot != supportedRoot && c.Connectable(p.ID) {
+			ids = append(ids, "`"+p.ID+"`")
+		}
+	}
+	return ids
 }
 
 func commandName(c *catalog.Catalog, p *catalog.Provider) string {
@@ -219,5 +232,5 @@ func recipeLink(recipes []Topic, id string) string {
 	if slices.ContainsFunc(recipes, func(t Topic) bool { return t.ID == id }) {
 		return "yes"
 	}
-	return "no: use `addition call`"
+	return "no"
 }
