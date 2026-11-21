@@ -340,14 +340,14 @@ func capBody(data []byte) ([]byte, error) {
 // Everything derived from the response passes the echo guard, so an access token never leaves addn.
 func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 	guard := proxy.NewEchoGuard(resp.Tokens)
+	if bodyIsRead(resp.Status) && hasContentCoding(resp.Header) {
+		return unsupportedEncoding(resp.Status)
+	}
 	if resp.Status < 200 || resp.Status > 299 {
 		return deliverFailure(cmd, resp, guard)
 	}
 	if out != nil {
 		return out.save(cmd, resp, guard)
-	}
-	if resp.Header.Get("Content-Encoding") != "" {
-		return binaryResponse()
 	}
 	body := bufio.NewReaderSize(guard.Reader(resp.Body), sniffLength)
 	head, err := body.Peek(sniffLength)
@@ -369,6 +369,30 @@ func deliverFailure(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoG
 		}
 	}
 	return &Error{Code: "upstream-error", Message: fmt.Sprintf("HTTP %d", resp.Status), Exit: upstreamExit(resp.Status)}
+}
+
+// bodyIsRead is false for a redirect, whose body is never read.
+func bodyIsRead(status int) bool { return status < 300 || status > 399 }
+
+// hasContentCoding reports a coding left on the body: the transport removes the one it decoded itself.
+func hasContentCoding(h http.Header) bool {
+	for _, value := range h.Values("Content-Encoding") {
+		for coding := range strings.SplitSeq(value, ",") {
+			if coding = strings.ToLower(strings.TrimSpace(coding)); coding != "" && coding != "identity" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsupportedEncoding(status int) *Error {
+	exit := ExitUpstreamServer
+	if status > 299 {
+		exit = upstreamExit(status)
+	}
+	return &Error{Code: "unsupported-encoding", Exit: exit,
+		Message: fmt.Sprintf("the HTTP %d response has a content coding addn cannot inspect for the access token; it was withheld", status)}
 }
 
 func binaryResponse() *Error {

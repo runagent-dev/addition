@@ -9,10 +9,12 @@ import (
 )
 
 // ownedHeaders are set by addn, or change what a request means to the server or a proxy, or what the connection does.
+// Accept-Encoding is addn's so that only a coding the transport decodes, and addn then inspects, is ever requested.
 var ownedHeaders = map[string]bool{
 	"Authorization": true, "Host": true, "Cookie": true, "Content-Length": true, "Transfer-Encoding": true,
 	"X-Http-Method-Override": true, "X-Method-Override": true, "X-Http-Method": true,
 	"Upgrade": true, "Connection": true, "Te": true, "Trailer": true, "Keep-Alive": true,
+	"Accept-Encoding": true,
 }
 
 // ParseHeaders reads "Name: value" strings into a header set, refusing the headers addn owns.
