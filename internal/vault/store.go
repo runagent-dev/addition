@@ -23,7 +23,10 @@ type OAuthClient struct {
 	UpdatedAt    time.Time
 }
 
-const AccountActive = "active"
+const (
+	AccountActive      = "active"
+	AccountNeedsReauth = "needs-reauth"
+)
 
 // Account is one connected identity, addressed by (Provider, Alias). Subject is the provider's
 // stable id for it; Identity is a display name, such as an email.

@@ -275,6 +275,7 @@ func TestConcurrentProcessesRefreshOnce(t *testing.T) {
 func TestAWaitingRefresherUsesWhatTheLockHolderCommitted(t *testing.T) {
 	f := newVaultFixture(t, expiringIn(-time.Minute))
 	ctx := context.Background()
+	waiter := f.manager(f.open())
 	holding, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
 		done <- f.store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
@@ -285,7 +286,6 @@ func TestAWaitingRefresherUsesWhatTheLockHolderCommitted(t *testing.T) {
 	}()
 	<-holding
 	got := make(chan string, 1)
-	waiter := f.manager(f.open())
 	go func() {
 		token, err := waiter.Access(ctx)
 		if err != nil {

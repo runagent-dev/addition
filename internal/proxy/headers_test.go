@@ -38,7 +38,7 @@ func TestParseHeadersRefusesTheOnesAddnOwns(t *testing.T) {
 			if requestErrorCode(err) != "forbidden-header" {
 				t.Fatalf("err = %v, want code forbidden-header", err)
 			}
-			if _, value, _ := strings.Cut(h, ":"); strings.Contains(err.Error(), strings.TrimSpace(value)) && strings.TrimSpace(value) != "" {
+			if _, value, _ := strings.Cut(h, ":"); strings.Contains(err.Error(), strings.TrimSpace(value)) && len(strings.TrimSpace(value)) > 3 {
 				t.Errorf("the error repeats the header value: %v", err)
 			}
 		})

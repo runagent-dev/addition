@@ -241,12 +241,14 @@ func (e *NetworkError) Unwrap() error { return e.err }
 
 const (
 	OpExchange = "token exchange"
+	OpRefresh  = "token refresh"
 	OpIdentity = "identity lookup"
 	OpRevoke   = "revoke"
 )
 
 var endpointNames = map[string]string{
 	OpExchange: "token endpoint",
+	OpRefresh:  "token endpoint",
 	OpIdentity: "identity endpoint",
 	OpRevoke:   "revoke endpoint",
 }

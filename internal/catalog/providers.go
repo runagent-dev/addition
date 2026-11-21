@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -54,11 +55,35 @@ type TokenResponseMapping struct {
 	ExpiresIn    string `yaml:"expires_in"`
 }
 
+// API describes where and how requests to a provider are made. AllowedHosts are the only hosts
+// an access token may be sent to; without them, only the host of BaseURL is.
 type API struct {
-	BaseURL    string     `yaml:"base_url"`
-	AuthHeader string     `yaml:"auth_header"`
-	AuthPrefix string     `yaml:"auth_prefix"`
-	RateLimit  *RateLimit `yaml:"rate_limit"`
+	BaseURL      string     `yaml:"base_url"`
+	AllowedHosts []string   `yaml:"allowed_hosts"`
+	AuthHeader   string     `yaml:"auth_header"`
+	AuthPrefix   string     `yaml:"auth_prefix"`
+	RateLimit    *RateLimit `yaml:"rate_limit"`
+}
+
+// Hosts lists the hosts, as HostKey spells them, that requests with this API's credentials may reach.
+func (a API) Hosts() []string {
+	if len(a.AllowedHosts) > 0 {
+		return a.AllowedHosts
+	}
+	base, err := url.Parse(a.BaseURL)
+	if err != nil || base.Host == "" {
+		return nil
+	}
+	return []string{HostKey(base)}
+}
+
+// HostKey is the lowercase host of u without a trailing dot, with its port unless it is the https default.
+func HostKey(u *url.URL) string {
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if port := u.Port(); port != "" && port != "443" {
+		return host + ":" + port
+	}
+	return host
 }
 
 type RateLimit struct {

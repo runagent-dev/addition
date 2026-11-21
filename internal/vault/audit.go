@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 )
 
 // ErrInvalidAuditEvent rejects an event before anything is written; it never echoes the bad value.
@@ -58,6 +60,27 @@ func (e RefreshEvent) auditEntry() (auditEntry, error) {
 		return auditEntry{}, fmt.Errorf("%w: unknown refresh outcome", ErrInvalidAuditEvent)
 	}
 	return accountEntry("refresh", e.AccountID, map[string]string{"outcome": string(e.Outcome)})
+}
+
+// CallMethods are the HTTP methods a CallEvent may record.
+var CallMethods = []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+
+// CallEvent is one finished API request. Status is the final HTTP status, or 0 when none arrived.
+// It never records the path, query, headers or body.
+type CallEvent struct {
+	AccountID int64
+	Method    string
+	Status    int
+}
+
+func (e CallEvent) auditEntry() (auditEntry, error) {
+	if !slices.Contains(CallMethods, e.Method) {
+		return auditEntry{}, fmt.Errorf("%w: unknown call method", ErrInvalidAuditEvent)
+	}
+	if e.Status != 0 && (e.Status < 100 || e.Status > 599) {
+		return auditEntry{}, fmt.Errorf("%w: call status out of range", ErrInvalidAuditEvent)
+	}
+	return accountEntry("call", e.AccountID, map[string]string{"method": e.Method, "status": strconv.Itoa(e.Status)})
 }
 
 // RevokeEvent must be written before the account is removed.

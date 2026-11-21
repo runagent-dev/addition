@@ -145,8 +145,12 @@ func TestProxyRequestFixtures(t *testing.T) {
 				t.Fatalf("Do = %v, %v; want status %d", resp, err, sc.Expected.Status)
 			}
 			got := up.seen()[0]
-			if want := sc.Expected.AuthPrefix + " tok"; got.header.Get(sc.Expected.AuthHeader) != want {
-				t.Errorf("%s = %q, want %q", sc.Expected.AuthHeader, got.header.Get(sc.Expected.AuthHeader), want)
+			header, prefix := p.API.AuthHeader, p.API.AuthPrefix
+			if sc.Expected.AuthHeader != "" {
+				header, prefix = sc.Expected.AuthHeader, sc.Expected.AuthPrefix
+			}
+			if want := prefix + " tok"; got.header.Get(header) != want {
+				t.Errorf("%s = %q, want %q", header, got.header.Get(header), want)
 			}
 			query, _ := url.ParseQuery(got.rawQuery)
 			for k, v := range sc.Expected.URLQueryParams {

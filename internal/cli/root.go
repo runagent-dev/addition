@@ -40,6 +40,9 @@ func execute(args []string, stdout, stderr io.Writer, d deps) int {
 	root.SetArgs(args)
 	root.SetOut(out)
 	root.SetErr(stderr)
+	if d.stdin != nil {
+		root.SetIn(d.stdin)
+	}
 
 	err := root.Execute()
 	if out.err != nil {
@@ -69,7 +72,7 @@ func newRoot(d deps) *cobra.Command {
 	root.SetHelpCommand(newHelpCmd(root))
 	root.AddCommand(
 		newVersionCmd(), newProvidersCmd(d), newToolsCmd(d), newInitCmd(d),
-		newClientCmd(d), newConnectCmd(d), newAccountsCmd(d), newAuthCmd(d),
+		newClientCmd(d), newConnectCmd(d), newAccountsCmd(d), newAuthCmd(d), newCallCmd(d),
 	)
 	return root
 }

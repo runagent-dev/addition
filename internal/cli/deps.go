@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"net/http"
 	"os/exec"
@@ -20,6 +21,9 @@ type deps struct {
 	httpClient      *http.Client
 	openBrowser     func(url string) (exited <-chan error)
 	loopbackTimeout time.Duration
+	// stdin replaces the process's standard input when set; sleep replaces waiting between retries.
+	stdin io.Reader
+	sleep func(ctx context.Context, d time.Duration) error
 }
 
 func productionDeps() deps {

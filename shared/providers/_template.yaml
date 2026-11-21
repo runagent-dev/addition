@@ -38,6 +38,7 @@ oauth2:
 
 api:
   base_url: ""
+  # allowed_hosts: ["api.example.com"]  # Optional: hosts the token may be sent to; default is base_url's host
   auth_header: "Authorization"
   auth_prefix: "Bearer"
   rate_limit:

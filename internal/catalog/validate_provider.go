@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"fmt"
+	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -84,8 +86,38 @@ func validateProvider(fields map[string]any) error {
 		api.nonEmptyString("base_url")
 		api.nonEmptyString("auth_header")
 		api.nonEmptyString("auth_prefix")
+		validateAllowedHosts(api)
 	}
 	return err
+}
+
+// hostEntryPattern is a lowercase host name with an optional port: no scheme, userinfo or path.
+var hostEntryPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$`)
+
+// validateAllowedHosts checks the optional api.allowed_hosts and that base_url points at a listed host.
+func validateAllowedHosts(api fieldChecker) {
+	raw, present := api.fields["allowed_hosts"]
+	if !present || raw == nil {
+		return
+	}
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 {
+		api.fail("allowed_hosts", "must be a non-empty list of host names")
+		return
+	}
+	var hosts []string
+	for _, entry := range list {
+		host, isString := entry.(string)
+		if !isString || !hostEntryPattern.MatchString(host) {
+			api.fail("allowed_hosts", "entries must be lowercase host names, with an optional port, got %#v", entry)
+			return
+		}
+		hosts = append(hosts, host)
+	}
+	base, err := url.Parse(fmt.Sprint(api.fields["base_url"]))
+	if err != nil || !slices.Contains(hosts, HostKey(base)) {
+		api.fail("base_url", "has a host that is not listed in api.allowed_hosts")
+	}
 }
 
 func validateOAuth2(o fieldChecker) {

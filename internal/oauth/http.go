@@ -39,18 +39,23 @@ const maxResponseBytes = 1 << 20
 
 // Exchange trades an authorization code for tokens at the provider's token endpoint.
 func Exchange(ctx context.Context, hc *http.Client, p *catalog.Provider, client Client, a Authorization, code string) (Tokens, error) {
-	cfg := p.OAuth2
 	form := url.Values{
 		"grant_type":   {"authorization_code"},
 		"code":         {code},
 		"redirect_uri": {a.RedirectURI},
 		"client_id":    {client.ID},
 	}
-	if cfg.ClientAuthMethod != "header" {
-		form.Set("client_secret", client.Secret)
-	}
 	if a.Verifier != "" {
 		form.Set("code_verifier", a.Verifier)
+	}
+	return tokenGrant(ctx, hc, p, client, form, OpExchange)
+}
+
+// tokenGrant posts form to the provider's token endpoint with the client's credentials and parses the tokens.
+func tokenGrant(ctx context.Context, hc *http.Client, p *catalog.Provider, client Client, form url.Values, op string) (Tokens, error) {
+	cfg := p.OAuth2
+	if cfg.ClientAuthMethod != "header" {
+		form.Set("client_secret", client.Secret)
 	}
 	for k, v := range cfg.TokenParams {
 		form.Set(k, v)
@@ -67,15 +72,26 @@ func Exchange(ctx context.Context, hc *http.Client, p *catalog.Provider, client 
 	adapter := adapterFor(p.ID)
 	adapter.beforeTokenExchange(req)
 
-	status, body, err := send(hc, req, OpExchange)
+	status, body, err := send(hc, req, op)
 	if err != nil {
 		return Tokens{}, err
 	}
 	parsed := parseBody(body, cfg.TokenResponseFormat)
 	if !isSuccess(status) || adapter.isErrorBody(parsed) {
-		return Tokens{}, &ProviderError{Op: OpExchange, Status: status, Code: allowlisted(adapter.errorCode(parsed))}
+		return Tokens{}, &ProviderError{Op: op, Status: status, Code: allowlisted(adapter.errorCode(parsed))}
 	}
-	return extractTokens(cfg, parsed, status)
+	return extractTokens(op, cfg, parsed, status)
+}
+
+// Refresh trades a refresh token for a new access token. The result's RefreshToken is empty
+// unless the provider rotated it.
+func Refresh(ctx context.Context, hc *http.Client, p *catalog.Provider, client Client, refreshToken string) (Tokens, error) {
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {client.ID},
+	}
+	return tokenGrant(ctx, hc, p, client, form, OpRefresh)
 }
 
 // send runs one back-channel request on hc's transport, bypassing the client so no redirect is
@@ -152,13 +168,13 @@ func parseBody(body []byte, format string) map[string]any {
 	return out
 }
 
-func extractTokens(cfg *catalog.OAuth2, body map[string]any, status int) (Tokens, error) {
+func extractTokens(op string, cfg *catalog.OAuth2, body map[string]any, status int) (Tokens, error) {
 	paths := catalog.TokenResponseMapping{AccessToken: "access_token", RefreshToken: "refresh_token", ExpiresIn: "expires_in"}
 	if m := cfg.TokenResponseMapping; m != nil {
 		paths = *m
 	}
 	malformed := func(problem string) error {
-		return &ProviderError{Op: OpExchange, Status: status, Problem: problem}
+		return &ProviderError{Op: op, Status: status, Problem: problem}
 	}
 	access, _ := lookup(body, paths.AccessToken).(string)
 	if access == "" {
