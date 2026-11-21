@@ -177,7 +177,7 @@ func newToolbox(t *testing.T, names ...string) toolbox {
 	for _, name := range names {
 		src, err := exec.LookPath(name)
 		if err != nil {
-			t.Fatalf("test needs %s on PATH: %v", name, err)
+			t.Skipf("test needs %s on PATH: %v", name, err)
 		}
 		if err := os.Symlink(src, filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)

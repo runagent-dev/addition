@@ -1,0 +1,60 @@
+version: 2
+
+project_name: addition
+
+builds:
+  - id: addition
+    main: ./cmd/addition
+    binary: addition
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/runagent-dev/addition/internal/cli.Version={{ .Version }}
+      - -X github.com/runagent-dev/addition/internal/cli.Commit={{ .FullCommit }}
+      - -X github.com/runagent-dev/addition/internal/cli.Date={{ .Date }}
+
+# Version-less names keep releases/latest/download/<asset> stable for install.sh.
+archives:
+  - id: addition
+    ids: [addition]
+    name_template: "addition_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  github:
+    owner: runagent-dev
+    name: addition
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: Other changes
+      order: 2
+  filters:
+    exclude:
+      - '^(docs|chore|test|ci|build|style)(\(.+\))?!?:'
+      - '^Merge '

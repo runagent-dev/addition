@@ -366,9 +366,13 @@ can use the same day.
 | M3 | Connect | `addition client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, re-consent for the union of stored and default scopes (persist the scopes actually granted), `addition connect / accounts / auth check` (local status only) | accounts connected |
 | **M4** | **Raw call** | `addition call` (§2.5): host allow-list, token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming, `call` audit event; `auth check --live` | **✅ agents can hit any Google API** |
 | **M4b** | **Apps are separate connections** | each app its own provider, scopes, hosts and account (`gmail`, `google-drive`, `google-calendar`, new `google-chat` and `google-docs`); `connect <app>`, no `--services`; `call <app>` (app required, no `--provider`); `accounts check` (`auth check` kept as a hidden alias) with `scopes_ready` / `missing_scopes`; one OAuth client per identity root; `legacy-account` for pre-M4b rows; `api.allowed_path_prefixes` keeps an app's token off other apps' routes on a shared host; `oauth2.revoke_scope` and `accounts remove --revoke [--and-siblings]` for Google's grant-wide revocation | ✅ one "Connect" card per app |
+| M4c | Doctor | `addition doctor`: one JSON report on the vault, master-key source, accounts and `PATH`, so an agent can diagnose a broken install | ✅ |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
-| M7 | Agent surface + release | `addition skill install` (SKILL.md for Claude Code / Codex / generic), `addition tools --json` schemas, goreleaser binaries (linux/mac/windows, amd64/arm64), install script, README | ✅ **v0.1.0** |
+| M7a | Release pipeline + installer | `addition version` build metadata, GoReleaser binaries (linux/mac/windows, amd64/arm64) with version-less archive names and `checksums.txt`, GitHub artifact attestation, `release.yml` on `v*` tags, a snapshot build in CI, `install.sh`, README install section. Built ahead of M5–M6 so every later milestone can be tried from a release | ✅ installable binaries |
+| M7b | Self-update | `addition update` (explicit only, checksum-verified, atomic replace, same release assets as the installer) | ✅ |
+| M7c | Package-manager shims | npm `@addition/cli`, PyPI `addition`, Homebrew `addition`; each ships or fetches the released binary and verifies its checksum | ✅ |
+| M7d | Agent surface | `addition guide`, `addition skill install` (SKILL.md for Claude Code / Codex / generic), `llms.txt`, per-app recipes, `addition tools --json` schemas | ✅ **v0.1.0** |
 
 **M1–M4 test focus (port, don't reinvent):**
 - `crypto_interop.yaml`, `token_refresh.yaml`, `proxy_requests.yaml` and
@@ -404,8 +408,8 @@ API-key providers, OpenAPI import.
   hand-written YAML. Curated YAML stays as the high-quality layer on top.
 - Community provider registry: a directory of YAML files in the repo and PRs to
   add more. No hosted registry.
-- **Wrappers:** `pip install addition` / `npm i @runagent/addition` ship the
-  binary and expose `run(provider, tool, params) -> dict` over the JSON contract.
+- **Wrappers:** the `pip install addition` / `npm i @addition/cli` shims from M7c gain
+  language bindings that expose `run(provider, tool, params) -> dict` over the JSON contract.
 
 ### Phase 4 — "All my machines" → `v0.4.0`
 
@@ -453,3 +457,15 @@ plus `effect:` tags on tools (used from Phase 2, cheap to add now).
    (every token the user got through that client), so `accounts remove --revoke` refuses while sibling accounts of the
    same identity exist (`oauth2.revoke_scope: grant` in the provider data) unless `--and-siblings` is given. Microsoft Teams is the planned example of a second identity root (own client, own apps).
    `addition call` names its app first, and `addition auth check` became `addition accounts check`.
+9. **License (2026-11-21):** Apache-2.0, with a NOTICE file; both ship in every release archive.
+10. **Package names (checked 2026-11-21):** `addition` is free on PyPI and Homebrew (formula and cask). On npm the unscoped
+    `addition` is taken, so the package is `@addition/cli` (the `@addition` scope still has to be claimed); crates.io
+    `addition` is taken too, so there is no crate.
+11. **Release integrity (M7a):** one sha256 `checksums.txt` per release plus a GitHub artifact attestation
+    (`gh attestation verify`) for every archive and the checksums file. No cosign: it adds a key or identity policy
+    to manage for no gain over GitHub's own attestation. The installer verifies the checksum on every run.
+12. **Install script:** non-interactive, no `sudo`, installs one file to `~/.local/bin` by default, and never edits shell
+    rc files; when the directory is not on `PATH` it prints the line to add. Archive names carry no version, so
+    `releases/latest/download/<asset>` is a stable URL. Windows users take the `.zip` for now.
+13. **No automatic update checks (M7b):** `addition update` runs only when asked. The binary never contacts the network on
+    its own account, in line with "no phoning home".
