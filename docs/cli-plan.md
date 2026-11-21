@@ -70,14 +70,14 @@ From the market research (Nov 2026):
             ┌────────────── addition (Go binary) ──────────────┐
  agent ──▶  │ CLI layer (cobra)  ── commands generated from    │
  shell      │                       embedded toolkit YAML      │
-            │        │                                        │
+            │        │                                         │
             │ Tool engine: validate → interpolate → transform  │
-            │        │                                        │
+            │        │                                         │
             │ Proxy: inject token · 401→refresh→retry once ·   │
             │        429 Retry-After · binary streaming        │
-            │        │                                        │
+            │        │                                         │
             │ Token manager ◀──▶ OAuth engine (loopback+PKCE)  │
-            │        │                                        │
+            │        │                                         │
             │ Vault: SQLite (addition.db) · AES-256-GCM blobs  │
             │        master key ← OS keychain | key file | env │
             └──────────────────────────────────────────────────┘
