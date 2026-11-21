@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"regexp"
 	"slices"
 	"time"
 
@@ -31,14 +29,10 @@ const (
 
 const defaultProbeTimeout = 15 * time.Second
 
-// probeTimeout bounds one probe, refresh and error body included.
+// probeTimeout bounds one probe request and its error body. A token refresh the probe starts is not
+// cut short (CLAUDE.md §6.6: once the exchange starts, it and its commit finish), so a probe may take
+// up to probeTimeout plus the token endpoint's own timeout.
 var probeTimeout = defaultProbeTimeout
-
-// activationHosts are the only hosts a provider's activation link may name before its project id is used.
-var activationHosts = []string{"console.developers.google.com", "console.cloud.google.com"}
-
-// projectPattern matches a Cloud project id or number, so nothing else a provider says is repeated.
-var projectPattern = regexp.MustCompile(`^(?:[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{4,20})$`)
 
 // liveChecks probes each healthy account's app once; the rest are skipped.
 func (a *accountSession) liveChecks(cmd *cobra.Command, d deps, accts checkedAccounts) ([]doctorCheck, error) {
@@ -71,6 +65,7 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	if err != nil {
 		return doctorCheck{}, callRequestError(err)
 	}
+	held := a.heldValues(ctx, acct, provider)
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
 	token, err := tokens.Access(ctx)
 	if err != nil {
@@ -87,29 +82,48 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, http.MethodGet, resp.Status)
-	return probeVerdict(acct, provider.API, resp, a.storedSecrets(ctx, acct, provider)), nil
+	return probeVerdict(acct, provider.API, resp, held.and(a.heldValues(ctx, acct, provider))), nil
 }
 
-// storedSecrets are the refresh token and OAuth client secret a response must never repeat.
-func (a *accountSession) storedSecrets(ctx context.Context, acct vault.Account, provider *catalog.Provider) []string {
-	var secrets []string
-	if cred, found, err := a.credential(ctx, acct); err == nil && found && cred.RefreshToken != "" {
-		secrets = append(secrets, cred.RefreshToken)
-	}
-	if client, err := a.store.GetOAuthClient(ctx, provider.IdentityRoot); err == nil && client.ClientSecret != "" {
-		secrets = append(secrets, client.ClientSecret)
-	}
-	return secrets
+// heldValues are what a probe's response must never repeat: the stored refresh token and OAuth client
+// secret. They are read before the probe and again after it, so a token the probe rotated away is kept too.
+type heldValues struct {
+	secrets  []string
+	clientID string
 }
 
-func probeVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, secrets []string) doctorCheck {
+func (h heldValues) and(later heldValues) heldValues {
+	h.secrets = append(h.secrets, later.secrets...)
+	if later.clientID != "" {
+		h.clientID = later.clientID
+	}
+	return h
+}
+
+func (a *accountSession) heldValues(ctx context.Context, acct vault.Account, provider *catalog.Provider) heldValues {
+	var held heldValues
+	if cred, found, err := a.credential(ctx, acct); err == nil && found {
+		held.secrets = append(held.secrets, nonEmpty(cred.RefreshToken, cred.AccessToken)...)
+	}
+	if client, err := a.store.GetOAuthClient(ctx, provider.IdentityRoot); err == nil {
+		held.secrets = append(held.secrets, nonEmpty(client.ClientSecret)...)
+		held.clientID = client.ClientID
+	}
+	return held
+}
+
+func nonEmpty(values ...string) []string {
+	return slices.DeleteFunc(slices.Clone(values), func(v string) bool { return v == "" })
+}
+
+func probeVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, held heldValues) doctorCheck {
 	switch {
 	case resp.Status >= 200 && resp.Status <= 299:
 		return doctorCheck{Status: checkOK, Code: checkOK, Summary: fmt.Sprintf("the API accepted the account's token (HTTP %d)", resp.Status)}
 	case resp.Status == http.StatusUnauthorized:
 		return probeNeedsReauth(acct, "the API rejected the account's token (HTTP 401)")
 	case resp.Status == http.StatusForbidden:
-		return forbiddenVerdict(acct, api, resp, secrets)
+		return forbiddenVerdict(acct, api, resp, held)
 	}
 	return unavailableVerdict(fmt.Sprintf("the API answered HTTP %d, so the account could not be checked", resp.Status))
 }
@@ -122,56 +136,50 @@ func unavailableVerdict(summary string) doctorCheck {
 	return doctorCheck{Status: checkWarn, Code: probeUnavailable, Summary: summary}
 }
 
-func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, secrets []string) doctorCheck {
-	disabled, project, err := readServiceDisabled(resp, secrets)
+func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, held heldValues) doctorCheck {
+	disabled, err := serviceDisabled(resp, held.secrets)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return unavailableVerdict("the API did not finish answering in time, so the account could not be checked")
 	}
 	if disabled && api.Service != "" {
 		return doctorCheck{
-			Status: checkFail, Code: probeAPIDisabled, Fix: "enable " + api.Service + " in the Cloud project", Hint: activationURL(api.Service, project),
+			Status: checkFail, Code: probeAPIDisabled, Fix: "enable " + api.Service + " in the Cloud project", Hint: activationURL(api.Service, held.clientID),
 			Summary: "the " + api.Service + " API is not enabled in the OAuth client's Cloud project",
 		}
 	}
 	return doctorCheck{Status: checkFail, Code: probeForbidden, Fix: reconnectFix(acct), Summary: "the API refused the account (HTTP 403)"}
 }
 
+type errorDetail struct {
+	Reason string `json:"reason"`
+}
+
 type errorDetails struct {
 	Error struct {
-		Details []struct {
-			Reason   string `json:"reason"`
-			Metadata struct {
-				ActivationURL string `json:"activationUrl"`
-			} `json:"metadata"`
-		} `json:"details"`
+		Details []errorDetail `json:"details"`
 	} `json:"error"`
 }
 
-// readServiceDisabled takes from a Google error only whether its reason is SERVICE_DISABLED and a
-// project id of the expected shape from its activation link; nothing else is repeated. The body is
-// withheld, as if it had no such reason, when it repeats a token or secret in any form, raw or JSON-escaped.
-// A non-nil err means the body could not be read; it is context.DeadlineExceeded when the probe ran out of time.
-func readServiceDisabled(resp *proxy.Response, secrets []string) (disabled bool, project string, err error) {
+// serviceDisabled reports only whether a Google error's reason is SERVICE_DISABLED; no other value of
+// the body is used or printed. The body is withheld, as if it had no such reason, when it repeats a
+// token or secret in any form, raw or JSON-escaped. A non-nil err means the body could not be read;
+// it is context.DeadlineExceeded when the probe ran out of time.
+func serviceDisabled(resp *proxy.Response, secrets []string) (bool, error) {
 	if hasContentCoding(resp.Header) {
-		return false, "", nil
+		return false, nil
 	}
 	guard := proxy.NewEchoGuard(append(slices.Clone(resp.Tokens), secrets...))
 	inspected := io.LimitReader(resp.Body, maxProbeErrorBody+int64(guard.Lookahead()))
 	data, err := io.ReadAll(io.LimitReader(guard.Reader(inspected), maxProbeErrorBody))
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
 	var generic any
 	var body errorDetails
 	if json.Unmarshal(data, &generic) != nil || json.Unmarshal(data, &body) != nil || decodedLeaks(generic, guard) {
-		return false, "", nil
+		return false, nil
 	}
-	for _, detail := range body.Error.Details {
-		if detail.Reason == reasonServiceDisabled {
-			return true, projectOf(detail.Metadata.ActivationURL), nil
-		}
-	}
-	return false, "", nil
+	return slices.ContainsFunc(body.Error.Details, func(detail errorDetail) bool { return detail.Reason == reasonServiceDisabled }), nil
 }
 
 // decodedLeaks reports whether any decoded key or string of a JSON value repeats a guarded secret.
@@ -189,18 +197,6 @@ func decodedLeaks(v any, guard *proxy.EchoGuard) bool {
 		}
 	}
 	return false
-}
-
-// projectOf returns the project of a Google console link, or "" when the link or the id is not what Google sends.
-func projectOf(rawLink string) string {
-	link, err := url.Parse(rawLink)
-	if err != nil || link.Scheme != "https" || link.User != nil || link.Port() != "" || !slices.Contains(activationHosts, link.Hostname()) {
-		return ""
-	}
-	if project := link.Query().Get("project"); projectPattern.MatchString(project) {
-		return project
-	}
-	return ""
 }
 
 // probeFailure classifies a failure before or while sending the probe; only addition's own errors and codes leave.

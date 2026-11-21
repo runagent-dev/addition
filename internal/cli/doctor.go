@@ -1,10 +1,11 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -66,7 +67,8 @@ func newDoctorCmd(d deps) *cobra.Command {
 			"all is well). Without --live it reads the vault only and makes no network request.\n\n" +
 			"With --live, each connected app also gets one cheap authenticated GET through the same path as\n" +
 			"`addition call`, so a disabled API or a revoked grant shows up as live:<app>:<alias>. A refresh\n" +
-			"and the probe are recorded like any other call.\n\n" +
+			"and the probe are recorded like any other call. A probe takes up to 15 s per request, plus at most the\n" +
+			"token endpoint's own timeout when it has to refresh a token.\n\n" +
 			"Exit codes: 0 when ok; 3 when something needs you to act (the report is still on stdout);\n" +
 			"1 when addition itself failed.",
 		Args: cobra.NoArgs,
@@ -76,6 +78,8 @@ func newDoctorCmd(d deps) *cobra.Command {
 	return cmd
 }
 
+// runDoctor reports a snapshot: everything it says about the vault comes from one read transaction,
+// taken before any check is computed. With --live the probes run afterwards, against the live vault.
 func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	ctx := cmd.Context()
 	cat, err := d.loadCatalog()
@@ -89,33 +93,35 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	}
 	store, err := vault.OpenWith(ctx, d.env, vault.OpenOptions{ReadOnly: true})
 	if err != nil {
-		failed, ok := openFailureChecks(err)
+		failed, ok := openFailureChecks(cat, err)
 		if !ok {
 			return vaultError(err)
 		}
 		rep.Checks = append(rep.Checks, failed...)
 		return finishDoctor(cmd, rep)
 	}
-	defer store.Close()
+	source := store.KeySource()
+	snap, err := store.Snapshot(ctx)
+	_ = store.Close()
+	if err != nil {
+		return vaultError(err)
+	}
 
-	session := &accountSession{catalog: cat, store: store}
+	session := &accountSession{catalog: cat}
+	clientIDs := map[string]string{}
+	for _, c := range snap.Clients {
+		clientIDs[c.Provider] = c.ClientID
+	}
+	accounts := session.accountChecks(snap, d.now())
 	rep.Checks = append(rep.Checks,
 		doctorCheck{ID: "vault", Status: checkOK, Summary: fmt.Sprintf("the vault is initialised (schema %d)", vault.SchemaVersion)},
-		doctorCheck{ID: "master-key", Status: checkOK, Summary: fmt.Sprintf("the master key unlocks the vault (recorded source: %s)", store.KeySource())},
+		doctorCheck{ID: "master-key", Status: checkOK, Summary: fmt.Sprintf("the master key unlocks the vault (recorded source: %s)", source)},
 	)
-	clients, err := session.clientChecks(ctx)
-	if err != nil {
-		return err
-	}
-	accounts, err := session.accountChecks(ctx, d.now())
-	if err != nil {
-		return err
-	}
-	rep.Checks = append(rep.Checks, clients...)
+	rep.Checks = append(rep.Checks, session.clientChecks(clientIDs)...)
 	rep.Checks = append(rep.Checks, accounts.checks...)
-	rep.Checks = append(rep.Checks, session.cloudSetupChecks(accounts.all)...)
+	rep.Checks = append(rep.Checks, session.cloudSetupChecks(accounts.all, clientIDs)...)
 	if live {
-		probes, err := liveProbes(cmd, d, cat, store, accounts)
+		probes, err := liveProbes(cmd, d, cat, accounts)
 		if err != nil {
 			return err
 		}
@@ -126,8 +132,7 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 
 // liveProbes reopens the vault for writing, since a probe may refresh a token and is audited, and
 // leaves everything else in the data dir as it is.
-func liveProbes(cmd *cobra.Command, d deps, cat *catalog.Catalog, inspected *vault.Store, accts checkedAccounts) ([]doctorCheck, error) {
-	_ = inspected.Close()
+func liveProbes(cmd *cobra.Command, d deps, cat *catalog.Catalog, accts checkedAccounts) ([]doctorCheck, error) {
 	store, err := vault.OpenWith(cmd.Context(), d.env, vault.OpenOptions{KeepKeyTemps: true})
 	if err != nil {
 		return nil, vaultError(err)
@@ -162,61 +167,82 @@ func finishDoctor(cmd *cobra.Command, rep doctorReport) error {
 }
 
 // openFailureChecks explains why the vault could not be opened; ok is false for a failure of addition itself.
-func openFailureChecks(err error) (checks []doctorCheck, ok bool) {
+func openFailureChecks(cat *catalog.Catalog, err error) (checks []doctorCheck, ok bool) {
 	for _, f := range openFailures {
 		if !errors.Is(err, f.err) {
 			continue
 		}
 		failed := doctorCheck{ID: f.check, Status: checkFail, Summary: f.summary, Fix: f.fix}
-		if f.err == vault.ErrSchemaOlder {
+		if f.warn {
 			failed.Status, failed.actionable = checkWarn, true
 		}
-		if f.check == "vault" {
-			return []doctorCheck{failed, {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}, true
+		if f.check != "vault" {
+			return []doctorCheck{{ID: "vault", Status: checkOK, Summary: "the vault database is there"}, failed}, true
 		}
-		return []doctorCheck{{ID: "vault", Status: checkOK, Summary: "the vault database is there"}, failed}, true
+		checks = []doctorCheck{failed, {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}
+		if errors.Is(err, vault.ErrInUse) {
+			checks = append(checks, skippedDataChecks(cat)...)
+		}
+		return checks, true
 	}
 	return nil, false
 }
+
+// skippedDataChecks stand in for the client and account checks of a vault that was not read.
+func skippedDataChecks(cat *catalog.Catalog) []doctorCheck {
+	var checks []doctorCheck
+	for _, id := range clientRoots(cat) {
+		checks = append(checks, doctorCheck{ID: "oauth-client:" + id, Status: checkSkip, Summary: "not checked: the vault was not read"})
+	}
+	return append(checks, doctorCheck{ID: "accounts", Status: checkSkip, Summary: "not checked: the vault was not read"})
+}
+
+const fixInUse = "addition accounts list"
 
 var openFailures = []struct {
 	err            error
 	check, summary string
 	fix            string
+	warn           bool
 }{
-	{vault.ErrNotInitialized, "vault", "there is no vault in the data dir yet", fixInitVault},
-	{vault.ErrCorrupt, "vault", "the vault database is corrupt or only partly initialised", "restore the vault from a backup, or move it aside and run `addition init`"},
-	{vault.ErrSchemaTooNew, "vault", "the vault was written by a newer version of addition", "upgrade addition"},
-	{vault.ErrSchemaOlder, "vault", "the vault schema is older than this addition; any command that opens it for writing upgrades it", "addition accounts list"},
-	{vault.ErrInsecureHome, "vault", "the data dir is not private to this user", "make the data dir accessible to your user only (chmod 700)"},
-	{vault.ErrNoMasterKey, "master-key", "the master key is not available from its recorded source", "restore the master key (OS keychain entry, key file or ADDITION_MASTER_KEY)"},
-	{vault.ErrWrongMasterKey, "master-key", "the master key does not match this vault", "set ADDITION_MASTER_KEY to the key this vault was created with"},
-	{crypto.ErrInvalidKey, "master-key", "ADDITION_MASTER_KEY is not a valid key", "fix or unset ADDITION_MASTER_KEY"},
-	{vault.ErrKeychainUnavailable, "master-key", "the OS keychain is unavailable", "unlock the OS keychain, or set ADDITION_MASTER_KEY to the vault's key"},
-	{vault.ErrInsecureKeyFile, "master-key", "the key file is not a private regular file", "make the key file a regular file readable only by you (chmod 600)"},
-	{vault.ErrKeyFileUnsupported, "master-key", "key files are not supported on Windows", "set ADDITION_MASTER_KEY to the vault's key"},
+	{vault.ErrNotInitialized, "vault", "there is no vault in the data dir yet", fixInitVault, false},
+	{vault.ErrInUse, "vault", "the vault is in use or was not closed cleanly; run `addition accounts list` once, then run doctor again", fixInUse, true},
+	{vault.ErrCorrupt, "vault", "the vault database is corrupt or only partly initialised", "restore the vault from a backup, or move it aside and run `addition init`", false},
+	{vault.ErrSchemaTooNew, "vault", "the vault was written by a newer version of addition", "upgrade addition", false},
+	{vault.ErrSchemaOlder, "vault", "the vault schema is older than this addition; any command that opens it for writing upgrades it", fixInUse, true},
+	{vault.ErrInsecureHome, "vault", "the data dir is not private to this user", "make the data dir accessible to your user only (chmod 700)", false},
+	{vault.ErrNoMasterKey, "master-key", "the master key is not available from its recorded source", "restore the master key (OS keychain entry, key file or ADDITION_MASTER_KEY)", false},
+	{vault.ErrWrongMasterKey, "master-key", "the master key does not match this vault", "set ADDITION_MASTER_KEY to the key this vault was created with", false},
+	{crypto.ErrInvalidKey, "master-key", "ADDITION_MASTER_KEY is not a valid key", "fix or unset ADDITION_MASTER_KEY", false},
+	{vault.ErrKeychainUnavailable, "master-key", "the OS keychain is unavailable", "unlock the OS keychain, or set ADDITION_MASTER_KEY to the vault's key", false},
+	{vault.ErrInsecureKeyFile, "master-key", "the key file is not a private regular file", "make the key file a regular file readable only by you (chmod 600)", false},
+	{vault.ErrKeyFileUnsupported, "master-key", "key files are not supported on Windows", "set ADDITION_MASTER_KEY to the vault's key", false},
 }
 
-func (a *accountSession) clientChecks(ctx context.Context) ([]doctorCheck, error) {
-	stored, err := a.store.ListOAuthClients(ctx)
-	if err != nil {
-		return nil, vaultError(err)
-	}
-	var checks []doctorCheck
-	for _, p := range a.catalog.Providers() {
-		if p.IdentityRoot != p.ID || p.Doctor.ClientHint == "" || len(a.catalog.Apps(p.ID)) == 0 {
-			continue
+// clientRoots are the identity roots whose OAuth client doctor checks: those that say how to set one up.
+func clientRoots(cat *catalog.Catalog) []string {
+	var roots []string
+	for _, p := range cat.Providers() {
+		if p.IdentityRoot == p.ID && p.Doctor.ClientHint != "" && len(cat.Apps(p.ID)) > 0 {
+			roots = append(roots, p.ID)
 		}
-		check := doctorCheck{ID: "oauth-client:" + p.ID, Status: checkOK, Summary: "an OAuth client is stored for " + p.ID + " apps"}
-		if !slices.ContainsFunc(stored, func(c vault.OAuthClient) bool { return c.Provider == p.ID }) {
+	}
+	return roots
+}
+
+func (a *accountSession) clientChecks(clientIDs map[string]string) []doctorCheck {
+	var checks []doctorCheck
+	for _, id := range clientRoots(a.catalog) {
+		check := doctorCheck{ID: "oauth-client:" + id, Status: checkOK, Summary: "an OAuth client is stored for " + id + " apps"}
+		if _, stored := clientIDs[id]; !stored {
 			check = doctorCheck{
-				ID: check.ID, Status: checkWarn, actionable: true, Summary: "no OAuth client is stored for " + p.ID + " apps",
-				Fix: "addition client add " + p.ID + " --file client_secret.json", Hint: p.Doctor.ClientHint,
+				ID: check.ID, Status: checkWarn, actionable: true, Summary: "no OAuth client is stored for " + id + " apps",
+				Fix: "addition client add " + id + " --file client_secret.json", Hint: a.provider(id).Doctor.ClientHint,
 			}
 		}
 		checks = append(checks, check)
 	}
-	return checks, nil
+	return checks
 }
 
 // checkedAccounts are the account checks plus the accounts that passed them, which are safe to probe.
@@ -226,17 +252,11 @@ type checkedAccounts struct {
 	healthy []vault.Account
 }
 
-func (a *accountSession) accountChecks(ctx context.Context, now time.Time) (checkedAccounts, error) {
-	var out checkedAccounts
-	var err error
-	if out.all, err = a.store.ListAccounts(ctx, ""); err != nil {
-		return out, vaultError(err)
-	}
-	for _, acct := range out.all {
-		check, err := a.accountCheck(ctx, acct)
-		if err != nil {
-			return out, err
-		}
+func (a *accountSession) accountChecks(snap vault.Snapshot, now time.Time) checkedAccounts {
+	out := checkedAccounts{all: snap.Accounts}
+	for _, acct := range snap.Accounts {
+		cred, found := snap.Credentials[acct.ID]
+		check := a.accountCheck(acct, cred, found)
 		out.checks = append(out.checks, check)
 		if check.Code != checkOK {
 			continue
@@ -246,7 +266,7 @@ func (a *accountSession) accountChecks(ctx context.Context, now time.Time) (chec
 			out.checks = append(out.checks, age)
 		}
 	}
-	return out, nil
+	return out
 }
 
 func reconnectFix(acct vault.Account) string {
@@ -254,21 +274,17 @@ func reconnectFix(acct vault.Account) string {
 }
 
 // accountCheck is the offline verdict of `accounts check` on one account, with the fix for what is wrong.
-func (a *accountSession) accountCheck(ctx context.Context, acct vault.Account) (doctorCheck, error) {
+func (a *accountSession) accountCheck(acct vault.Account, cred vault.Credential, found bool) doctorCheck {
 	check := doctorCheck{ID: "account:" + acct.Provider + ":" + acct.Alias, Status: checkFail, Fix: reconnectFix(acct)}
 	status := a.statusOf(acct)
 	if status == statusLegacy {
 		check.Code, check.Summary = codeLegacy, legacyAccountError(a.catalog, acct).Message
 		check.Fix = fmt.Sprintf("addition accounts remove %s:%s", acct.Provider, acct.Alias)
-		return check, nil
+		return check
 	}
 	if status != vault.AccountActive {
 		check.Code, check.Summary = codeNeedsReauth, "the provider refused this account's tokens; it must be reconnected"
-		return check, nil
-	}
-	cred, found, err := a.credential(ctx, acct)
-	if err != nil {
-		return check, err
+		return check
 	}
 	switch _, missing := readiness(a.catalog, acct); {
 	case !found:
@@ -280,7 +296,7 @@ func (a *accountSession) accountCheck(ctx context.Context, acct vault.Account) (
 	default:
 		check.Status, check.Code, check.Summary, check.Fix = checkOK, checkOK, "tokens and scopes are in place", ""
 	}
-	return check, nil
+	return check
 }
 
 // tokenAgeCheck warns when a connection is old enough that the provider may have expired its refresh token.
@@ -301,17 +317,29 @@ func (a *accountSession) tokenAgeCheck(acct vault.Account, now time.Time) (docto
 
 const activationBase = "https://console.developers.google.com/apis/api/"
 
+var projectNumberPattern = regexp.MustCompile(`^[0-9]{6,20}$`)
+
+// projectNumber is the Cloud project number a Google OAuth client id starts with, or "" for any other shape.
+func projectNumber(clientID string) string {
+	number, _, dashed := strings.Cut(clientID, "-")
+	if dashed && projectNumberPattern.MatchString(number) {
+		return number
+	}
+	return ""
+}
+
 // activationURL is where the user enables service; the project is left out when it is not known.
-func activationURL(service, project string) string {
+// Nothing a provider sent goes into it: only the catalog's service and the stored client id.
+func activationURL(service, clientID string) string {
 	link := activationBase + service + "/overview"
-	if project != "" {
+	if project := projectNumber(clientID); project != "" {
 		link += "?project=" + project
 	}
 	return link
 }
 
 // cloudSetupChecks lists, once per connected app, the cloud API its account needs enabled.
-func (a *accountSession) cloudSetupChecks(accts []vault.Account) []doctorCheck {
+func (a *accountSession) cloudSetupChecks(accts []vault.Account, clientIDs map[string]string) []doctorCheck {
 	var apps []string
 	for _, acct := range accts {
 		if p, ok := a.catalog.Provider(acct.Provider); ok && a.catalog.Connectable(p.ID) && p.API.Service != "" && !slices.Contains(apps, p.ID) {
@@ -321,10 +349,10 @@ func (a *accountSession) cloudSetupChecks(accts []vault.Account) []doctorCheck {
 	slices.Sort(apps)
 	var checks []doctorCheck
 	for _, id := range apps {
-		service := a.provider(id).API.Service
+		p := a.provider(id)
 		checks = append(checks, doctorCheck{
-			ID: "cloud-setup:" + id, Status: checkWarn, Summary: service + " must be enabled in the OAuth client's Cloud project",
-			Hint: "Enable the " + service + " API in the Cloud project that owns your OAuth client: " + activationURL(service, ""),
+			ID: "cloud-setup:" + id, Status: checkWarn, Summary: p.API.Service + " must be enabled in the OAuth client's Cloud project",
+			Hint: "Enable the " + p.API.Service + " API in the Cloud project that owns your OAuth client: " + activationURL(p.API.Service, clientIDs[p.IdentityRoot]),
 		})
 	}
 	return checks

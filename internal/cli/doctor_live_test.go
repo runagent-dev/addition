@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -168,10 +167,8 @@ func TestDoctorLiveActivationLinkOmitsAProjectItCannotDerive(t *testing.T) {
 
 func TestDoctorLiveHintIsTheSameWhateverTheProviderSays(t *testing.T) {
 	const link = "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview"
-	encoded := url.QueryEscape(lookalikeAccess)
 	bodies := map[string]string{
 		"percent-encoded secret":  link + "?project=%74%6f%6b%65%6e%6c%69%6b%65%2d%61%63%63%65%73%73%2d0123456789",
-		"query-escaped secret":    link + "?project=" + encoded,
 		"secret prefix":           link + "?project=" + lookalikeAccess[:12],
 		"secret interior":         link + "?project=" + lookalikeAccess[5:20],
 		"secret suffix":           link + "?project=" + lookalikeAccess[10:],

@@ -6,9 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -94,18 +92,14 @@ func openDB(ctx context.Context, home string) (*sql.DB, error) {
 	return db, nil
 }
 
-// readOnlyDSN opens the existing database without creating or changing any file. With no WAL file
-// there is nothing uncommitted to read, so SQLite is told the file is immutable and takes no locks and
-// creates no WAL or shared-memory file; with one, a read-only connection reads it as is.
+// readOnlyDSN opens the existing database as an immutable file: SQLite takes no locks and creates no
+// WAL or shared-memory file. Callers must first have made sure no side file exists (requireNoSideFiles).
 func readOnlyDSN(home string) string {
 	path := filepath.ToSlash(filepath.Join(home, dbFile))
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	params := url.Values{"mode": {"ro"}, "_busy_timeout": {strconv.FormatInt(busyTimeout.Milliseconds(), 10)}}
-	if _, err := os.Stat(filepath.Join(home, dbFile+"-wal")); errors.Is(err, fs.ErrNotExist) {
-		params.Set("immutable", "1")
-	}
+	params := url.Values{"mode": {"ro"}, "immutable": {"1"}}
 	return (&url.URL{Scheme: "file", Path: path, RawQuery: params.Encode()}).String()
 }
 

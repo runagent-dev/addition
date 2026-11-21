@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 
 	"github.com/runagent-dev/addition/internal/crypto"
 )
@@ -26,6 +28,7 @@ var (
 	ErrNotFound            = errors.New("not found")
 	ErrAliasTaken          = errors.New("alias already in use for this provider")
 	ErrBusy                = errors.New("another Addition process is holding the vault; try again in a moment")
+	ErrInUse               = errors.New("the vault is in use or was not closed cleanly")
 )
 
 type InitOptions struct {
@@ -162,7 +165,8 @@ func notInitializedAt(home string) error {
 // OpenOptions tune how Open treats the data dir.
 type OpenOptions struct {
 	// ReadOnly opens without any side effect: no migration, no cleanup of key temp files, no files
-	// created. A database older than this binary is ErrSchemaOlder, and the store must not be written.
+	// created. A database with a WAL, shared-memory or journal file beside it is ErrInUse and is not
+	// opened at all; one older than this binary is ErrSchemaOlder. The store must not be written.
 	ReadOnly bool
 	// KeepKeyTemps leaves the temp files an interrupted key publication left, instead of removing them.
 	KeepKeyTemps bool
@@ -185,6 +189,11 @@ func OpenWith(ctx context.Context, env Env, opts OpenOptions) (*Store, error) {
 		return nil, notInitializedAt(home.path)
 	} else if err != nil {
 		return nil, err
+	}
+	if opts.ReadOnly {
+		if err := requireNoSideFiles(home.path); err != nil {
+			return nil, err
+		}
 	}
 	db, err := openExistingDB(ctx, home, opts)
 	if err != nil {
@@ -292,4 +301,59 @@ func unlock(env Env, home *homeDir, rec initRecords) (crypto.Key, error) {
 		return crypto.Key{}, err
 	}
 	return key, nil
+}
+
+// requireNoSideFiles refuses a database that another process has open or that was not closed cleanly:
+// its committed data may still be in a WAL or journal that only a writer can read safely.
+func requireNoSideFiles(home string) error {
+	for _, suffix := range sideFileSuffixes {
+		_, err := os.Lstat(filepath.Join(home, dbFile+suffix))
+		if err == nil {
+			return ErrInUse
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("inspect vault files: %w", err)
+		}
+	}
+	return nil
+}
+
+// Snapshot is the vault data a report needs, read in one transaction so it never mixes two states.
+type Snapshot struct {
+	Clients     []OAuthClient
+	Accounts    []Account
+	Credentials map[int64]Credential
+}
+
+// afterSnapshotClients lets tests commit a change between the reads of a Snapshot.
+var afterSnapshotClients = func() {}
+
+// Snapshot reads every OAuth client, account and credential in one read transaction.
+func (s *Store) Snapshot(ctx context.Context) (Snapshot, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	reader := s.ops
+	reader.q = tx
+	snap := Snapshot{Credentials: map[int64]Credential{}}
+	if snap.Clients, err = reader.ListOAuthClients(ctx); err != nil {
+		return Snapshot{}, err
+	}
+	afterSnapshotClients()
+	if snap.Accounts, err = reader.ListAccounts(ctx, ""); err != nil {
+		return Snapshot{}, err
+	}
+	for _, acct := range snap.Accounts {
+		cred, err := reader.GetCredential(ctx, acct.ID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return Snapshot{}, err
+		}
+		snap.Credentials[acct.ID] = cred
+	}
+	return snap, nil
 }
