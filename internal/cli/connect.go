@@ -81,7 +81,7 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	if err != nil {
 		return err
 	}
-	provider, err := connectableApp(c, providerID)
+	provider, err := connectableApp(c, providerID, d.loopbackProviders)
 	if err != nil {
 		return err
 	}
@@ -104,8 +104,9 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	return connectViaLoopback(cmd, d, s, target)
 }
 
-// connectableApp resolves name to an app that signs in with OAuth.
-func connectableApp(c *catalog.Catalog, name string) (*catalog.Provider, error) {
+// connectableApp resolves name to an app that signs in with OAuth and whose identity endpoint
+// may receive its token, so a connection is refused before any authorization starts or code is redeemed.
+func connectableApp(c *catalog.Catalog, name string, allowCleartext bool) (*catalog.Provider, error) {
 	p, err := appProvider(c, name)
 	if err != nil {
 		return nil, err
@@ -113,7 +114,15 @@ func connectableApp(c *catalog.Catalog, name string) (*catalog.Provider, error) 
 	if p.AuthType != "oauth2" || p.OAuth2 == nil {
 		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", p.ID), Exit: ExitUsage}
 	}
+	if p.OAuth2.Identity != nil && !identityURLAllowed(p, allowCleartext) {
+		return nil, identityNotAllowed(p)
+	}
 	return p, nil
+}
+
+func identityNotAllowed(p *catalog.Provider) *Error {
+	return &Error{Code: "identity-not-allowed", Exit: ExitUsage, Message: fmt.Sprintf(
+		"the identity URL of %s is not on one of its allowed hosts (api.allowed_hosts), so its access token cannot be sent there; nothing was sent", p.ID)}
 }
 
 // loadTarget loads the identity root's OAuth client and the scopes the app's alias already holds.
@@ -256,7 +265,7 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 	if err != nil {
 		return oauthError(err)
 	}
-	provider, err := connectableApp(c, pending.Provider)
+	provider, err := connectableApp(c, pending.Provider, d.loopbackProviders)
 	if err != nil {
 		return err
 	}
