@@ -29,7 +29,7 @@ jobs:
             go test -race ./...
             CGO_ENABLED=0 go build ./cmd/addition
           '
-      # A broken release config or installer must fail here, not on the first tag.
+      # A broken release config, installer or non-reproducible build must fail here, not on the first tag.
       - name: release config and installer
         shell: bash
         run: |
@@ -41,5 +41,9 @@ jobs:
             goreleaser release --snapshot --clean --skip=publish
             mkdir /smoke && tar -xzf dist/addition_linux_amd64.tar.gz -C /smoke
             /smoke/addition version | grep -q "\"commit\":\"[0-9a-f]\{40\}\""
+            sha256sum dist/*.tar.gz dist/*.zip dist/checksums.txt > /tmp/first.sums
+            goreleaser release --snapshot --clean --skip=publish
+            sha256sum dist/*.tar.gz dist/*.zip dist/checksums.txt | diff /tmp/first.sums - ||
+              { echo "two builds of one commit produced different release files"; exit 1; }
           '
           docker run -i --rm koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb -s sh - < install.sh

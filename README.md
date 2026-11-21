@@ -21,12 +21,17 @@ edit your shell rc files; when the directory is not on your `PATH` it prints the
 | `ADDITION_INSTALL_DIR` | `$HOME/.local/bin` | where the binary goes; created if missing |
 | `ADDITION_BASE_URL` | `https://github.com/runagent-dev/addition/releases` | releases URL, for mirrors and tests |
 
-Re-running the script upgrades in place. Every download is checked against the release's
-`checksums.txt` (sha256) and refused on a mismatch, and every release file carries a GitHub
-artifact attestation:
+Re-running the script upgrades in place. The installer verifies one thing: the sha256 of the
+archive against the `checksums.txt` published next to it. Both files come from the same release
+origin, so with `ADDITION_BASE_URL` pointing at a mirror, the mirror has to be trusted. It also
+refuses an archive whose members are not plain files with exactly one `addition`, and caps the
+download at 100 MiB and the binary at 200 MiB. It does not verify provenance. Every release file carries a GitHub artifact
+attestation; check it separately:
 
 ```bash
-gh attestation verify addition_linux_amd64.tar.gz --repo runagent-dev/addition
+gh attestation verify addition_linux_amd64.tar.gz \
+  --repo runagent-dev/addition \
+  --signer-workflow runagent-dev/addition/.github/workflows/release.yml
 ```
 
 Other ways in:
