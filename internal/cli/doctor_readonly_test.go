@@ -154,3 +154,114 @@ func TestDoctorLiveWritesOnlyTheRefreshAndAuditRows(t *testing.T) {
 		t.Errorf("audit events = %v, want %v plus refresh and call", got, events)
 	}
 }
+
+const inUseSummary = "the vault is in use or was not closed cleanly; run `addition accounts list` once, then run doctor again"
+
+// holdWAL keeps a connection open that has committed a change, so the database has a WAL and a shared-memory file.
+func holdWAL(t *testing.T, home string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(home, "addition.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`PRAGMA wal_autocheckpoint = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('probe', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// copyHomeWithout copies the data dir to a new private home, leaving out the files whose names end with skip.
+func copyHomeWithout(t *testing.T, home, skip string) string {
+	t.Helper()
+	dst := filepath.Join(privateTempDir(t), "addition")
+	if err := os.Mkdir(dst, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), skip) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(home, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dst
+}
+
+func wantInUseReport(t *testing.T, r result) {
+	t.Helper()
+	rep := wantNeedsAction(t, r, "addition accounts list")
+	if v := rep.check(t, "vault"); v.Status != "warn" || v.Summary != inUseSummary || v.Fix != "addition accounts list" {
+		t.Errorf("vault check = %+v", v)
+	}
+	for _, id := range []string{"master-key", "oauth-client:google", "accounts"} {
+		if c := rep.check(t, id); c.Status != "skip" {
+			t.Errorf("%s = %+v, want skip", id, c)
+		}
+	}
+}
+
+func TestDoctorOfflineLeavesAVaultWithItsWALAndSHMAlone(t *testing.T) {
+	c := newCallHarness(t)
+	holdWAL(t, c.home)
+	before := snapshotTree(t, c.home)
+
+	r := c.run("doctor")
+
+	wantInUseReport(t, r)
+	wantSameTree(t, before, snapshotTree(t, c.home))
+}
+
+func TestDoctorOfflineLeavesAWALWithoutSHMAlone(t *testing.T) {
+	c := newCallHarness(t)
+	holdWAL(t, c.home)
+	home := copyHomeWithout(t, c.home, "-shm")
+	t.Setenv("ADDITION_HOME", home)
+	before := snapshotTree(t, home)
+
+	r := c.run("doctor")
+
+	wantInUseReport(t, r)
+	wantSameTree(t, before, snapshotTree(t, home))
+}
+
+func TestDoctorOfflineReportsAWALInAReadOnlyHome(t *testing.T) {
+	c := newCallHarness(t)
+	holdWAL(t, c.home)
+	home := copyHomeWithout(t, c.home, "-shm")
+	t.Setenv("ADDITION_HOME", home)
+	if err := os.Chmod(home, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+	before := snapshotTree(t, home)
+
+	r := c.run("doctor")
+
+	wantInUseReport(t, r)
+	wantSameTree(t, before, snapshotTree(t, home))
+}
+
+func TestDoctorOfflineLeavesAJournalFileAlone(t *testing.T) {
+	c := newCallHarness(t)
+	if err := os.WriteFile(filepath.Join(c.home, "addition.db-journal"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, c.home)
+
+	r := c.run("doctor")
+
+	wantInUseReport(t, r)
+	wantSameTree(t, before, snapshotTree(t, c.home))
+}

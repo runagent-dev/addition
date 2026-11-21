@@ -215,7 +215,12 @@ func openRawDB(t *testing.T, home string) *sql.DB {
 
 func auditEvents(t *testing.T, home string) []string {
 	t.Helper()
-	rows, err := openRawDB(t, home).Query(`SELECT event FROM audit_log ORDER BY id`)
+	db, err := sql.Open("sqlite", filepath.Join(home, "addition.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT event FROM audit_log ORDER BY id`)
 	if err != nil {
 		t.Fatal(err)
 	}

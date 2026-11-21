@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -117,16 +121,99 @@ func TestDoctorLiveClassifications(t *testing.T) {
 	}
 }
 
-func TestDoctorLiveServiceDisabledBuildsTheActivationLink(t *testing.T) {
+const numberedClientID = "123456789012-abcdefghijklmnop.apps.googleusercontent.com"
+
+func writeClientFileWithID(t *testing.T, clientID string) string {
+	t.Helper()
+	data, _ := json.Marshal(map[string]any{"installed": map[string]any{"client_id": clientID, "client_secret": fakeClientSecret}})
+	path := filepath.Join(t.TempDir(), "client_secret.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestDoctorLiveActivationLinkNamesTheProjectOfTheClientID(t *testing.T) {
 	c := newCallHarness(t)
+	c.mustRun("client", "add", "google", "--file", writeClientFileWithID(t, numberedClientID))
 	c.api.respond(status(403, serviceDisabledBody, "Content-Type", "application/json"))
 
 	rep, _ := c.liveReport()
 
-	probe := rep.check(t, "live:gmail:work")
 	want := activateRoot + "gmail.googleapis.com/overview?project=123456789012"
-	if probe.Fix != "enable gmail.googleapis.com in the Cloud project" || probe.Hint != want {
-		t.Errorf("live check = %+v, want fix to enable the service and hint %s", probe, want)
+	probe := rep.check(t, "live:gmail:work")
+	if probe.Code != "api-disabled" || probe.Fix != "enable gmail.googleapis.com in the Cloud project" || probe.Hint != want {
+		t.Errorf("live check = %+v, want the link %s", probe, want)
+	}
+	if hint := rep.check(t, "cloud-setup:gmail").Hint; !strings.Contains(hint, want) {
+		t.Errorf("cloud-setup hint = %q, want it to hold %s", hint, want)
+	}
+}
+
+func TestDoctorLiveActivationLinkOmitsAProjectItCannotDerive(t *testing.T) {
+	for name, clientID := range map[string]string{"short number": fakeClientID, "no number": "abc-def.apps.googleusercontent.com", "no dash": "123456789012"} {
+		t.Run(name, func(t *testing.T) {
+			c := newCallHarness(t)
+			c.mustRun("client", "add", "google", "--file", writeClientFileWithID(t, clientID))
+			c.api.respond(status(403, serviceDisabledBody, "Content-Type", "application/json"))
+
+			rep, _ := c.liveReport()
+
+			if probe := rep.check(t, "live:gmail:work"); probe.Hint != activateRoot+"gmail.googleapis.com/overview" {
+				t.Errorf("live check = %+v, want the link without a project", probe)
+			}
+		})
+	}
+}
+
+func TestDoctorLiveHintIsTheSameWhateverTheProviderSays(t *testing.T) {
+	const link = "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview"
+	encoded := url.QueryEscape(lookalikeAccess)
+	bodies := map[string]string{
+		"percent-encoded secret":  link + "?project=%74%6f%6b%65%6e%6c%69%6b%65%2d%61%63%63%65%73%73%2d0123456789",
+		"query-escaped secret":    link + "?project=" + encoded,
+		"secret prefix":           link + "?project=" + lookalikeAccess[:12],
+		"secret interior":         link + "?project=" + lookalikeAccess[5:20],
+		"secret suffix":           link + "?project=" + lookalikeAccess[10:],
+		"refresh prefix":          link + "?project=" + lookalikeRefresh[:14],
+		"plausible other project": link + "?project=other-project-123",
+	}
+	for name, activation := range bodies {
+		t.Run(name, func(t *testing.T) {
+			c := newSeededLeakHarness(t)
+			c.api.respond(status(403, serviceDisabledAt(activation), "Content-Type", "application/json"))
+
+			r := c.run("doctor", "--live")
+
+			probe := decodeDoctor(t, r).check(t, "live:gmail:work")
+			if probe.Code != "api-disabled" || probe.Hint != link {
+				t.Errorf("live check = %+v, want api-disabled with exactly %s", probe, link)
+			}
+			assertNoLeak(t, r, lookalikeAccess, lookalikeRefresh, lookalikeAccess[5:20], lookalikeAccess[:12], lookalikeRefresh[:14])
+		})
+	}
+}
+
+func TestDoctorLiveWithholdsTheRefreshTokenThatWasRotatedAwayDuringTheProbe(t *testing.T) {
+	c := newSeededLeakHarness(t)
+	c.google.configure(func(g *fakeGoogle) { g.currentRefresh, g.rotateRefresh = lookalikeRefresh, true })
+	c.clock.Advance(2 * time.Hour)
+	c.api.respond(func(_ int, w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer "+refreshedAccessPrefix) {
+			t.Errorf("the probe was sent with %q, want the refreshed token", r.Header.Get("Authorization"))
+		}
+		status(403, serviceDisabledAt("https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project="+lookalikeRefresh),
+			"Content-Type", "application/json")(0, w, r)
+	})
+
+	r := c.run("doctor", "--live")
+
+	assertNoLeak(t, r, lookalikeRefresh)
+	if probe := decodeDoctor(t, r).check(t, "live:gmail:work"); probe.Code != "forbidden" {
+		t.Errorf("live check = %+v, want the body withheld as forbidden", probe)
+	}
+	if n := c.google.refreshCount(); n != 1 {
+		t.Errorf("refreshes = %d, want the probe to have rotated the token once", n)
 	}
 }
 
@@ -322,7 +409,7 @@ func TestDoctorLiveIgnoresAServiceNameTheCatalogDoesNotHave(t *testing.T) {
 
 	rep, _ := c.liveReport()
 
-	want := activateRoot + "gmail.googleapis.com/overview?project=123456789012"
+	want := activateRoot + "gmail.googleapis.com/overview"
 	if probe := rep.check(t, "live:gmail:work"); probe.Code != "api-disabled" || probe.Hint != want || probe.Fix != "enable gmail.googleapis.com in the Cloud project" {
 		t.Errorf("live check = %+v, want the catalog's service and link %s", probe, want)
 	}
@@ -355,5 +442,28 @@ func TestDoctorLiveStalledErrorBodyIsUnavailable(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("doctor --live hung on a stalled error body")
+	}
+}
+
+func TestDoctorLiveStalledRefreshEndsWithTheTokenEndpointsOwnTimeout(t *testing.T) {
+	probeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = defaultProbeTimeout })
+	c := newCallHarness(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	c.google.configure(func(g *fakeGoogle) { g.onToken = func() { <-release } })
+	c.deps.httpClient = &http.Client{Transport: c.transport, Timeout: 300 * time.Millisecond}
+	c.expireToken()
+	finished := make(chan result, 1)
+	go func() { finished <- c.run("doctor", "--live") }()
+
+	select {
+	case r := <-finished:
+		rep := wantHealthy(t, r)
+		if probe := rep.check(t, "live:gmail:work"); probe.Status != "warn" || probe.Code != "unavailable" {
+			t.Errorf("live check = %+v, want unavailable", probe)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("doctor --live outlived the token endpoint's timeout")
 	}
 }
