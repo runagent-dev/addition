@@ -16,13 +16,15 @@ GitHub, Slack, Discord — with every credential stored on your own machine.
 Think *"rclone / `gh`, but for every SaaS API, built for agents"*:
 
 ```bash
-addn connect google --as work --services gmail,drive,calendar
-addn connect google --as personal --services gmail,drive
+addn client add google --file client_secret.json     # once; every Google app shares it
+addn connect gmail --as work
+addn connect google-drive --as work
+addn connect gmail --as personal
 
 addn gmail search-messages -a work --query "from:billing has:attachment newer_than:7d"
 addn gmail get-attachment  -a work --message 18c2… --attachment 0.1 -o ./invoice.pdf
 addn drive upload          -a personal --file ./invoice.pdf --folder "Taxes/2026"
-addn call -a work GET /calendar/v3/calendars/primary/events --query maxResults=5
+addn call google-calendar -a work GET /calendar/v3/calendars/primary/events --query maxResults=5
 ```
 
 The agent needs nothing but a shell. Claude Code, Codex, OpenCode, Cursor,
@@ -57,7 +59,7 @@ From the market research (Nov 2026):
 3. **Agent-first output.** Tool commands print JSON on stdout; errors print a JSON envelope on stderr with a stable exit code. Never interactive unless a human is at a TTY.
 4. **Tokens never leave the vault in plaintext.** Not in stdout, logs, errors, or `--debug` output. No `addn token print` command. Agents get API access through `addn call`, not raw tokens.
 5. **Provider config is data, quirks are code.** Kept from the SDK era: provider + toolkit YAML, adapters for quirks.
-6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; adding a service later re-consents the same account for the union of its granted and requested scopes, not a new account.
+6. **One connection = one app + alias.** Each app (Gmail, Google Drive, Google Calendar, Google Chat, Google Docs, later Microsoft Teams, GitHub, Slack…) is its own provider with its own scopes and hosts, so a frontend can show one "Connect" card per app. The OAuth client is shared per identity root (`addn client add google` once serves every Google app).
 7. **Every user-visible phase ships a usable release.**
 
 ---
@@ -89,8 +91,8 @@ From the market research (Nov 2026):
 | Table | Holds |
 |---|---|
 | `meta` | `schema_version` (self-bootstrapping migrations, as before) |
-| `oauth_clients` | per provider: client_id, **encrypted** client_secret (user brings their own) |
-| `accounts` | `alias` (`work`), provider (`google`), identity (`me@work.com`), the provider's stable subject id, granted scopes, status |
+| `oauth_clients` | per identity root (`google`): client_id, **encrypted** client_secret (user brings their own); every app under the root uses it |
+| `accounts` | one row per (app provider, `alias`): app (`gmail`, `google-drive`…), identity (`me@work.com`), the stable subject id the alias was bound to in that app, the scopes granted to that app, status. The same alias in two apps is two independent accounts. A row whose provider is an identity root with apps (`google`) predates this model and is reported as `legacy-account` (reconnect each app) |
 | `credentials` | encrypted access/refresh token, expiry — one row per account |
 | `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, the alias's scopes at the start, redirect URI, claim marker, expiry |
 | `audit_log` | connect / refresh / revoke / call events by account id and provider id; never token values, aliases, paths or queries |
@@ -163,6 +165,11 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   subject, so an email rename re-consents fine and a different account is refused.
   An account stored without a subject is bound on re-consent and keeps only the new
   tokens.
+- **Apps, not services:** `addn connect <app> --as <alias>` takes a provider id or toolkit command
+  (`drive` = `google-drive`) and asks only for that app's `oauth2.default_scopes`; the authorize URL never
+  carries `include_granted_scopes`, so Google cannot widen the token beyond the app. Connecting an identity
+  root that has apps (`google`) is refused with `not-an-app` and the list of apps. Reconnecting the same
+  (app, alias) re-consents for the union of its stored scopes and the app's defaults.
 - **Stale re-consent:** a completion is refused (`stale-authorization`) if the alias
   gained scopes after the authorization started that it did not ask for.
 - **Back channel:** token, userinfo and revoke requests go straight to the HTTP
@@ -174,7 +181,9 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   when the account was saved but some requested scopes were not granted
   (`scopes-not-granted`); `4` for a provider refusal (`access_denied`, a 4xx or 3xx)
   or an unusable 2xx token or identity response; `5` for the network or a 5xx.
-- **Bring your own OAuth client** (v0.1): `addn client add google --file client_secret.json`.
+- **Bring your own OAuth client** (v0.1): `addn client add google --file client_secret.json`, once per identity
+  root: it serves every Google app, and token refresh uses it with the app's inherited token endpoint. Another
+  root, such as Microsoft (Teams, planned), will need its own client.
   `addn doctor google` walks through the Google Cloud setup and warns about the
   7-day refresh-token expiry for apps left in "Testing".
 
@@ -199,18 +208,21 @@ stale: the next refresh gets `invalid_grant`, and the account is marked
 
 ### 2.5 `addn call`
 
-`addn call [-a <alias>] <METHOD> <path> [--query k=v]… [--data @file|-|<json>] [-H 'Name: value']… [-o file] [--force]`
-sends one authenticated request to a provider API. It lives in `internal/proxy`; `internal/cli/call.go` is the
+`addn call <app> [-a <alias>] <METHOD> <path> [--query k=v]… [--data @file|-|<json>] [-H 'Name: value']… [-o file] [--force]`
+sends one authenticated request to an app's API. It lives in `internal/proxy`; `internal/cli/call.go` is the
 thin command.
 
-**Account.** `-a` names the alias; without it the provider's default account, else its only account, is used.
-`--provider` (any service id resolves to its identity root) narrows an alias that exists under several providers.
-An unknown provider, an ambiguous alias and several accounts without a default are usage errors (exit `2`); an
-alias or provider with no account is `not-connected` (exit `3`).
+**Account.** The app comes first, as a provider id or toolkit command (`google-chat`, `drive`); there is no
+`--provider` flag and nothing is inferred. A call without an app is `app-required` (exit `2`, naming the connected
+apps), an identity root such as `google` is `not-an-app`, and an unknown app is `unknown-provider`. `-a` names the
+alias within that app; without it the app's default account, else its only account, is used. Several accounts in the
+app without a default are `account-required` (exit `2`); an alias or app with no account is `not-connected` (exit
+`3`). An account stored under an identity root is `legacy-account` (exit `3`).
 
 **URL.** `<path>` is absolute from the API host (`/calendar/v3/calendars/primary/events`, resolved against the
-host of the provider's `api.base_url`) or an `https` URL whose host is listed in the provider's `api.allowed_hosts`
-(default: the host of `api.base_url`). A listed host matches case-insensitively, without a trailing dot, on port 443.
+host of the app's `api.base_url`) or an `https` URL whose host is listed in the app's own `api.allowed_hosts`
+(default: the host of `api.base_url`). Each app lists only its own hosts, plus the identity host, so a Gmail
+token cannot reach `chat.googleapis.com` and a Chat token cannot reach Gmail. A listed host matches case-insensitively, without a trailing dot, on port 443.
 Any other host or scheme, userinfo, a `//host` path, or an opaque URL is `host-not-allowed` (exit `2`), and nothing is
 sent: not the request, and not a token refresh either. The access token is only ever sent to a listed host over https.
 `--query` pairs are appended after the path's own query. `-H` may not set `Authorization`, `Host`, `Cookie`,
@@ -280,18 +292,21 @@ status (`0` when none arrived). It is written even if the command was cancelled 
 independent context whose 5 s deadline also bounds the wait for a writer lock another process holds. A failed audit write is reported as a `{"notice":"audit-failed"}` line on stderr
 and does not change the result.
 
-`addn auth check --live` runs the same refresh-if-needed path for each account and asks the provider's identity
-endpoint whether the token works: each row gains `live` and `live_reason` (`ok`, `needs-reauth`, `no-refresh-token`,
-`no-credential`, `no-oauth-client`, `refresh-rejected`, `token-rejected`, `identity-rejected`, `network`,
-`no-identity-endpoint`, `identity-not-allowed`), never provider text.
+`addn accounts check --live` (formerly `addn auth check`, which still works as a hidden, deprecated alias) runs the
+same refresh-if-needed path for each account and asks the provider's identity endpoint whether the token works: each
+row gains `live` and `live_reason` (`ok`, `needs-reauth`, `no-refresh-token`, `no-credential`, `no-oauth-client`,
+`refresh-rejected`, `token-rejected`, `identity-rejected`, `network`, `no-identity-endpoint`, `identity-not-allowed`,
+`legacy-account`), never provider text. The identity URL must be on the app's own `allowed_hosts`, so every app lists
+`openidconnect.googleapis.com`. Every account row also carries `scopes_ready` and `missing_scopes`, the app's default
+scopes the account was not granted.
 
 ### 2.6 Command grammar
 
 ```
 addn <provider> <tool> [-a <alias>] [--param value …] [-o file] [--all]
-addn call -a <alias> <METHOD> <path> [--query k=v] [--data @file.json] [-o file]
-addn connect <provider> --as <alias> [--services …] [--no-browser]
-addn accounts [list|show|remove|default]      addn auth check
+addn call <app> [-a <alias>] <METHOD> <path> [--query k=v] [--data @file.json] [-o file]
+addn connect <app> --as <alias> [--no-browser]
+addn accounts [list|show|remove|default|check [--live]]
 addn tools [--provider p] [--json]            addn skill install [--harness …]
 ```
 
@@ -330,8 +345,9 @@ can use the same day.
 | M0 | Repo reshape | TS/Python removed from `main`, this plan adopted, CLAUDE.md + README rewritten, Go module + cobra root with `addn version` and the JSON error envelope, CI | — |
 | M1 | Catalog | YAML loader (`extends` merge: scalars override, arrays replace), embedded via `go:embed`; identity root of each provider; `effect:` tag and CLI `command:` name per toolkit; Google Drive provider + metadata toolkit; `addn providers`, `addn tools` | browse only |
 | M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
-| M3 | Connect | `addn client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, adding Google services by re-consent for the scope union (persist the scopes actually granted), `addn connect / accounts / auth check` (local status only) | accounts connected |
+| M3 | Connect | `addn client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, re-consent for the union of stored and default scopes (persist the scopes actually granted), `addn connect / accounts / auth check` (local status only) | accounts connected |
 | **M4** | **Raw call** | `addn call` (§2.5): host allow-list, token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming, `call` audit event; `auth check --live` | **✅ agents can hit any Google API** |
+| **M4b** | **Apps are separate connections** | each app its own provider, scopes, hosts and account (`gmail`, `google-drive`, `google-calendar`, new `google-chat` and `google-docs`); `connect <app>`, no `--services`; `call <app>` (app required, no `--provider`); `accounts check` (`auth check` kept as a hidden alias) with `scopes_ready` / `missing_scopes`; one OAuth client per identity root; `legacy-account` for pre-M4b rows | ✅ one "Connect" card per app |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
 | M7 | Agent surface + release | `addn skill install` (SKILL.md for Claude Code / Codex / generic), `addn tools --json` schemas, goreleaser binaries (linux/mac/windows, amd64/arm64), install script, README | ✅ **v0.1.0** |
@@ -412,3 +428,8 @@ plus `effect:` tags on tools (used from Phase 2, cheap to add now).
    client later, since it means a security assessment and a support burden.
 7. **Toolchain:** Go 1.27 (`go.mod` pins it, so older local Go installs fetch
    it automatically via `GOTOOLCHAIN`).
+8. **Apps are separate connections (2026-11-21, M4b):** every app is its own provider and its own connection, replacing the
+   earlier "one account serves Gmail + Drive + Calendar" design. Each connection asks Google only for its app's scopes
+   (least privilege), is revoked on its own, and sends its token only to its app's hosts. The OAuth client stays
+   shared per identity root. Microsoft Teams is the planned example of a second identity root (own client, own apps).
+   `addn call` names its app first, and `addn auth check` became `addn accounts check`.
