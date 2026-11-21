@@ -165,7 +165,7 @@ var auditTimeout = 5 * time.Second
 func recordCall(cmd *cobra.Command, s *vault.Store, acct vault.Account, method string, status int) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), auditTimeout)
 	defer cancel()
-	if err := s.Audit(ctx, vault.CallEvent{AccountID: acct.ID, Method: method, Status: status}); err != nil {
+	if err := s.AuditWithinDeadline(ctx, vault.CallEvent{AccountID: acct.ID, Method: method, Status: status}); err != nil {
 		_ = writeJSON(cmd.ErrOrStderr(), map[string]string{"notice": "audit-failed"})
 	}
 }

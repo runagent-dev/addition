@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 )
 
 // ErrInvalidAuditEvent rejects an event before anything is written; it never echoes the bad value.
@@ -128,5 +129,29 @@ func (o ops) Audit(ctx context.Context, ev AuditEvent) error {
 		INSERT INTO audit_log (event, account_id, provider, details, created_at)
 		VALUES (?, ?, ?, ?, ?)`,
 		entry.event, accountID, provider, string(details), o.timestamp())
+	return err
+}
+
+// AuditWithinDeadline is Audit for a caller whose ctx has a deadline: a writer lock held by another
+// connection fails it when that deadline passes, not after the connection's own longer busy wait.
+func (s *Store) AuditWithinDeadline(ctx context.Context, ev AuditEvent) error {
+	deadline, bounded := ctx.Deadline()
+	if !bounded {
+		return s.Audit(ctx, ev)
+	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := setBusyTimeout(ctx, conn, max(time.Until(deadline), 0)); err != nil {
+		return err
+	}
+	defer func() { _ = setBusyTimeout(context.WithoutCancel(ctx), conn, busyTimeout) }()
+	return ops{q: conn, key: s.key, vaultID: s.vaultID, now: s.now}.Audit(ctx, ev)
+}
+
+func setBusyTimeout(ctx context.Context, conn *sql.Conn, wait time.Duration) error {
+	_, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", wait.Milliseconds()))
 	return err
 }
