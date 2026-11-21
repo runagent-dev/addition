@@ -10,17 +10,17 @@ permissions:
 
 jobs:
   go:
-    runs-on: [self-hosted, Linux, X64, runagent-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      # Everything runs in one pinned image: the runner has no C toolchain, mounts
-      # /tmp noexec, and its Docker daemon may not see the workspace path.
+      # Everything runs in one pinned image, fed with git archive, so the toolchain never depends on the runner.
       - name: check
+        shell: bash
         run: |
-          git archive HEAD | docker run -i --rm golang:1.27.4 sh -euc '
+          git archive HEAD | docker run -i --rm golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf sh -euc '
             mkdir /src && cd /src && tar -x
             unformatted="$(gofmt -l .)"
             if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
@@ -31,6 +31,7 @@ jobs:
           '
       # A broken release config or installer must fail here, not on the first tag.
       - name: release config and installer
+        shell: bash
         run: |
           tar -c . | docker run -i --rm --entrypoint sh \
             goreleaser/goreleaser:v2.20.3@sha256:3019e0e61c99808e42ce60c9cf77f7882685ffd2bd09d18ef6da8f9c9810e71c -euc '
