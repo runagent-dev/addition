@@ -86,7 +86,11 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, http.MethodGet, resp.Status)
-	return probeVerdict(acct, provider.API, resp, *held), nil
+	verdict := probeVerdict(acct, provider.API, resp, *held)
+	if verdict.Code == probeForbidden && ctx.Err() != nil {
+		return unavailableVerdict("the API did not finish answering in time, so the account could not be checked"), nil
+	}
+	return verdict, nil
 }
 
 // collectingRenewer notes the vault's secrets after every renewal, so each refresh token a probe rotates through is held.
