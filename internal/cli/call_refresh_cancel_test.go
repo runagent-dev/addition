@@ -98,3 +98,18 @@ func TestCallDoesNotSendTheRequestAfterBeingCancelledWhileRefreshing(t *testing.
 		t.Errorf("the API saw %d requests; a cancelled call must not use the new token", n)
 	}
 }
+
+func TestCallWaitingForTheVaultLockStopsOnTheFirstCancel(t *testing.T) {
+	c := newCallHarness(t)
+	c.holdWriterLock()
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	started := time.Now()
+	r := c.runContext(ctx, nil, "call", "-a", "work", "GET", "/x")
+
+	c.wantError(r, ExitInternal, "interrupted")
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Errorf("the call took %v; it must stop at the cancel, not wait out the vault lock", elapsed)
+	}
+}

@@ -108,3 +108,36 @@ func TestAuditWithinDeadlineGivesUpWhenTheDeadlinePasses(t *testing.T) {
 		t.Errorf("err = %v after %v; want a failure about when the deadline passed", err, time.Since(started))
 	}
 }
+
+func TestOpenWaitingForTheWriterLockHonoursCancellation(t *testing.T) {
+	holder, f := newStore(t)
+	release := holdWriterLock(t, holder)
+	defer release()
+	ctx, cancel := context.WithCancel(context.Background())
+	opened, waiting := make(chan error, 1), make(chan struct{})
+	var once sync.Once
+	defer vault.SetBeforeWriterLock(func() { once.Do(func() { close(waiting) }) })()
+	go func() {
+		s, err := vault.Open(ctx, f.env())
+		if s != nil {
+			_ = s.Close()
+		}
+		opened <- err
+	}()
+
+	<-waiting
+	cancel()
+
+	select {
+	case err := <-opened:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a cancelled Open is still blocked on the writer lock")
+	}
+	release()
+	if _, err := vault.Open(context.Background(), f.env()); err != nil {
+		t.Errorf("the abandoned Open left the lock held: %v", err)
+	}
+}
