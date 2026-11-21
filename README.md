@@ -53,9 +53,10 @@ addition tools                                          # curated tools, as JSON
 addition version
 ```
 
-`addition doctor` is read-only and prints one JSON report: `ok`, a list of `checks` (vault, master key,
+`addition doctor` prints one JSON report: `ok`, a list of `checks` (vault, master key,
 OAuth client, each account) and `next`, the single command to run now. It exits 3 when you need to act.
-Run it first after installing, and whenever something fails.
+Run it first after installing, and whenever something fails. doctor opens the vault like any other command
+(it may apply a pending schema upgrade) and makes no network request unless you pass `--live`.
 
 Headless or over SSH: `addition connect gmail --as work --no-browser`, then finish with
 `addition connect --complete '<url the browser landed on>'`. Run `addition <command> --help` for details.

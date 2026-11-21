@@ -92,52 +92,6 @@ func openDB(ctx context.Context, home string) (*sql.DB, error) {
 	return db, nil
 }
 
-// readOnlyDSN opens the existing database as an immutable file: SQLite takes no locks and creates no
-// WAL or shared-memory file. Callers must first have made sure no side file exists (requireNoSideFiles).
-func readOnlyDSN(home string) string {
-	path := filepath.ToSlash(filepath.Join(home, dbFile))
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	params := url.Values{"mode": {"ro"}, "immutable": {"1"}}
-	return (&url.URL{Scheme: "file", Path: path, RawQuery: params.Encode()}).String()
-}
-
-// openReadOnlyDB opens the database for reading only and requires its schema to be exactly this binary's.
-func openReadOnlyDB(ctx context.Context, home string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", readOnlyDSN(home))
-	if err != nil {
-		return nil, err
-	}
-	if err := requireCurrentSchema(ctx, db, home); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	return db, nil
-}
-
-func requireCurrentSchema(ctx context.Context, db *sql.DB, home string) error {
-	var tables int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'meta'`).Scan(&tables); err != nil {
-		return fmt.Errorf("open vault database: %w", err)
-	}
-	if tables == 0 {
-		return notInitializedAt(home)
-	}
-	current, err := schemaVersion(ctx, db)
-	switch {
-	case err != nil:
-		return err
-	case current == 0:
-		return notInitializedAt(home)
-	case current > SchemaVersion:
-		return fmt.Errorf("%w: database is at version %d, this version supports up to %d; upgrade Addition", ErrSchemaTooNew, current, SchemaVersion)
-	case current < SchemaVersion:
-		return fmt.Errorf("%w: database is at version %d, this version is %d", ErrSchemaOlder, current, SchemaVersion)
-	}
-	return nil
-}
-
 // beforeWriterLock lets tests act just before a process waits for the SQLite writer lock.
 var beforeWriterLock = func() {}
 

@@ -65,13 +65,16 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	if err != nil {
 		return doctorCheck{}, callRequestError(err)
 	}
-	held := a.heldValues(ctx, acct, provider)
+	held := &heldValues{}
+	collect := func() { held.collect(context.WithoutCancel(ctx), a, acct, provider) }
+	collect()
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
 	token, err := tokens.Access(ctx)
+	collect()
 	if err != nil {
 		return probeFailure(acct, err)
 	}
-	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, AllowCleartext: d.loopbackProviders, Renewer: tokens, Now: d.now, Sleep: d.sleep}
+	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, AllowCleartext: d.loopbackProviders, Renewer: collectingRenewer{tokens: tokens, collect: collect}, Now: d.now, Sleep: d.sleep}
 	header := http.Header{"User-Agent": {"addition/" + currentBuild().Version}}
 	resp, err := engine.Do(ctx, proxy.Request{Method: http.MethodGet, URL: target, Header: header}, token)
 	if err != nil {
@@ -82,34 +85,36 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, http.MethodGet, resp.Status)
-	return probeVerdict(acct, provider.API, resp, held.and(a.heldValues(ctx, acct, provider))), nil
+	return probeVerdict(acct, provider.API, resp, *held), nil
 }
 
-// heldValues are what a probe's response must never repeat: the stored refresh token and OAuth client
-// secret. They are read before the probe and again after it, so a token the probe rotated away is kept too.
+// collectingRenewer notes the vault's secrets after every renewal, so each refresh token a probe rotates through is held.
+type collectingRenewer struct {
+	tokens  *proxy.TokenManager
+	collect func()
+}
+
+func (r collectingRenewer) Renew(ctx context.Context, rejected string) (string, error) {
+	token, err := r.tokens.Renew(ctx, rejected)
+	r.collect()
+	return token, err
+}
+
+// heldValues are what a probe's response must never repeat: every refresh and access token the account
+// held at any point of the probe, and the OAuth client secret.
 type heldValues struct {
 	secrets  []string
 	clientID string
 }
 
-func (h heldValues) and(later heldValues) heldValues {
-	h.secrets = append(h.secrets, later.secrets...)
-	if later.clientID != "" {
-		h.clientID = later.clientID
-	}
-	return h
-}
-
-func (a *accountSession) heldValues(ctx context.Context, acct vault.Account, provider *catalog.Provider) heldValues {
-	var held heldValues
+func (h *heldValues) collect(ctx context.Context, a *accountSession, acct vault.Account, provider *catalog.Provider) {
 	if cred, found, err := a.credential(ctx, acct); err == nil && found {
-		held.secrets = append(held.secrets, nonEmpty(cred.RefreshToken, cred.AccessToken)...)
+		h.secrets = append(h.secrets, nonEmpty(cred.RefreshToken, cred.AccessToken)...)
 	}
 	if client, err := a.store.GetOAuthClient(ctx, provider.IdentityRoot); err == nil {
-		held.secrets = append(held.secrets, nonEmpty(client.ClientSecret)...)
-		held.clientID = client.ClientID
+		h.secrets = append(h.secrets, nonEmpty(client.ClientSecret)...)
+		h.clientID = client.ClientID
 	}
-	return held
 }
 
 func nonEmpty(values ...string) []string {

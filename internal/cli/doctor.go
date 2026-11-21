@@ -3,6 +3,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -64,7 +67,9 @@ func newDoctorCmd(d deps) *cobra.Command {
 		Long: "Check the vault, its master key, the OAuth clients and every connected account, and print one\n" +
 			"JSON report: ok, version, home, checks (each with an id, a status of ok, warn, fail or skip, a\n" +
 			"summary, and a fix or hint when there is one) and next, the one command to run now (null when\n" +
-			"all is well). Without --live it reads the vault only and makes no network request.\n\n" +
+			"all is well).\n\n" +
+			"doctor opens the vault like any other command (it may apply a pending schema upgrade) and makes no\n" +
+			"network request unless you pass --live. It never creates a data dir or vault that is missing.\n\n" +
 			"With --live, each connected app also gets one cheap authenticated GET through the same path as\n" +
 			"`addition call`, so a disabled API or a revoked grant shows up as live:<app>:<alias>. A refresh\n" +
 			"and the probe are recorded like any other call. A probe takes up to 15 s per request, plus at most the\n" +
@@ -78,8 +83,8 @@ func newDoctorCmd(d deps) *cobra.Command {
 	return cmd
 }
 
-// runDoctor reports a snapshot: everything it says about the vault comes from one read transaction,
-// taken before any check is computed. With --live the probes run afterwards, against the live vault.
+// runDoctor opens the vault like any other command and reports one snapshot of it: everything it says
+// about clients, accounts and the key source comes from a single read transaction.
 func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	ctx := cmd.Context()
 	cat, err := d.loadCatalog()
@@ -91,23 +96,26 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 		rep.Checks = append(rep.Checks, doctorCheck{ID: "vault", Status: checkFail, Summary: "the data dir cannot be located", Fix: fixHome})
 		return finishDoctor(cmd, rep)
 	}
-	store, err := vault.OpenWith(ctx, d.env, vault.OpenOptions{ReadOnly: true})
+	if missing := databaseChecks(rep.Home); missing != nil {
+		rep.Checks = append(rep.Checks, missing...)
+		return finishDoctor(cmd, rep)
+	}
+	store, err := vault.Open(ctx, d.env)
 	if err != nil {
-		failed, ok := openFailureChecks(cat, err)
+		failed, ok := openFailureChecks(err)
 		if !ok {
 			return vaultError(err)
 		}
 		rep.Checks = append(rep.Checks, failed...)
 		return finishDoctor(cmd, rep)
 	}
-	source := store.KeySource()
+	defer store.Close()
 	snap, err := store.Snapshot(ctx)
-	_ = store.Close()
 	if err != nil {
 		return vaultError(err)
 	}
 
-	session := &accountSession{catalog: cat}
+	session := &accountSession{catalog: cat, store: store}
 	clientIDs := map[string]string{}
 	for _, c := range snap.Clients {
 		clientIDs[c.Provider] = c.ClientID
@@ -115,13 +123,13 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	accounts := session.accountChecks(snap, d.now())
 	rep.Checks = append(rep.Checks,
 		doctorCheck{ID: "vault", Status: checkOK, Summary: fmt.Sprintf("the vault is initialised (schema %d)", vault.SchemaVersion)},
-		doctorCheck{ID: "master-key", Status: checkOK, Summary: fmt.Sprintf("the master key unlocks the vault (recorded source: %s)", source)},
+		doctorCheck{ID: "master-key", Status: checkOK, Summary: fmt.Sprintf("the master key unlocks the vault (recorded source: %s)", snap.KeySource)},
 	)
 	rep.Checks = append(rep.Checks, session.clientChecks(clientIDs)...)
 	rep.Checks = append(rep.Checks, accounts.checks...)
 	rep.Checks = append(rep.Checks, session.cloudSetupChecks(accounts.all, clientIDs)...)
 	if live {
-		probes, err := liveProbes(cmd, d, cat, accounts)
+		probes, err := session.liveChecks(cmd, d, accounts)
 		if err != nil {
 			return err
 		}
@@ -130,15 +138,25 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	return finishDoctor(cmd, rep)
 }
 
-// liveProbes reopens the vault for writing, since a probe may refresh a token and is audited, and
-// leaves everything else in the data dir as it is.
-func liveProbes(cmd *cobra.Command, d deps, cat *catalog.Catalog, accts checkedAccounts) ([]doctorCheck, error) {
-	store, err := vault.OpenWith(cmd.Context(), d.env, vault.OpenOptions{KeepKeyTemps: true})
-	if err != nil {
-		return nil, vaultError(err)
+const databaseFile = "addition.db"
+
+// databaseChecks stats the vault file without opening it, so a missing data dir or database creates nothing.
+// It returns nil when the file is there.
+func databaseChecks(home string) []doctorCheck {
+	_, err := os.Stat(filepath.Join(home, databaseFile))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, fs.ErrNotExist):
+		return []doctorCheck{
+			{ID: "vault", Status: checkFail, Summary: "there is no vault in the data dir yet", Fix: fixInitVault},
+			{ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"},
+		}
 	}
-	defer store.Close()
-	return (&accountSession{catalog: cat, store: store}).liveChecks(cmd, d, accts)
+	return []doctorCheck{
+		{ID: "vault", Status: checkFail, Summary: "the data dir cannot be read by this user", Fix: "make the data dir readable by your user only (chmod 700)"},
+		{ID: "master-key", Status: checkSkip, Summary: "there is no readable vault to unlock"},
+	}
 }
 
 // finishDoctor decides ok and next from the checks, prints the report and, unless ok, fails with exit 3.
@@ -167,56 +185,35 @@ func finishDoctor(cmd *cobra.Command, rep doctorReport) error {
 }
 
 // openFailureChecks explains why the vault could not be opened; ok is false for a failure of addition itself.
-func openFailureChecks(cat *catalog.Catalog, err error) (checks []doctorCheck, ok bool) {
+func openFailureChecks(err error) (checks []doctorCheck, ok bool) {
 	for _, f := range openFailures {
 		if !errors.Is(err, f.err) {
 			continue
 		}
 		failed := doctorCheck{ID: f.check, Status: checkFail, Summary: f.summary, Fix: f.fix}
-		if f.warn {
-			failed.Status, failed.actionable = checkWarn, true
-		}
 		if f.check != "vault" {
 			return []doctorCheck{{ID: "vault", Status: checkOK, Summary: "the vault database is there"}, failed}, true
 		}
-		checks = []doctorCheck{failed, {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}
-		if errors.Is(err, vault.ErrInUse) {
-			checks = append(checks, skippedDataChecks(cat)...)
-		}
-		return checks, true
+		return []doctorCheck{failed, {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}, true
 	}
 	return nil, false
 }
-
-// skippedDataChecks stand in for the client and account checks of a vault that was not read.
-func skippedDataChecks(cat *catalog.Catalog) []doctorCheck {
-	var checks []doctorCheck
-	for _, id := range clientRoots(cat) {
-		checks = append(checks, doctorCheck{ID: "oauth-client:" + id, Status: checkSkip, Summary: "not checked: the vault was not read"})
-	}
-	return append(checks, doctorCheck{ID: "accounts", Status: checkSkip, Summary: "not checked: the vault was not read"})
-}
-
-const fixInUse = "addition accounts list"
 
 var openFailures = []struct {
 	err            error
 	check, summary string
 	fix            string
-	warn           bool
 }{
-	{vault.ErrNotInitialized, "vault", "there is no vault in the data dir yet", fixInitVault, false},
-	{vault.ErrInUse, "vault", "the vault is in use or was not closed cleanly; run `addition accounts list` once, then run doctor again", fixInUse, true},
-	{vault.ErrCorrupt, "vault", "the vault database is corrupt or only partly initialised", "restore the vault from a backup, or move it aside and run `addition init`", false},
-	{vault.ErrSchemaTooNew, "vault", "the vault was written by a newer version of addition", "upgrade addition", false},
-	{vault.ErrSchemaOlder, "vault", "the vault schema is older than this addition; any command that opens it for writing upgrades it", fixInUse, true},
-	{vault.ErrInsecureHome, "vault", "the data dir is not private to this user", "make the data dir accessible to your user only (chmod 700)", false},
-	{vault.ErrNoMasterKey, "master-key", "the master key is not available from its recorded source", "restore the master key (OS keychain entry, key file or ADDITION_MASTER_KEY)", false},
-	{vault.ErrWrongMasterKey, "master-key", "the master key does not match this vault", "set ADDITION_MASTER_KEY to the key this vault was created with", false},
-	{crypto.ErrInvalidKey, "master-key", "ADDITION_MASTER_KEY is not a valid key", "fix or unset ADDITION_MASTER_KEY", false},
-	{vault.ErrKeychainUnavailable, "master-key", "the OS keychain is unavailable", "unlock the OS keychain, or set ADDITION_MASTER_KEY to the vault's key", false},
-	{vault.ErrInsecureKeyFile, "master-key", "the key file is not a private regular file", "make the key file a regular file readable only by you (chmod 600)", false},
-	{vault.ErrKeyFileUnsupported, "master-key", "key files are not supported on Windows", "set ADDITION_MASTER_KEY to the vault's key", false},
+	{vault.ErrNotInitialized, "vault", "there is no vault in the data dir yet", fixInitVault},
+	{vault.ErrCorrupt, "vault", "the vault database is corrupt or only partly initialised", "restore the vault from a backup, or move it aside and run `addition init`"},
+	{vault.ErrSchemaTooNew, "vault", "the vault was written by a newer version of addition", "upgrade addition"},
+	{vault.ErrInsecureHome, "vault", "the data dir is not private to this user", "make the data dir accessible to your user only (chmod 700)"},
+	{vault.ErrNoMasterKey, "master-key", "the master key is not available from its recorded source", "restore the master key (OS keychain entry, key file or ADDITION_MASTER_KEY)"},
+	{vault.ErrWrongMasterKey, "master-key", "the master key does not match this vault", "set ADDITION_MASTER_KEY to the key this vault was created with"},
+	{crypto.ErrInvalidKey, "master-key", "ADDITION_MASTER_KEY is not a valid key", "fix or unset ADDITION_MASTER_KEY"},
+	{vault.ErrKeychainUnavailable, "master-key", "the OS keychain is unavailable", "unlock the OS keychain, or set ADDITION_MASTER_KEY to the vault's key"},
+	{vault.ErrInsecureKeyFile, "master-key", "the key file is not a private regular file", "make the key file a regular file readable only by you (chmod 600)"},
+	{vault.ErrKeyFileUnsupported, "master-key", "key files are not supported on Windows", "set ADDITION_MASTER_KEY to the vault's key"},
 }
 
 // clientRoots are the identity roots whose OAuth client doctor checks: those that say how to set one up.
