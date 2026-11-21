@@ -458,3 +458,73 @@ func assertNotStoredInPlaintext(t *testing.T, home string, secrets ...string) {
 		}
 	}
 }
+
+func TestAuditCallEvent(t *testing.T) {
+	ctx := context.Background()
+	s, f := newStore(t)
+	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+
+	for _, ev := range []vault.CallEvent{
+		{AccountID: acct.ID, Method: "GET", Status: 200},
+		{AccountID: acct.ID, Method: "POST", Status: 0},
+	} {
+		if err := s.Audit(ctx, ev); err != nil {
+			t.Fatalf("Audit(%+v): %v", ev, err)
+		}
+	}
+
+	rows := auditRows(t, f.home)
+	if len(rows) != 2 {
+		t.Fatalf("audit rows = %+v, want 2", rows)
+	}
+	if rows[0].event != "call" || rows[0].provider != "google" || rows[0].accountID != acct.ID || rows[0].details != `{"method":"GET","status":"200"}` {
+		t.Errorf("row 0 = %+v", rows[0])
+	}
+	if rows[1].details != `{"method":"POST","status":"0"}` {
+		t.Errorf("a call with no response records status 0, got %s", rows[1].details)
+	}
+}
+
+func TestAuditRejectsMalformedCallEvents(t *testing.T) {
+	const marker = "ya29.SYNTHETIC-TOKEN-MARKER"
+	ctx := context.Background()
+	s, f := newStore(t)
+	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+
+	bad := map[string]vault.CallEvent{
+		"lowercase method":  {AccountID: acct.ID, Method: "get", Status: 200},
+		"free-text method":  {AccountID: acct.ID, Method: marker, Status: 200},
+		"unknown method":    {AccountID: acct.ID, Method: "TRACE", Status: 200},
+		"status too low":    {AccountID: acct.ID, Method: "GET", Status: 99},
+		"status too high":   {AccountID: acct.ID, Method: "GET", Status: 600},
+		"negative status":   {AccountID: acct.ID, Method: "GET", Status: -1},
+		"no account":        {Method: "GET", Status: 200},
+		"unknown account":   {AccountID: 9999, Method: "GET", Status: 200},
+		"empty method":      {AccountID: acct.ID, Status: 200},
+		"method with space": {AccountID: acct.ID, Method: "GET /x", Status: 200},
+	}
+	for name, ev := range bad {
+		if err := s.Audit(ctx, ev); err == nil {
+			t.Errorf("%s: Audit accepted it", name)
+		}
+	}
+	if rows := auditRows(t, f.home); len(rows) != 0 {
+		t.Errorf("rejected events were written: %+v", rows)
+	}
+}
+
+func TestAccountNeedsReauthStatusRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newStore(t)
+	acct, _ := s.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})
+
+	acct.Status = vault.AccountNeedsReauth
+	if _, err := s.UpdateAccount(ctx, acct); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := s.GetAccount(ctx, "google", "work")
+	if got.Status != "needs-reauth" {
+		t.Errorf("status = %q, want needs-reauth", got.Status)
+	}
+}

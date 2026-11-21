@@ -284,7 +284,7 @@ func assertAuditHoldsNoSecrets(t *testing.T, h *harness) {
 	}
 	_ = rows.Close()
 	all := dumpDB(t, h.home)
-	for i, secret := range append([]string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, workIdentity}, h.google.verifiers...) {
+	for i, secret := range append([]string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, workIdentity, refreshedAccessPrefix, rotatedRefreshPrefix}, h.google.verifiers...) {
 		if secret == "" {
 			continue
 		}
