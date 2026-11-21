@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"math/rand/v2"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/runagent-dev/addition/internal/catalog"
@@ -58,6 +60,9 @@ type Engine struct {
 	AllowCleartext bool
 	// AfterFunc runs expire after d and returns a stop func; nil uses time.AfterFunc.
 	AfterFunc func(d time.Duration, expire func()) (stop func() bool)
+
+	transportOnce sync.Once
+	attempts      http.RoundTripper
 }
 
 // Do sends req with accessToken. A 401 is renewed and retried once; a 429 is retried up to
@@ -134,11 +139,37 @@ func (e *Engine) send(ctx context.Context, req Request, accessToken string) (*Re
 	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}}, nil
 }
 
+// transport is the client's transport as one attempt per connection: see singleAttempt.
 func (e *Engine) transport() http.RoundTripper {
-	if e.Client != nil && e.Client.Transport != nil {
-		return e.Client.Transport
+	e.transportOnce.Do(func() {
+		var base http.RoundTripper = http.DefaultTransport
+		if e.Client != nil && e.Client.Transport != nil {
+			base = e.Client.Transport
+		}
+		e.attempts = singleAttempt(base)
+	})
+	return e.attempts
+}
+
+// singleAttempt returns a copy of an *http.Transport that cannot send a request twice by itself:
+// every request gets a fresh HTTP/1.1 connection, so Go's retry of a request on a reused connection
+// and HTTP/2's retry of a refused stream both have nothing to act on. The proxy and TLS settings are kept.
+// Any other RoundTripper is used as given.
+func singleAttempt(base http.RoundTripper) http.RoundTripper {
+	original, ok := base.(*http.Transport)
+	if !ok {
+		return base
 	}
-	return http.DefaultTransport
+	clone := original.Clone()
+	clone.DisableKeepAlives = true
+	clone.ForceAttemptHTTP2 = false
+	clone.Protocols = new(http.Protocols)
+	clone.Protocols.SetHTTP1(true)
+	clone.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	if clone.TLSClientConfig != nil {
+		clone.TLSClientConfig.NextProtos = slices.DeleteFunc(slices.Clone(clone.TLSClientConfig.NextProtos), func(proto string) bool { return proto == "h2" })
+	}
+	return clone
 }
 
 // startHeaderTimer cancels the attempt if no response head arrives within the client's timeout.
@@ -154,8 +185,8 @@ func (e *Engine) startHeaderTimer(cancel context.CancelFunc) (stop func()) {
 	return func() { stopTimer() }
 }
 
-// build makes a request the transport cannot replay on its own: it has no GetBody and closes its
-// connection, so a lost connection ends the attempt instead of repeating a possibly delivered mutation.
+// build makes a request with no GetBody that closes its connection, so a transport that is not
+// the single-attempt clone still has nothing to replay.
 func (e *Engine) build(ctx context.Context, req Request, accessToken string) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), nil)
 	if err != nil {
