@@ -111,3 +111,37 @@ func TestShippedProvidersListTheirAPIHosts(t *testing.T) {
 		}
 	}
 }
+
+const portAPIBlock = `api:
+  base_url: "https://example.com:8443/v1"
+  allowed_hosts: ["example.com:8443"]
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+`
+
+func TestHostPortsAreRefusedBecauseTokensGoToPort443Only(t *testing.T) {
+	cases := map[string]string{
+		"a listed port":                portAPIBlock,
+		"an explicit 443":              strings.Replace(portAPIBlock, "8443", "443", 2),
+		"a base_url port without list": strings.Replace(portAPIBlock, `  allowed_hosts: ["example.com:8443"]`+"\n", "", 1),
+		"a listed port beside a plain": strings.Replace(hostsAPIBlock, `"upload.example.com"`, `"upload.example.com:8443"`, 1),
+	}
+	for name, api := range cases {
+		t.Run(name, func(t *testing.T) {
+			wantLoadError(t, providerFS(map[string]string{"x.yaml": withHosts(api)}), "x.yaml", "port")
+		})
+	}
+}
+
+func TestHostPortsLoadWhenTheLoopbackOptionIsOn(t *testing.T) {
+	fsys := providerFS(map[string]string{"x.yaml": strings.Replace(baseProvider, apiBlock, portAPIBlock, 1)})
+
+	c, err := LoadWithOptions(fsys, Options{AllowHostPorts: true})
+
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if got := mustProvider(t, c, "base").API.Hosts(); !slices.Equal(got, []string{"example.com:8443"}) {
+		t.Errorf("Hosts() = %v", got)
+	}
+}

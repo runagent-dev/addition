@@ -31,6 +31,25 @@ type upstream struct {
 	handle   func(n int, w http.ResponseWriter, r *http.Request)
 }
 
+// testHosts are the hosts of every upstream started so far; test engines may send tokens only there.
+var (
+	testHostsMu sync.Mutex
+	testHosts   []string
+)
+
+func listTestHost(srvURL string) {
+	parsed, _ := url.Parse(srvURL)
+	testHostsMu.Lock()
+	defer testHostsMu.Unlock()
+	testHosts = append(testHosts, catalog.HostKey(parsed))
+}
+
+func listedTestHosts() []string {
+	testHostsMu.Lock()
+	defer testHostsMu.Unlock()
+	return append([]string(nil), testHosts...)
+}
+
 func newUpstream(t *testing.T, handle func(n int, w http.ResponseWriter, r *http.Request)) *upstream {
 	t.Helper()
 	u := &upstream{handle: handle}
@@ -46,6 +65,7 @@ func newUpstream(t *testing.T, handle func(n int, w http.ResponseWriter, r *http
 		u.handle(n, w, r)
 	}))
 	t.Cleanup(u.srv.Close)
+	listTestHost(u.srv.URL)
 	return u
 }
 
@@ -102,11 +122,12 @@ func (s *sleeps) all() []time.Duration {
 
 func newEngine(renewer proxy.Renewer, s *sleeps) *proxy.Engine {
 	return &proxy.Engine{
-		Client:  http.DefaultClient,
-		API:     catalog.API{AuthHeader: "Authorization", AuthPrefix: "Bearer"},
-		Renewer: renewer,
-		Now:     func() time.Time { return t0 },
-		Sleep:   s.sleep,
+		Client:         http.DefaultClient,
+		API:            catalog.API{AuthHeader: "Authorization", AuthPrefix: "Bearer", AllowedHosts: listedTestHosts()},
+		AllowCleartext: true,
+		Renewer:        renewer,
+		Now:            func() time.Time { return t0 },
+		Sleep:          s.sleep,
 	}
 }
 
@@ -148,7 +169,7 @@ func TestEngineInjectsTheTokenAndSendsTheRequest(t *testing.T) {
 func TestEngineUsesTheProvidersAuthHeader(t *testing.T) {
 	up := newUpstream(t, reply(200, ""))
 	e := newEngine(&fakeRenewer{}, &sleeps{})
-	e.API = catalog.API{AuthHeader: "X-Api-Key", AuthPrefix: ""}
+	e.API = catalog.API{AuthHeader: "X-Api-Key", AuthPrefix: "", AllowedHosts: listedTestHosts()}
 
 	if _, _, err := do(t, e, proxy.Request{Method: "GET", URL: up.url("/")}, "k1"); err != nil {
 		t.Fatal(err)

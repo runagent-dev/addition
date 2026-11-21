@@ -54,6 +54,8 @@ type Engine struct {
 	Sleep   func(ctx context.Context, d time.Duration) error
 	// Jitter returns a random duration in [0, max]; nil uses math/rand.
 	Jitter func(max time.Duration) time.Duration
+	// AllowCleartext lets tests send to http URLs; production sends over https only.
+	AllowCleartext bool
 	// AfterFunc runs expire after d and returns a stop func; nil uses time.AfterFunc.
 	AfterFunc func(d time.Duration, expire func()) (stop func() bool)
 }

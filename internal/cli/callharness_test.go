@@ -219,3 +219,34 @@ func sha(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
+
+// replaceInProvider replaces old with replacement in providers/google.yaml of src.
+func replaceInProvider(t *testing.T, src fs.FS, old, replacement string) fs.FS {
+	t.Helper()
+	out := fstest.MapFS{}
+	err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(src, path)
+		if err != nil {
+			return err
+		}
+		if path == "providers/google.yaml" {
+			data = mustReplace(t, data, old, replacement)
+		}
+		out[path] = &fstest.MapFile{Data: data}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// lastStdout is what the harness's most recent command printed.
+func (h *harness) lastStdout() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.results[len(h.results)-1].stdout
+}

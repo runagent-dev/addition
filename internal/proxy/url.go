@@ -101,3 +101,8 @@ func hostNotAllowed(api catalog.API) *RequestError {
 	return &RequestError{Code: "host-not-allowed", Message: "the target must be a path or an https URL without userinfo on one of the provider's allowed hosts: " +
 		strings.Join(api.Hosts(), ", ")}
 }
+
+// CheckDestination refuses a URL the access token may not be sent to.
+func CheckDestination(api catalog.API, target *url.URL, allowCleartext bool) error {
+	return nil
+}

@@ -96,3 +96,14 @@ func yamlFiles(fsys fs.FS, dir string) ([]string, error) {
 	}
 	return files, nil
 }
+
+// Options relax load-time checks for tests.
+type Options struct {
+	// AllowHostPorts lets api hosts name a port, for loopback fixtures; real providers use 443 only.
+	AllowHostPorts bool
+}
+
+// LoadWithOptions is Load with opts.
+func LoadWithOptions(fsys fs.FS, opts Options) (*Catalog, error) {
+	return Load(fsys)
+}
