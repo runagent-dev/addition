@@ -60,3 +60,16 @@ func TestCallReportsAMalformedTrailerWithoutRepeatingIt(t *testing.T) {
 		})
 	}
 }
+
+func TestSealCallErrorKeepsOnlyAddnsOwnErrors(t *testing.T) {
+	own := &Error{Code: "bad-output", Exit: ExitUsage, Message: "cannot write"}
+	if got := sealCallError(nil, own); got != own {
+		t.Errorf("a typed error was replaced by %v", got)
+	}
+
+	got := asError(sealCallError(nil, fmt.Errorf("parser said %s", fakeAccessToken)))
+
+	if strings.Contains(got.Message, fakeAccessToken) || got.Code != "network" || got.Exit != ExitUpstreamServer {
+		t.Errorf("failure = %+v, want the fixed network error without upstream text", got)
+	}
+}
