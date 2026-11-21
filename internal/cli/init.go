@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 
 	"github.com/spf13/cobra"
@@ -51,6 +52,9 @@ var vaultErrorCodes = []struct {
 
 // vaultError maps known setup problems to exit 2; anything else is a failure of addn itself.
 func vaultError(err error) *Error {
+	if errors.Is(err, context.Canceled) {
+		return interrupted()
+	}
 	if errors.Is(err, vault.ErrBusy) {
 		return &Error{Code: "vault-busy", Message: vault.ErrBusy.Error(), Exit: ExitInternal}
 	}

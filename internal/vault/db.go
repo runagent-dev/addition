@@ -144,9 +144,9 @@ func writerLockError(err error) error {
 	return err
 }
 
-// withWriterLock runs fn while holding the writer lock, and commits nothing.
+// withWriterLock runs fn while holding the writer lock, and commits nothing. Cancelling ctx stops the wait for the lock, not fn.
 func withWriterLock(ctx context.Context, db *sql.DB, fn func() error) error {
-	tx, err := beginWriterTx(ctx, db)
+	tx, err := beginInterruptibleWriterTx(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -155,8 +155,9 @@ func withWriterLock(ctx context.Context, db *sql.DB, fn func() error) error {
 }
 
 // migrate applies pending migrations forward-only, inside one immediate transaction.
+// Cancelling ctx stops the wait for the lock; a migration that holds it runs to its commit.
 func migrate(ctx context.Context, db *sql.DB) error {
-	tx, err := beginWriterTx(ctx, db)
+	tx, err := beginInterruptibleWriterTx(ctx, db)
 	if err != nil {
 		return fmt.Errorf("open vault database: %w", err)
 	}

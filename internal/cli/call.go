@@ -78,7 +78,7 @@ type callRequest struct {
 	out    *outputFile
 }
 
-func prepareCall(stdin io.Reader, rawMethod string, f callFlags) (callRequest, error) {
+func prepareCall(ctx context.Context, stdin io.Reader, rawMethod string, f callFlags) (callRequest, error) {
 	method, err := proxy.ParseMethod(rawMethod)
 	if err != nil {
 		return callRequest{}, callRequestError(err)
@@ -90,7 +90,7 @@ func prepareCall(stdin io.Reader, rawMethod string, f callFlags) (callRequest, e
 	if header.Get("User-Agent") == "" {
 		header.Set("User-Agent", "addn/"+Version)
 	}
-	body, err := readRequestBody(stdin, f)
+	body, err := readRequestBody(ctx, stdin, f)
 	if err != nil {
 		return callRequest{}, err
 	}
@@ -105,7 +105,7 @@ func prepareCall(stdin io.Reader, rawMethod string, f callFlags) (callRequest, e
 
 func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags) error {
 	ctx := cmd.Context()
-	req, err := prepareCall(cmd.InOrStdin(), rawMethod, f)
+	req, err := prepareCall(ctx, cmd.InOrStdin(), rawMethod, f)
 	if err != nil {
 		return err
 	}
@@ -297,19 +297,19 @@ func orDefault(provider string) string {
 	return provider
 }
 
-func readRequestBody(stdin io.Reader, f callFlags) ([]byte, error) {
+func readRequestBody(ctx context.Context, stdin io.Reader, f callFlags) ([]byte, error) {
 	switch {
 	case !f.dataSet:
 		return nil, nil
 	case f.data == "-":
-		return readCapped(stdin)
+		return readCapped(ctx, stdin)
 	case strings.HasPrefix(f.data, "@"):
-		return readBodyFile(f.data[1:])
+		return readBodyFile(ctx, f.data[1:])
 	}
 	return capBody([]byte(f.data))
 }
 
-func readBodyFile(path string) ([]byte, error) {
+func readBodyFile(ctx context.Context, path string) ([]byte, error) {
 	if path == "" {
 		return nil, &Error{Code: "bad-data", Exit: ExitUsage, Message: "--data @ needs a file name"}
 	}
@@ -318,15 +318,29 @@ func readBodyFile(path string) ([]byte, error) {
 		return nil, &Error{Code: "bad-data", Exit: ExitUsage, Message: fmt.Sprintf("read the --data file: %v", err)}
 	}
 	defer file.Close()
-	return readCapped(file)
+	return readCapped(ctx, file)
 }
 
-func readCapped(r io.Reader) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(r, maxRequestBody+1))
-	if err != nil {
-		return nil, &Error{Code: "bad-data", Exit: ExitUsage, Message: fmt.Sprintf("read the request body: %v", err)}
+// readCapped reads r in the background so cancelling ctx ends the wait; the read itself ends with the process.
+func readCapped(ctx context.Context, r io.Reader) ([]byte, error) {
+	type read struct {
+		data []byte
+		err  error
 	}
-	return capBody(data)
+	done := make(chan read, 1)
+	go func() {
+		data, err := io.ReadAll(io.LimitReader(r, maxRequestBody+1))
+		done <- read{data, err}
+	}()
+	select {
+	case got := <-done:
+		if got.err != nil {
+			return nil, &Error{Code: "bad-data", Exit: ExitUsage, Message: fmt.Sprintf("read the request body: %v", got.err)}
+		}
+		return capBody(got.data)
+	case <-ctx.Done():
+		return nil, interrupted()
+	}
 }
 
 func capBody(data []byte) ([]byte, error) {
