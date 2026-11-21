@@ -39,6 +39,7 @@ oauth2:
 api:
   base_url: ""
   # allowed_hosts: ["api.example.com"]  # Optional: hosts the token may be sent to; default is base_url's host
+  # allowed_path_prefixes: ["/v1/"]    # Optional: a request path must start with one; set it when apps share a host
   auth_header: "Authorization"
   auth_prefix: "Bearer"
   rate_limit:

@@ -15,6 +15,8 @@ api:
   allowed_hosts:
     - "www.googleapis.com"
     - "openidconnect.googleapis.com"
+  allowed_path_prefixes:
+    - "/calendar/"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

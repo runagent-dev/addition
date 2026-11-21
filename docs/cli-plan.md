@@ -225,10 +225,16 @@ host of the app's `api.base_url`) or an `https` URL whose host is listed in the 
 token cannot reach `chat.googleapis.com` and a Chat token cannot reach Gmail. A listed host matches case-insensitively, without a trailing dot, on port 443.
 Any other host or scheme, userinfo, a `//host` path, or an opaque URL is `host-not-allowed` (exit `2`), and nothing is
 sent: not the request, and not a token refresh either. The access token is only ever sent to a listed host over https.
+Apps that share a host also list `api.allowed_path_prefixes` (arrays replace under `extends`): Drive and Calendar both
+use `www.googleapis.com`, so Drive allows `/drive/`, `/upload/drive/` and `/download/drive/` and Calendar `/calendar/`.
+When the list is not empty, the target's path, exactly as it will be sent, must start with one of the prefixes on
+every allowed host of the app, else `path-not-allowed` (exit `2`) and nothing is sent. A path a server might
+normalise into another route is refused the same way: dot segments, double slashes, backslashes, encoded slashes
+(`%2f`, `%5c`), percent-encoded dots, `;` parameters on a dot segment, control characters and spaces.
 `--query` pairs are appended after the path's own query. `-H` may not set `Authorization`, `Host`, `Cookie`,
 `Proxy-*`, `Content-Length`, `Transfer-Encoding`, `Accept-Encoding`, `Upgrade`, `Connection`, `TE`, `Trailer`,
 `Keep-Alive` or a method-override header (`forbidden-header`, exit `2`); raw control characters, tab aside, are `bad-header`.
-The engine checks the destination again where it attaches the token (https only, a listed host, no userinfo), and
+The engine checks the destination again where it attaches the token (https only, a listed host, no userinfo, an allowed path prefix), and
 catalog validation rejects any `allowed_hosts` or `base_url` port: the token goes to port 443 only.
 `--data` is a literal body, `@file` or `-` for stdin, capped at 64 MiB; the body is buffered so it can be replayed,
 and defaults to `Content-Type: application/json`. A SIGINT while stdin is being read ends the command at once.
@@ -296,7 +302,7 @@ and does not change the result.
 same refresh-if-needed path for each account and asks the provider's identity endpoint whether the token works: each
 row gains `live` and `live_reason` (`ok`, `needs-reauth`, `no-refresh-token`, `no-credential`, `no-oauth-client`,
 `refresh-rejected`, `token-rejected`, `identity-rejected`, `network`, `no-identity-endpoint`, `identity-not-allowed`,
-`legacy-account`), never provider text. The identity URL must be on the app's own `allowed_hosts`, so every app lists
+`legacy-account`), never provider text. The identity URL is a fixed catalog URL checked by host only, and must be on the app's own `allowed_hosts`, so every app lists
 `openidconnect.googleapis.com`. Every account row also carries `scopes_ready` and `missing_scopes`, the app's default
 scopes the account was not granted.
 

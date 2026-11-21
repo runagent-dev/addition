@@ -16,6 +16,9 @@ api:
   allowed_hosts:
     - "gmail.googleapis.com"
     - "openidconnect.googleapis.com"
+  allowed_path_prefixes:
+    - "/gmail/"
+    - "/upload/gmail/"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

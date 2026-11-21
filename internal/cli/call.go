@@ -45,8 +45,10 @@ func newCallCmd(d deps) *cobra.Command {
 			"<app> is a provider id or toolkit command, e.g. gmail, drive (google-drive) or google-chat:\n" +
 			"addn call google-chat -a work GET /v1/spaces\n\n" +
 			"<path> is absolute from the app's API host (/calendar/v3/calendars/primary/events) or an https URL\n" +
-			"on one of the app's allowed hosts (see api.allowed_hosts in its YAML); nothing is sent to\n" +
-			"any other host, so an app's token never reaches another app's API. addn sets Authorization itself, refreshes an expiring token first, renews it\n" +
+			"on one of the app's allowed hosts, and its path must start with one of the app's allowed prefixes\n" +
+			"(api.allowed_hosts and api.allowed_path_prefixes in its YAML; path-not-allowed otherwise). Nothing is\n" +
+			"sent to any other host or route, so an app's token never reaches another app's API.\n" +
+			"addn sets Authorization itself, refreshes an expiring token first, renews it\n" +
 			"once on a 401, and waits out 429 responses. Redirects are never followed.\n\n" +
 			"A 2xx text or JSON body goes to stdout verbatim. A binary body needs -o <file>, which writes it\n" +
 			"privately and prints {status, content_type, bytes, path}; an existing file needs --force.\n" +

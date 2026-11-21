@@ -15,6 +15,10 @@ api:
     - "www.googleapis.com"
     - "drive.googleapis.com"
     - "openidconnect.googleapis.com"
+  allowed_path_prefixes:
+    - "/drive/"
+    - "/upload/drive/"
+    - "/download/drive/"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

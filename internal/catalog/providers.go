@@ -58,13 +58,15 @@ type TokenResponseMapping struct {
 }
 
 // API describes where and how requests to a provider are made. AllowedHosts are the only hosts
-// an access token may be sent to; without them, only the host of BaseURL is.
+// an access token may be sent to; without them, only the host of BaseURL is. When
+// AllowedPathPrefixes is not empty, the path of a request must also start with one of them, on every host.
 type API struct {
-	BaseURL      string     `yaml:"base_url"`
-	AllowedHosts []string   `yaml:"allowed_hosts"`
-	AuthHeader   string     `yaml:"auth_header"`
-	AuthPrefix   string     `yaml:"auth_prefix"`
-	RateLimit    *RateLimit `yaml:"rate_limit"`
+	BaseURL             string     `yaml:"base_url"`
+	AllowedHosts        []string   `yaml:"allowed_hosts"`
+	AllowedPathPrefixes []string   `yaml:"allowed_path_prefixes"`
+	AuthHeader          string     `yaml:"auth_header"`
+	AuthPrefix          string     `yaml:"auth_prefix"`
+	RateLimit           *RateLimit `yaml:"rate_limit"`
 }
 
 // Hosts lists the hosts, as HostKey spells them, that requests with this API's credentials may reach.

@@ -14,6 +14,8 @@ api:
   allowed_hosts:
     - "docs.googleapis.com"
     - "openidconnect.googleapis.com"
+  allowed_path_prefixes:
+    - "/v1/documents"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

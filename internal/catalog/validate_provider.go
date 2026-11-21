@@ -87,6 +87,7 @@ func validateProvider(fields map[string]any, opts Options) error {
 		api.nonEmptyString("auth_header")
 		api.nonEmptyString("auth_prefix")
 		validateAllowedHosts(api, opts)
+		validatePathPrefixes(api)
 	}
 	return err
 }
@@ -123,6 +124,26 @@ func validateAllowedHosts(api fieldChecker, opts Options) {
 	base, err := url.Parse(fmt.Sprint(api.fields["base_url"]))
 	if err != nil || !slices.Contains(hosts, HostKey(base)) {
 		api.fail("base_url", "has a host that is not listed in api.allowed_hosts")
+	}
+}
+
+// validatePathPrefixes checks the optional api.allowed_path_prefixes: plain paths that start with /.
+func validatePathPrefixes(api fieldChecker) {
+	raw, present := api.fields["allowed_path_prefixes"]
+	if !present || raw == nil {
+		return
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		api.fail("allowed_path_prefixes", "must be a list of paths")
+		return
+	}
+	for _, entry := range list {
+		prefix, isString := entry.(string)
+		if !isString || !PlainPath(prefix) || strings.ContainsAny(prefix, "?#%") {
+			api.fail("allowed_path_prefixes", "entries must start with / and hold no dot segments, empty segments, escapes, query or whitespace, got %#v", entry)
+			return
+		}
 	}
 }
 

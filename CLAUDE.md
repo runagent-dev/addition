@@ -127,7 +127,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
 10. **Token extraction is data:** `oauth2.token_response_mapping` dot-paths, else the standard OAuth2 layout. Adapters may reject error shapes but never extract tokens.
 11. **Audit log:** connect / refresh / revoke / call events write a row; never token values, paths or queries.
-12. **Token destinations:** an access token is sent only over https to a host in its own app's `api.allowed_hosts` (default: the host of `api.base_url`), never to another app's hosts. A target outside the list is refused before anything is sent, and redirects are never followed.
+12. **Token destinations:** an access token is sent only over https to a host in its own app's `api.allowed_hosts` (default: the host of `api.base_url`) and, when the app lists `api.allowed_path_prefixes`, only to a path that starts with one of them, on every host; so apps sharing a host (Drive and Calendar on `www.googleapis.com`) never receive each other's tokens. A path a server could normalise into another route (dot segments, double or encoded slashes, backslashes, whitespace) is refused, checked on the exact bytes sent where the token is attached. A target outside the list is refused before anything is sent, and redirects are never followed.
 13. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
 
 ---

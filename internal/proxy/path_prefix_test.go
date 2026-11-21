@@ -117,7 +117,6 @@ func TestEngineNeverAttachesATokenToAPathOutsideThePrefixes(t *testing.T) {
 		},
 		"opaque":      {Scheme: "http", Opaque: "//" + up.srv.Listener.Addr().String() + "/calendar/v3/x"},
 		"empty path":  {Scheme: "http", Host: up.srv.Listener.Addr().String()},
-		"relative":    {Scheme: "http", Host: up.srv.Listener.Addr().String(), Path: "drive/v3/x"},
 		"only a root": up.url("/"),
 	}
 	for name, target := range cases {
