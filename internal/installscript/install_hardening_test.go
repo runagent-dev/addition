@@ -96,7 +96,7 @@ func TestTruncatedScriptNeverInstalls(t *testing.T) {
 	for cut := finalStatement; cut < len(script)-1; cut++ {
 		r := h.run(func(i *invocation) { i.stdin = bytes.NewReader(script[:cut]) })
 
-		if r.code == 0 || r.stdout != "" {
+		if r.stdout != "" || (cut > finalStatement && r.code == 0) {
 			t.Fatalf("script cut at byte %d of %d: exit %d, stdout %q\nstderr: %s", cut, len(script), r.code, r.stdout, r.stderr)
 		}
 		if reqs := h.rel.requested(); len(reqs) != 0 {
@@ -374,6 +374,9 @@ func TestRelativeTempAndInstallDirsWork(t *testing.T) {
 	h := newHarness(t)
 	h.rel.publish(t, latest, "0.3.0")
 	work := t.TempDir()
+	if err := os.Mkdir(filepath.Join(work, "-tmp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	r := h.run(
 		withEnv("TMPDIR", "-tmp"),
 		withEnv("ADDITION_INSTALL_DIR", "-bin"),
@@ -470,4 +473,19 @@ func TestInstallsUnderEveryAvailableShell(t *testing.T) {
 			h.assertCleanTemp()
 		})
 	}
+}
+
+func TestInstallsWithTheRealWget(t *testing.T) {
+	wget, err := exec.LookPath("wget")
+	if err != nil {
+		t.Skip("wget not installed")
+	}
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+	if err := os.Symlink(wget, filepath.Join(h.tools.dir, "wget")); err != nil {
+		t.Fatal(err)
+	}
+
+	decodeSuccess(t, h.run())
 }

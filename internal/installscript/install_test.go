@@ -320,7 +320,7 @@ func scriptDir(t *testing.T) string {
 }
 
 func withShell(argv ...string) func(*invocation) { return func(i *invocation) { i.shell = argv } }
-func withEnv(k, v string) func(*invocation) { return func(i *invocation) { i.env[k] = v } }
+func withEnv(k, v string) func(*invocation)      { return func(i *invocation) { i.env[k] = v } }
 func withPath(dirs ...string) func(*invocation) {
 	return func(i *invocation) { i.path = dirs }
 }
