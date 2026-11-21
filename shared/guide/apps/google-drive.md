@@ -12,13 +12,13 @@ App `google-drive` (command name `drive`), hosts `www.googleapis.com` and `drive
 addition call drive -a work GET /drive/v3/about --query 'fields=user(emailAddress),storageQuota'
 addition call drive -a work GET /drive/v3/files --query 'fields=files(id,name,mimeType),nextPageToken' --query pageSize=20
 addition call drive -a work GET /drive/v3/files --query pageSize=20 --query 'fields=files(id,name,mimeType),nextPageToken' --query pageToken="$PAGE_TOKEN"
-addition call drive -a work GET /drive/v3/files --query "q=name contains 'invoice' and trashed=false" --query 'fields=files(id,name,mimeType)'
+addition call drive -a work GET /drive/v3/files --query "q=name contains 'invoice' and trashed=false" --query 'fields=nextPageToken,files(id,name,mimeType)'
 addition call drive -a work GET "/drive/v3/files/$FILE_ID" --query 'fields=id,name,mimeType,size,modifiedTime,parents,webViewLink'
 addition call drive -a work GET "/drive/v3/files/$FILE_ID" --query alt=media -o ./file.pdf
 addition call drive -a work GET "/drive/v3/files/$FILE_ID/export" --query mimeType=application/pdf -o ./doc.pdf
 ```
 
-Paginate with `nextPageToken` and `pageToken`, repeating the same `q` and `fields`. `$FILE_ID` stands for a value you fill in; keep it double-quoted. `alt=media` downloads stored files; Google Docs, Sheets and Slides need `/export` with a target `mimeType`. Binary bodies need `-o`.
+Paginate with `nextPageToken` and `pageToken`: later pages repeat the same `q` and `fields` mask with `pageToken` set. `$FILE_ID` stands for a value you fill in; keep it double-quoted. `alt=media` downloads stored files; Google Docs, Sheets and Slides need `/export` with a target `mimeType`. Binary bodies need `-o`.
 
 ## Pitfalls
 
