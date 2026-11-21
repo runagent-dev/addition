@@ -22,6 +22,8 @@ type TokenManager struct {
 	Provider *catalog.Provider
 	Account  vault.Account
 	Now      func() time.Time
+	// BeforeWriterLock, if set, runs once the credential has been read and the writer lock is about to be requested.
+	BeforeWriterLock func()
 }
 
 // Access returns the account's access token, refreshing it first if it expires within AccessTokenSkew.
@@ -74,6 +76,9 @@ func (m *TokenManager) expiring(c vault.Credential) bool {
 func (m *TokenManager) refresh(ctx context.Context, stale func(vault.Credential) bool) (string, error) {
 	var token string
 	var failure error
+	if m.BeforeWriterLock != nil {
+		m.BeforeWriterLock()
+	}
 	err := m.Store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
 		acct, err := tx.GetAccount(ctx, m.Account.Provider, m.Account.Alias)
 		if errors.Is(err, vault.ErrNotFound) {

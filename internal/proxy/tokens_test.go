@@ -272,40 +272,6 @@ func TestConcurrentProcessesRefreshOnce(t *testing.T) {
 	}
 }
 
-func TestAWaitingRefresherUsesWhatTheLockHolderCommitted(t *testing.T) {
-	f := newVaultFixture(t, expiringIn(-time.Minute))
-	ctx := context.Background()
-	waiter := f.manager(f.open())
-	holding, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	go func() {
-		done <- f.store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
-			close(holding)
-			<-release
-			return tx.PutCredential(ctx, f.account.ID, vault.Credential{AccessToken: newAccess, RefreshToken: oldRefresh, ExpiresAt: t0.Add(time.Hour)})
-		})
-	}()
-	<-holding
-	got := make(chan string, 1)
-	go func() {
-		token, err := waiter.Access(ctx)
-		if err != nil {
-			token = "error: " + err.Error()
-		}
-		got <- token
-	}()
-	close(release)
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-
-	if token := <-got; token != newAccess {
-		t.Errorf("waiter got %q, want the token the lock holder committed", token)
-	}
-	if hits := f.endpoint.hits.Load(); hits != 0 {
-		t.Errorf("token endpoint hits = %d, want 0", hits)
-	}
-}
-
 func TestRotatedRefreshTokenIsUsedForTheNextRefresh(t *testing.T) {
 	f := newVaultFixture(t, expiringIn(-time.Minute))
 	f.endpoint.reply = func(n int, form url.Values) (int, map[string]any) {

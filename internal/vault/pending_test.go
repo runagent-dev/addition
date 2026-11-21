@@ -324,7 +324,7 @@ func TestOpenUpgradesASchemaOneVault(t *testing.T) {
 	}
 	var version string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version)
-	if version != "2" {
-		t.Errorf("schema_version = %s, want 2", version)
+	if version != "3" {
+		t.Errorf("schema_version = %s, want 3", version)
 	}
 }

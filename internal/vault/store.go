@@ -49,6 +49,8 @@ type Credential struct {
 	TokenType    string
 	ExpiresAt    time.Time
 	UpdatedAt    time.Time
+	// Revision counts the writes to this credential, so a reader can tell whether it changed whatever its token text.
+	Revision int64
 }
 
 // ops holds the store operations shared by Store and Tx.
