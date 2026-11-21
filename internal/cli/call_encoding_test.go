@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCallRefusesTheCallersAcceptEncoding(t *testing.T) {
@@ -96,9 +97,11 @@ func TestCallLetsAnIdentityCodingThrough(t *testing.T) {
 }
 
 func TestCallRefusesRepeatedContentEncodingFields(t *testing.T) {
+	exits := map[int]int{200: ExitUpstreamServer, 400: ExitUpstreamClient, 502: ExitUpstreamServer}
 	for _, status := range []int{200, 400, 502} {
 		for _, saved := range []bool{false, true} {
 			c := newCallHarness(t)
+			useRealTransport(c)
 			c.api.respond(func(_ int, w http.ResponseWriter, r *http.Request) {
 				token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 				w.Header().Set("Content-Type", "application/json")
@@ -123,6 +126,9 @@ func TestCallRefusesRepeatedContentEncodingFields(t *testing.T) {
 			}
 			if env := decodeError(t, r.stderr); env.Error.Code != "unsupported-encoding" {
 				t.Errorf("status %d saved %v: error code = %q, want unsupported-encoding", status, saved, env.Error.Code)
+			}
+			if r.code != exits[status] {
+				t.Errorf("status %d saved %v: exit %d, want %d", status, saved, r.code, exits[status])
 			}
 		}
 	}
@@ -158,5 +164,50 @@ func TestCallHeadIgnoresCodingMetadataOfAnAbsentBody(t *testing.T) {
 func TestInterruptionMessageNamesNoCommand(t *testing.T) {
 	if msg := interrupted().Message; strings.Contains(msg, "call") {
 		t.Errorf("message %q names the call command", msg)
+	}
+}
+
+// useRealTransport sends the call through the TLS server's own *http.Transport, not the recording wrapper.
+func useRealTransport(c *callHarness) {
+	c.deps.httpClient = &http.Client{Transport: c.api.srv.Client().Transport, Timeout: 5 * time.Second}
+}
+
+func TestCallRefusesAnUnsolicitedProtocolSwitch(t *testing.T) {
+	for _, method := range []string{"GET", "HEAD"} {
+		c := newCallHarness(t)
+		useRealTransport(c)
+		c.api.respond(func(_ int, w http.ResponseWriter, r *http.Request) {
+			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			conn, buf, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer conn.Close()
+			_, _ = buf.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\nContent-Encoding: gzip\r\n\r\n")
+			_, _ = buf.Write(gzipped(t, strings.Repeat(token+" ", 40)))
+			_ = buf.Flush()
+		})
+
+		r := c.call("-a", "work", method, "/x")
+
+		if r.stdout != "" {
+			t.Errorf("%s: stdout = %q, want nothing", method, r.stdout)
+		}
+		if r.code != ExitUpstreamServer {
+			t.Errorf("%s: exit %d, want %d (stderr %q)", method, r.code, ExitUpstreamServer, r.stderr)
+		}
+	}
+}
+
+func TestCallAcceptsCodingMetadataOnA204(t *testing.T) {
+	c := newCallHarness(t)
+	useRealTransport(c)
+	c.api.respond(status(204, "", "Content-Encoding", "gzip"))
+
+	r := c.call("-a", "work", "DELETE", "/x")
+
+	if r.code != ExitOK {
+		t.Errorf("exit %d, stderr %q; a 204 has no body to inspect", r.code, r.stderr)
 	}
 }

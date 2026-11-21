@@ -136,6 +136,11 @@ func (e *Engine) send(ctx context.Context, req Request, accessToken string) (*Re
 		}
 		return nil, &NetworkError{err: err}
 	}
+	if resp.StatusCode < http.StatusOK {
+		_ = resp.Body.Close()
+		cancel()
+		return nil, &NetworkError{err: errors.New("the server answered with an informational status")}
+	}
 	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}}, nil
 }
 

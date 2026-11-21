@@ -355,7 +355,7 @@ func capBody(data []byte) ([]byte, error) {
 // Everything derived from the response passes the echo guard, so an access token never leaves addn.
 func deliver(cmd *cobra.Command, method string, resp *proxy.Response, out *outputFile) error {
 	guard := proxy.NewEchoGuard(resp.Tokens)
-	if bodyIsRead(resp.Status) && method != http.MethodHead && hasContentCoding(resp.Header) {
+	if mayHaveBody(method, resp.Status) && hasContentCoding(resp.Header) {
 		return unsupportedEncoding(resp.Status)
 	}
 	if resp.Status < 200 || resp.Status > 299 {
@@ -388,6 +388,11 @@ func deliverFailure(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoG
 
 // bodyIsRead is false for a redirect, whose body is never read.
 func bodyIsRead(status int) bool { return status < 300 || status > 399 }
+
+// mayHaveBody is false where the response carries no body to inspect: HEAD, 204, 304 and redirects.
+func mayHaveBody(method string, status int) bool {
+	return method != http.MethodHead && status != http.StatusNoContent && status != http.StatusNotModified && bodyIsRead(status)
+}
 
 // hasContentCoding reports any coding on the body; the transport never decodes one.
 func hasContentCoding(h http.Header) bool {
