@@ -227,13 +227,17 @@ func (e *Engine) retryAfter(h http.Header) (time.Duration, bool) {
 		name = e.API.RateLimit.RetryAfterHeader
 	}
 	value := strings.TrimSpace(h.Get(name))
-	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) && isAllDigits(value) {
 		return time.Duration(min(seconds, uint64(maxRetryWait/time.Second))) * time.Second, true
 	}
 	if at, err := http.ParseTime(value); err == nil {
 		return max(at.Sub(e.now()), 0), true
 	}
 	return 0, false
+}
+
+func isAllDigits(s string) bool {
+	return s != "" && !strings.ContainsFunc(s, func(r rune) bool { return r < '0' || r > '9' })
 }
 
 func (e *Engine) now() time.Time {
