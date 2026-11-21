@@ -129,7 +129,12 @@ func (h *homeDir) checkPrivateFile(name string) error {
 	if err := unix.Fstatat(h.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return &fs.PathError{Op: "lstat", Path: h.join(name), Err: err}
 	}
-	return checkPrivateStat(&st, h.join(name), ErrInsecureHome)
+	err := checkPrivateStat(&st, h.join(name), ErrInsecureHome)
+	if err == nil {
+		return nil
+	}
+	onlyMode := st.Mode&unix.S_IFMT == unix.S_IFREG && int(st.Uid) == os.Geteuid()
+	return &InsecureFileError{Name: name, TooPermissive: onlyMode, Err: err}
 }
 
 func checkPrivateStat(st *unix.Stat_t, path string, kind error) error {

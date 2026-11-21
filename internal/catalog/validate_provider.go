@@ -88,7 +88,9 @@ func validateProvider(fields map[string]any, opts Options) error {
 		api.nonEmptyString("auth_prefix")
 		validateAllowedHosts(api, opts)
 		validatePathPrefixes(api)
+		validateProbe(api)
 	}
+	validateDoctor(root)
 	return err
 }
 
@@ -187,5 +189,40 @@ func validateOAuth2(o fieldChecker) {
 func checkBaseURLPort(api fieldChecker, opts Options) {
 	if base, err := url.Parse(fmt.Sprint(api.fields["base_url"])); err == nil && base.Port() != "" && !opts.AllowHostPorts {
 		api.fail("base_url", "names a port; access tokens are sent to port 443 only")
+	}
+}
+
+var servicePattern = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)+$`)
+
+// validateProbe checks the optional api.service and api.probe_path that `addition doctor` uses.
+func validateProbe(api fieldChecker) {
+	api.optionalString("service")
+	if s, ok := api.fields["service"].(string); ok && !servicePattern.MatchString(s) {
+		api.fail("service", "must be a lowercase API host name such as gmail.googleapis.com, got %q", s)
+	}
+	api.optionalString("probe_path")
+	if s, ok := api.fields["probe_path"].(string); ok && (!strings.HasPrefix(s, "/") || strings.ContainsFunc(s, isSpaceOrControl)) {
+		api.fail("probe_path", "must be an absolute path without whitespace, got %q", s)
+	}
+}
+
+func isSpaceOrControl(r rune) bool { return r <= ' ' || r == 0x7f }
+
+// validateDoctor checks the optional doctor mapping.
+func validateDoctor(root fieldChecker) {
+	if root.fields["doctor"] == nil {
+		return
+	}
+	doc, ok := root.mapping("doctor")
+	if !ok {
+		return
+	}
+	doc.onlyKeys("client_hint", "token_age_warn_days", "token_age_hint")
+	doc.optionalString("client_hint")
+	doc.optionalString("token_age_hint")
+	if days, present := doc.fields["token_age_warn_days"]; present {
+		if n, isInt := days.(int); !isInt || n < 1 {
+			doc.fail("token_age_warn_days", "must be a positive whole number of days, got %#v", days)
+		}
 	}
 }

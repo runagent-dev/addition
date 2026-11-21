@@ -17,6 +17,7 @@ import (
 // deps are the edges of the process that commands touch; tests swap them for fakes.
 type deps struct {
 	catalogFS       fs.FS
+	guideFS         fs.FS
 	env             vault.Env
 	httpClient      *http.Client
 	openBrowser     func(url string) (exited <-chan error)
@@ -31,6 +32,7 @@ type deps struct {
 func productionDeps() deps {
 	return deps{
 		catalogFS:       shared.FS,
+		guideFS:         shared.Guide,
 		env:             vault.OSEnv(),
 		httpClient:      &http.Client{Timeout: 30 * time.Second},
 		openBrowser:     openSystemBrowser,

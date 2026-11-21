@@ -326,6 +326,7 @@ addition call <app> [-a <alias>] <METHOD> <path> [--query k=v] [--data @file.jso
 addition connect <app> --as <alias> [--no-browser]
 addition accounts [list|show|remove <app>:<alias> [--revoke [--and-siblings]]|default|check [--live]]
 addition tools [--provider p] [--json]            addition skill install [--harness …]
+addition guide [<topic>|all] [--json]
 ```
 
 - Tool commands are **generated at runtime** from embedded toolkit YAML;
@@ -334,7 +335,8 @@ addition tools [--provider p] [--json]            addition skill install [--harn
 - Exit codes: `0` ok · `1` internal (addition itself failed or was interrupted: stdout not writable, broken embedded data, vault busy) · `2` usage/validation ·
   `3` not connected / needs reauth · `4` upstream 4xx · `5` upstream 5xx/network ·
   `6` policy denied (Phase 2).
-- Help text is human-readable; JSON is the contract for tool and data commands.
+- Help text is human-readable; JSON is the contract for tool and data commands. `addition guide` is the one
+  exception: it prints Markdown, from the binary's embedded `shared/guide/`, with no network and no vault.
 - Stderr is JSON lines: a progress notice is one object per line, such as
   `{"notice":"open-browser-failed","authorize_url":"…"}`, and an error envelope, if
   any, is always the last line.
@@ -366,13 +368,13 @@ can use the same day.
 | M3 | Connect | `addition client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, re-consent for the union of stored and default scopes (persist the scopes actually granted), `addition connect / accounts / auth check` (local status only) | accounts connected |
 | **M4** | **Raw call** | `addition call` (§2.5): host allow-list, token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming, `call` audit event; `auth check --live` | **✅ agents can hit any Google API** |
 | **M4b** | **Apps are separate connections** | each app its own provider, scopes, hosts and account (`gmail`, `google-drive`, `google-calendar`, new `google-chat` and `google-docs`); `connect <app>`, no `--services`; `call <app>` (app required, no `--provider`); `accounts check` (`auth check` kept as a hidden alias) with `scopes_ready` / `missing_scopes`; one OAuth client per identity root; `legacy-account` for pre-M4b rows; `api.allowed_path_prefixes` keeps an app's token off other apps' routes on a shared host; `oauth2.revoke_scope` and `accounts remove --revoke [--and-siblings]` for Google's grant-wide revocation | ✅ one "Connect" card per app |
-| M4c | Doctor | `addition doctor`: one JSON report on the vault, master-key source, accounts and `PATH`, so an agent can diagnose a broken install | ✅ |
+| M4c | Doctor | `addition doctor`: one JSON report on the vault, master-key source, OAuth clients and accounts (offline), with `--live` probing each app's API, and a `next` command, so an agent can diagnose a broken install | ✅ done |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
 | M7a | Release pipeline + installer | `addition version` build metadata, GoReleaser binaries (linux/mac/windows, amd64/arm64) with version-less archive names and `checksums.txt`, GitHub artifact attestation, `release.yml` on `v*` tags, a snapshot build in CI, `install.sh`, README install section. Built ahead of M5–M6 so every later milestone can be tried from a release | ✅ installable binaries |
 | M7b | Self-update | `addition update` (explicit only, checksum-verified, atomic replace, same release assets as the installer) | ✅ |
 | M7c | Package-manager shims | npm `@addition/cli`, PyPI `addition`, Homebrew `addition`; each ships or fetches the released binary and verifies its checksum | ✅ |
-| M7d | Agent surface | `addition guide`, `addition skill install` (SKILL.md for Claude Code / Codex / generic), `llms.txt`, per-app recipes, `addition tools --json` schemas | ✅ **v0.1.0** |
+| M7d | Agent surface | `addition guide` (embedded Markdown manual, per-app recipes, doc-truth tests) and `llms.txt` ✅ done; `addition skill install` (SKILL.md for Claude Code / Codex / generic) and `addition tools --json` schemas still pending | ✅ **v0.1.0** |
 
 **M1–M4 test focus (port, don't reinvent):**
 - `crypto_interop.yaml`, `token_refresh.yaml`, `proxy_requests.yaml` and

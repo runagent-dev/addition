@@ -144,6 +144,19 @@ func checkSideFiles(home *homeDir) error {
 	return nil
 }
 
+// InsecureFileError is ErrInsecureHome for a file inside the data dir, naming it. Its message is the
+// wrapped error's, so the text commands show does not change.
+type InsecureFileError struct {
+	Name string
+	// TooPermissive is true when the file is the user's own regular file and only its mode is wrong.
+	TooPermissive bool
+	Err           error
+}
+
+func (e *InsecureFileError) Error() string { return e.Err.Error() }
+
+func (e *InsecureFileError) Unwrap() error { return e.Err }
+
 // Store is an open vault. All methods take and return plaintext; secrets are sealed at this boundary.
 type Store struct {
 	ops

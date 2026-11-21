@@ -49,15 +49,22 @@ Other ways in:
 - **Windows:** download the `.zip` for your CPU from the
   [releases page](https://github.com/runagent-dev/addition/releases) and put `addition.exe` on your `PATH`.
 
+## For agents
+
+Install it (above), then run `addition guide`: the manual for agents is built into the binary,
+matches its version and works offline. [`llms.txt`](llms.txt) indexes the same pages for crawlers.
+
 ## Quick start
 
 ```bash
 addition init                                           # create the vault and its master key
+addition doctor                                         # what is wrong, and the one command to run next
 addition client add google --file client_secret.json    # your own OAuth client; shared by every Google app
 addition connect gmail --as work                        # one connection per app
 addition connect google-calendar --as work
 addition accounts list
 addition accounts check --live                          # does each token still work?
+addition doctor --live                                  # also probe each app's API once
 addition call google-calendar -a work GET /calendar/v3/calendars/primary/events
 addition call gmail -a work GET /gmail/v1/users/me/messages --query q=newer_than:7d
 addition providers                                      # apps addition knows
@@ -69,6 +76,11 @@ No desktop keyring (a Linux server without a Secret Service)? Plain `addition in
 `keychain-unavailable`. Keep the master key in a file instead, `addition init --key-file` (it goes to
 `$ADDITION_HOME/master.key`, mode 0600), or export `ADDITION_MASTER_KEY` (64 hex characters) and run
 `addition init` as usual; the variable must then stay set for every later command.
+
+`addition doctor` prints one JSON report: `ok`, a list of `checks` (vault, master key,
+OAuth client, each account) and `next`, the single command to run now. It exits 3 when you need to act.
+Run it first after installing, and whenever something fails. doctor opens the vault like any other command
+(it may apply a pending schema upgrade) and makes no network request unless you pass `--live`.
 
 Headless or over SSH: `addition connect gmail --as work --no-browser`, then finish with
 `addition connect --complete '<url the browser landed on>'`. Run `addition <command> --help` for details.
