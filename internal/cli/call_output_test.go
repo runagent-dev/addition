@@ -176,3 +176,40 @@ func TestCallLeavesNoTempFileWhenTheBodyBreaksMidStream(t *testing.T) {
 		t.Errorf("directory = %v, want it empty", names)
 	}
 }
+
+// onWrite calls fn with every write to a stream, as a reader of a closing pipe would observe them.
+type onWrite struct{ fn func() }
+
+func (w onWrite) Write(p []byte) (int, error) { w.fn(); return len(p), nil }
+
+func TestCallRemovesItsTemporaryNameBeforePrintingTheSummary(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		c := newCallHarness(t)
+		c.api.respond(status(200, "%PDF\x00", "Content-Type", "application/pdf"))
+		dir := t.TempDir()
+		args := []string{"call", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "out.pdf")}
+		if force {
+			args = append(args, "--force")
+		}
+		var namesWhenPrinted []string
+		stdout := onWrite{func() { namesWhenPrinted = dirNames(t, dir) }}
+
+		code := executeContext(t.Context(), args, stdout, &bytes.Buffer{}, c.deps)
+
+		if code != ExitOK || !slices.Equal(namesWhenPrinted, []string{"out.pdf"}) {
+			t.Errorf("force=%v: exit %d, directory while printing = %v; a killed writer must not leave a temp file", force, code, namesWhenPrinted)
+		}
+	}
+}
+
+func TestCallSummaryNamesThePathAsTheUserGaveIt(t *testing.T) {
+	c := newCallHarness(t)
+	c.api.respond(status(200, "%PDF\x00", "Content-Type", "application/pdf"))
+	t.Chdir(t.TempDir())
+
+	r := c.mustRun("call", "-a", "work", "GET", "/x", "-o", "out.pdf")
+
+	if got := decodeJSON[savedFile](t, r); got.Path != "out.pdf" {
+		t.Errorf("path = %q, want the path exactly as given", got.Path)
+	}
+}
