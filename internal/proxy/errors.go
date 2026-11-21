@@ -10,6 +10,7 @@ var (
 	ErrNoRefreshToken = errors.New("the account has no refresh token")
 	ErrNoCredential   = errors.New("the account has no stored credential")
 	ErrNoOAuthClient  = errors.New("no OAuth client is stored for the provider")
+	ErrAccountChanged = errors.New("the account was replaced after it was selected")
 )
 
 // RequestError is a request addn refuses to send. Code is a stable machine-readable identifier

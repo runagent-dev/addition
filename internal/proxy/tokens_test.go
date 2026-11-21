@@ -325,3 +325,55 @@ func TestRotatedRefreshTokenIsUsedForTheNextRefresh(t *testing.T) {
 		t.Errorf("the second refresh sent %q, want the rotated token", got)
 	}
 }
+
+// replaceAccount removes the fixture's account and connects another identity under the same alias.
+func (f *vaultFixture) replaceAccount(cred vault.Credential) vault.Account {
+	f.t.Helper()
+	ctx := context.Background()
+	if err := f.store.RemoveAccount(ctx, "google", "work"); err != nil {
+		f.t.Fatal(err)
+	}
+	other, err := f.store.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work", Identity: "other@work.example", Scopes: []string{"openid"}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.store.PutCredential(ctx, other.ID, cred); err != nil {
+		f.t.Fatal(err)
+	}
+	return other
+}
+
+func TestAccessRefusesAnAccountThatWasReplacedUnderTheSameAlias(t *testing.T) {
+	cases := map[string]vault.Credential{
+		"fresh token":    {AccessToken: "ya29.other-identity", RefreshToken: "1//other", ExpiresAt: t0.Add(time.Hour)},
+		"expiring token": {AccessToken: "ya29.other-identity", RefreshToken: "1//other", ExpiresAt: t0.Add(-time.Minute)},
+	}
+	for name, cred := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newVaultFixture(t, expiringIn(time.Hour))
+			m := f.manager(f.store)
+			f.replaceAccount(cred)
+
+			token, err := m.Access(context.Background())
+
+			if !errors.Is(err, proxy.ErrAccountChanged) || token != "" {
+				t.Fatalf("Access = %q, %v; want ErrAccountChanged and no token", token, err)
+			}
+			if hits := f.endpoint.hits.Load(); hits != 0 {
+				t.Errorf("token endpoint hits = %d, want 0: nothing may be refreshed for another identity", hits)
+			}
+		})
+	}
+}
+
+func TestRenewRefusesAnAccountThatWasReplacedUnderTheSameAlias(t *testing.T) {
+	f := newVaultFixture(t, expiringIn(time.Hour))
+	m := f.manager(f.store)
+	f.replaceAccount(vault.Credential{AccessToken: oldAccess, RefreshToken: "1//other", ExpiresAt: t0.Add(time.Hour)})
+
+	_, err := m.Renew(context.Background(), oldAccess)
+
+	if !errors.Is(err, proxy.ErrAccountChanged) {
+		t.Errorf("err = %v, want ErrAccountChanged", err)
+	}
+}
