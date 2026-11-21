@@ -126,3 +126,6 @@ func (o *outputFile) moveWithoutLink(tmpPath string) error {
 	}
 	return o.replace(tmpPath)
 }
+
+// linkInDirectory publishes without replacing; tests swap it for a file system without hard links.
+var linkInDirectory = func(dir *os.Root, oldName, newName string) error { return dir.Link(oldName, newName) }
