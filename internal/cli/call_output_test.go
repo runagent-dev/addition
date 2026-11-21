@@ -37,7 +37,7 @@ func TestCallSavesABinaryBodyToTheOutputFile(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "invoice.pdf")
 
-	r := c.mustRun("call", "-a", "work", "GET", "/drive/v3/files/1?alt=media", "-o", target)
+	r := c.mustRun("call", "gmail", "-a", "work", "GET", "/drive/v3/files/1?alt=media", "-o", target)
 
 	got := decodeJSON[savedFile](t, r)
 	if got.Status != 200 || got.ContentType != "application/pdf" || got.Bytes != int64(len(payload)) || got.Path != target {
@@ -68,7 +68,7 @@ func TestCallStreamsALargeBodyToTheOutputFile(t *testing.T) {
 	})
 	target := filepath.Join(t.TempDir(), "big.bin")
 
-	r := c.mustRun("call", "-a", "work", "GET", "/x", "-o", target)
+	r := c.mustRun("call", "gmail", "-a", "work", "GET", "/x", "-o", target)
 
 	got := decodeJSON[savedFile](t, r)
 	data, _ := os.ReadFile(target)
@@ -82,7 +82,7 @@ func TestCallSavesAnEmptyBodyToTheOutputFile(t *testing.T) {
 	c.api.respond(status(204, ""))
 	target := filepath.Join(t.TempDir(), "empty")
 
-	r := c.mustRun("call", "-a", "work", "DELETE", "/x", "-o", target)
+	r := c.mustRun("call", "gmail", "-a", "work", "DELETE", "/x", "-o", target)
 
 	if got := decodeJSON[savedFile](t, r); got.Status != 204 || got.Bytes != 0 {
 		t.Errorf("summary = %+v", got)
@@ -115,7 +115,7 @@ func TestCallForceReplacesAnExistingFile(t *testing.T) {
 	target := filepath.Join(dir, "existing.txt")
 	_ = os.WriteFile(target, []byte("old"), 0o644)
 
-	c.mustRun("call", "-a", "work", "GET", "/x", "-o", target, "--force")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x", "-o", target, "--force")
 
 	if data, _ := os.ReadFile(target); string(data) != "new body" {
 		t.Errorf("file = %q", data)
@@ -187,7 +187,7 @@ func TestCallRemovesItsTemporaryNameBeforePrintingTheSummary(t *testing.T) {
 		c := newCallHarness(t)
 		c.api.respond(status(200, "%PDF\x00", "Content-Type", "application/pdf"))
 		dir := t.TempDir()
-		args := []string{"call", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "out.pdf")}
+		args := []string{"call", "gmail", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "out.pdf")}
 		if force {
 			args = append(args, "--force")
 		}
@@ -207,7 +207,7 @@ func TestCallSummaryNamesThePathAsTheUserGaveIt(t *testing.T) {
 	c.api.respond(status(200, "%PDF\x00", "Content-Type", "application/pdf"))
 	t.Chdir(t.TempDir())
 
-	r := c.mustRun("call", "-a", "work", "GET", "/x", "-o", "out.pdf")
+	r := c.mustRun("call", "gmail", "-a", "work", "GET", "/x", "-o", "out.pdf")
 
 	if got := decodeJSON[savedFile](t, r); got.Path != "out.pdf" {
 		t.Errorf("path = %q, want the path exactly as given", got.Path)

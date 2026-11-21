@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,8 +115,8 @@ func (t *recordingTransport) total() int {
 	return len(t.seen)
 }
 
-// callHarness is a harness with a connected google:work account, a TLS fake API that the
-// catalog names as Google's API host, and a second TLS server that no catalog entry allows.
+// callHarness is a harness with a connected gmail:work account, a TLS fake API that the
+// catalog names as Gmail's API host, and a second TLS server that no catalog entry allows.
 type callHarness struct {
 	*harness
 	api, evil *fakeAPI
@@ -134,12 +135,35 @@ func newCallHarness(t *testing.T, tweak ...func(*fakeGoogle)) *callHarness {
 	}
 	c := &callHarness{harness: h, api: newFakeAPI(t), evil: newFakeAPI(t)}
 	c.transport = &recordingTransport{base: c.api.srv.Client().Transport}
-	h.deps.catalogFS = pointGoogleAPIAt(t, h.deps.catalogFS, c.api.host())
+	h.deps.catalogFS = pointAppAPIAt(t, h.deps.catalogFS, "gmail", c.api.host())
 	h.deps.httpClient = &http.Client{Transport: c.transport, Timeout: 5 * time.Second}
 	h.deps.sleep = c.recordSleep
 	h.connect("work", "gmail")
 	c.transport.reset()
 	return c
+}
+
+// attachApp connects the alias under another app, with its own identity subject, and points
+// that app's API at a fake server of its own.
+func (c *callHarness) attachApp(app, alias, subject string) *fakeAPI {
+	c.t.Helper()
+	api := newFakeAPI(c.t)
+	c.deps.catalogFS = pointAppAPIAt(c.t, c.deps.catalogFS, app, api.host())
+	c.google.configure(func(g *fakeGoogle) { g.subject = subject })
+	c.connect(alias, app)
+	c.google.configure(func(g *fakeGoogle) { g.subject = workSubject })
+	c.transport.reset()
+	return api
+}
+
+// attachRoutedApp is attachApp on a server that other apps may share, with the app's own routes enforced.
+func (c *callHarness) attachRoutedApp(app, alias, subject string, api *fakeAPI) {
+	c.t.Helper()
+	c.deps.catalogFS = pointAppRoutesAt(c.t, c.deps.catalogFS, app, api.host())
+	c.google.configure(func(g *fakeGoogle) { g.subject = subject })
+	c.connect(alias, app)
+	c.google.configure(func(g *fakeGoogle) { g.subject = workSubject })
+	c.transport.reset()
 }
 
 func (c *callHarness) recordSleep(_ context.Context, d time.Duration) error {
@@ -156,11 +180,11 @@ func (c *callHarness) slept() []time.Duration {
 }
 
 func (c *callHarness) call(args ...string) result {
-	return c.run(append([]string{"call"}, args...)...)
+	return c.run(append([]string{"call", "gmail"}, args...)...)
 }
 
 func (c *callHarness) callWithStdin(stdin string, args ...string) result {
-	return c.runWithStdin(strings.NewReader(stdin), append([]string{"call"}, args...)...)
+	return c.runWithStdin(strings.NewReader(stdin), append([]string{"call", "gmail"}, args...)...)
 }
 
 // expireToken moves the clock past the stored access token's lifetime.
@@ -182,8 +206,30 @@ func (c *callHarness) wantUpstream(r result, exit, httpStatus int, body string) 
 	}
 }
 
-// pointGoogleAPIAt names host as Google's API host and lists it as an allowed one.
-func pointGoogleAPIAt(t *testing.T, src fs.FS, host string) fs.FS {
+var baseURLLine = regexp.MustCompile(`(?m)^  base_url: ".*"$`)
+
+// pointAppAPIAt names host as the app's API host and lists it as an allowed one. It also lets
+// every path through, so tests need not use the app's real routes; pointAppRoutesAt keeps them.
+func pointAppAPIAt(t *testing.T, src fs.FS, app, host string) fs.FS {
+	t.Helper()
+	return editProvider(t, pointAppRoutesAt(t, src, app, host), app, func(data []byte) []byte {
+		return pathPrefixBlock.ReplaceAll(data, []byte("  allowed_path_prefixes:\n    - \"/\"\n"))
+	})
+}
+
+var pathPrefixBlock = regexp.MustCompile(`(?m)^  allowed_path_prefixes:\n(?:    - ".*"\n)+`)
+
+// pointAppRoutesAt is pointAppAPIAt with the app's own path prefixes left in force.
+func pointAppRoutesAt(t *testing.T, src fs.FS, app, host string) fs.FS {
+	t.Helper()
+	return editProvider(t, src, app, func(data []byte) []byte {
+		data = allowHost(data, host)
+		return baseURLLine.ReplaceAll(data, []byte(`  base_url: "https://`+host+`"`))
+	})
+}
+
+// editProvider applies edit to providers/<id>.yaml of src.
+func editProvider(t *testing.T, src fs.FS, id string, edit func([]byte) []byte) fs.FS {
 	t.Helper()
 	out := fstest.MapFS{}
 	err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {
@@ -194,9 +240,8 @@ func pointGoogleAPIAt(t *testing.T, src fs.FS, host string) fs.FS {
 		if err != nil {
 			return err
 		}
-		if path == "providers/google.yaml" {
-			data = mustReplace(t, data, `  base_url: "https://www.googleapis.com"`, `  base_url: "https://`+host+`"`)
-			data = mustReplace(t, data, `    - "www.googleapis.com"`, "    - \"www.googleapis.com\"\n    - \""+host+"\"")
+		if path == "providers/"+id+".yaml" {
+			data = edit(data)
 		}
 		out[path] = &fstest.MapFile{Data: data}
 		return nil
@@ -210,7 +255,7 @@ func pointGoogleAPIAt(t *testing.T, src fs.FS, host string) fs.FS {
 func mustReplace(t *testing.T, data []byte, old, replacement string) []byte {
 	t.Helper()
 	if !bytes.Contains(data, []byte(old)) {
-		t.Fatalf("google.yaml has no line %q", old)
+		t.Fatalf("the provider YAML has no line %q", old)
 	}
 	return bytes.Replace(data, []byte(old), []byte(replacement), 1)
 }
@@ -223,25 +268,7 @@ func sha(data []byte) string {
 // replaceInProvider replaces old with replacement in providers/google.yaml of src.
 func replaceInProvider(t *testing.T, src fs.FS, old, replacement string) fs.FS {
 	t.Helper()
-	out := fstest.MapFS{}
-	err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := fs.ReadFile(src, path)
-		if err != nil {
-			return err
-		}
-		if path == "providers/google.yaml" {
-			data = mustReplace(t, data, old, replacement)
-		}
-		out[path] = &fstest.MapFile{Data: data}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out
+	return editProvider(t, src, "google", func(data []byte) []byte { return mustReplace(t, data, old, replacement) })
 }
 
 // lastStdout is what the harness's most recent command printed.

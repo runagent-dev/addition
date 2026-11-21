@@ -155,7 +155,7 @@ func (m *TokenManager) refresh(ctx context.Context, caller seen) (string, error)
 			failure = ErrNoRefreshToken
 			return nil
 		}
-		client, err := tx.GetOAuthClient(ctx, m.Provider.ID)
+		client, err := tx.GetOAuthClient(ctx, m.Provider.IdentityRoot)
 		if errors.Is(err, vault.ErrNotFound) {
 			failure = ErrNoOAuthClient
 			return nil

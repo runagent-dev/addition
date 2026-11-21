@@ -69,7 +69,7 @@ type Engine struct {
 // three times, waiting for Retry-After or backing off. Any other response, including a second
 // 401 or an exhausted 429, is returned as is. Once a request has been sent, a failure is an *Attempted.
 func (e *Engine) Do(ctx context.Context, req Request, accessToken string) (*Response, error) {
-	if err := CheckDestination(e.API, req.URL, e.AllowCleartext); err != nil {
+	if err := CheckTarget(e.API, req.URL, e.AllowCleartext); err != nil {
 		return nil, err
 	}
 	renewed, throttled, lastStatus := false, 0, 0

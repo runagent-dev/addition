@@ -13,6 +13,7 @@ type providerRow struct {
 	AuthType     string  `json:"auth_type"`
 	Extends      *string `json:"extends"`
 	IdentityRoot string  `json:"identity_root"`
+	Connectable  bool    `json:"connectable"`
 }
 
 type toolRow struct {
@@ -50,7 +51,7 @@ func TestProvidersListsCatalogSortedByID(t *testing.T) {
 		ids = append(ids, p.ID)
 		byID[p.ID] = p
 	}
-	if want := []string{"github", "gmail", "google", "google-calendar", "google-drive", "slack"}; !slices.Equal(ids, want) {
+	if want := []string{"github", "gmail", "google", "google-calendar", "google-chat", "google-docs", "google-drive", "slack"}; !slices.Equal(ids, want) {
 		t.Fatalf("ids = %v, want %v", ids, want)
 	}
 
@@ -60,6 +61,11 @@ func TestProvidersListsCatalogSortedByID(t *testing.T) {
 	}
 	if drive.Extends == nil || *drive.Extends != "google" {
 		t.Errorf("google-drive extends = %v, want google", drive.Extends)
+	}
+	for id, want := range map[string]bool{"google": false, "gmail": true, "google-chat": true, "google-docs": true, "github": true} {
+		if byID[id].Connectable != want {
+			t.Errorf("%s connectable = %v, want %v", id, byID[id].Connectable, want)
+		}
 	}
 	github := byID["github"]
 	if github.Extends != nil || github.IdentityRoot != "github" {

@@ -44,10 +44,10 @@ func TestConnectLoopbackFlow(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 
-	r := h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	r := h.mustRun("connect", "gmail", "--as", "work")
 
 	got := decodeJSON[connected](t, r)
-	if got.Provider != "google" || got.Alias != "work" || got.Identity != workIdentity || !got.Created {
+	if got.Provider != "gmail" || got.Alias != "work" || got.Identity != workIdentity || !got.Created {
 		t.Errorf("connect = %+v", got)
 	}
 	if !containsAll(got.Scopes, gmailScopes...) || slices.Contains(got.Scopes, scopeDrive) {
@@ -107,7 +107,7 @@ func TestConnectPrintsTheURLWhenTheBrowserLauncherFails(t *testing.T) {
 	h.addClient()
 	h.deps.openBrowser = failingLauncher(func(authorizeURL string) { _ = h.visit(authorizeURL) })
 
-	r := h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	r := h.mustRun("connect", "gmail", "--as", "work")
 
 	lines := stderrLines(t, r)
 	if len(lines) != 1 || lines[0]["notice"] != "open-browser-failed" ||
@@ -125,7 +125,7 @@ func TestConnectBrowserFallbackThenTimeout(t *testing.T) {
 	h.deps.openBrowser = failingLauncher(nil)
 	h.deps.loopbackTimeout = 200 * time.Millisecond
 
-	r := h.run("connect", "google", "--as", "work")
+	r := h.run("connect", "gmail", "--as", "work")
 
 	h.wantError(r, ExitUsage, "authorization-timeout")
 	lines := stderrLines(t, r)
@@ -140,7 +140,7 @@ func TestConnectLoopbackTimesOut(t *testing.T) {
 	h.deps.openBrowser = func(string) <-chan error { return make(chan error) }
 	h.deps.loopbackTimeout = 20 * time.Millisecond
 
-	h.wantError(h.run("connect", "google", "--as", "work"), ExitUsage, "authorization-timeout")
+	h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUsage, "authorization-timeout")
 	h.wantAccounts(0)
 }
 
@@ -167,7 +167,7 @@ func TestConnectLoopbackReportsAStateMismatchAtTimeout(t *testing.T) {
 		return make(chan error)
 	}
 
-	h.wantError(h.run("connect", "google", "--as", "work"), ExitUsage, "state-mismatch")
+	h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUsage, "state-mismatch")
 	if len(h.google.exchanges) != 0 {
 		t.Error("a forged callback reached the token endpoint")
 	}
@@ -182,7 +182,7 @@ func TestConnectLoopbackIgnoresAForgeryBeforeTheRealCallback(t *testing.T) {
 		return h.browse(authorizeURL)
 	}
 
-	got := decodeJSON[connected](t, h.mustRun("connect", "google", "--as", "work", "--services", "gmail"))
+	got := decodeJSON[connected](t, h.mustRun("connect", "gmail", "--as", "work"))
 	if got.Identity != workIdentity || len(h.google.exchanges) != 1 {
 		t.Errorf("connect = %+v after %d exchanges", got, len(h.google.exchanges))
 	}
@@ -204,15 +204,15 @@ func TestConnectLoopbackStopsListeningBeforeTheExchange(t *testing.T) {
 		}
 	}
 
-	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	h.mustRun("connect", "gmail", "--as", "work")
 	if stillListening {
 		t.Error("the loopback listener still answered during the token exchange")
 	}
 }
 
-func (h *harness) startTwoStep(args ...string) pendingOut {
+func (h *harness) startTwoStep(app string) pendingOut {
 	h.t.Helper()
-	r := h.mustRun(append([]string{"connect", "google", "--as", "work", "--no-browser"}, args...)...)
+	r := h.mustRun("connect", app, "--as", "work", "--no-browser")
 	return decodeJSON[pendingOut](h.t, r)
 }
 
@@ -220,7 +220,7 @@ func TestTwoStepFlow(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 
-	p := h.startTwoStep("--services", "gmail,drive")
+	p := h.startTwoStep("google-drive")
 	if !strings.HasPrefix(p.AuthorizeURL, h.google.srv.URL+"/authorize?") {
 		t.Errorf("authorize_url = %q", p.AuthorizeURL)
 	}
@@ -239,7 +239,7 @@ func TestTwoStepFlow(t *testing.T) {
 	r := h.mustRun("connect", "--complete", landed)
 
 	got := decodeJSON[connected](t, r)
-	if got.Alias != "work" || got.Identity != workIdentity || !got.Created || !containsAll(got.Scopes, append(gmailScopes, scopeDrive)...) {
+	if got.Alias != "work" || got.Identity != workIdentity || !got.Created || !containsAll(got.Scopes, scopeOpenID, scopeEmail, scopeDrive) || got.Provider != "google-drive" {
 		t.Errorf("complete = %+v", got)
 	}
 	if h.google.pkceOK != 1 {
@@ -265,7 +265,7 @@ func mustQueryParam(t *testing.T, raw, key string) string {
 func TestCompleteIsOneUse(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 	h.mustRun("connect", "--complete", landed)
 
 	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
@@ -277,7 +277,7 @@ func TestCompleteIsOneUse(t *testing.T) {
 func TestCompleteRejectsAnExpiredAuthorization(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 	h.clock.Advance(10*time.Minute + time.Second)
 
 	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "authorization-expired")
@@ -291,7 +291,7 @@ func TestCompleteRejectsAnExpiredAuthorization(t *testing.T) {
 func TestCompleteRejectsBadPastes(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 	u, _ := url.Parse(landed)
 
 	forged := *u
@@ -306,7 +306,7 @@ func TestCompleteRejectsBadPastes(t *testing.T) {
 	h.wantError(h.run("connect", "--complete", landed+"&error=access_denied"), ExitUsage, "bad-redirect")
 	h.wantError(h.run("connect", "--complete", forged.String()), ExitUsage, "unknown-state")
 	h.wantError(h.run("connect", "--complete", moved.String()), ExitUsage, "redirect-mismatch")
-	h.wantError(h.run("connect", "google", "--complete", landed), ExitUsage, "usage")
+	h.wantError(h.run("connect", "gmail", "--complete", landed), ExitUsage, "usage")
 	if len(h.google.exchanges) != 0 {
 		t.Error("a bad paste reached the token endpoint")
 	}
@@ -321,7 +321,7 @@ func TestCompleteAccessDenied(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 	h.google.deny = true
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 	h.wantError(h.run("connect", "--complete", landed), ExitUpstreamClient, "access-denied")
 	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
@@ -332,7 +332,7 @@ func TestConnectTokenExchangeRejected(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 	h.google.tokenStatus = http.StatusBadRequest
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamClient, "token-exchange-rejected")
 	if !strings.Contains(env.Error.Message, "invalid_grant") || !strings.Contains(env.Error.Message, "HTTP 400") {
@@ -345,7 +345,7 @@ func TestConnectTokenExchangeRejected(t *testing.T) {
 func TestConnectNetworkFailure(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 	h.google.srv.Close()
 
 	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
@@ -359,38 +359,40 @@ func TestConnectScopesNotGranted(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 	h.google.grant = func(requested []string) []string {
-		return slices.DeleteFunc(slices.Clone(requested), func(s string) bool { return s == scopeDrive })
+		return slices.DeleteFunc(slices.Clone(requested), func(s string) bool { return s == scopeGmailModify })
 	}
 
-	r := h.run("connect", "google", "--as", "work", "--services", "gmail,drive")
+	r := h.run("connect", "gmail", "--as", "work")
 
 	env := h.wantError(r, ExitNeedsConnect, "scopes-not-granted")
-	if !strings.Contains(env.Error.Message, scopeDrive) {
+	if !strings.Contains(env.Error.Message, scopeGmailModify) {
 		t.Errorf("message %q does not list the missing scope", env.Error.Message)
 	}
 	got := decodeJSON[connected](t, r)
-	if slices.Contains(got.Scopes, scopeDrive) || !containsAll(got.Scopes, gmailScopes...) {
+	if slices.Contains(got.Scopes, scopeGmailModify) || !containsAll(got.Scopes, gmailScopes...) {
 		t.Errorf("saved scopes = %v, want only the granted ones", got.Scopes)
 	}
-	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "google:work"))
+	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "gmail:work"))
 	if !slices.Equal(show.Scopes, got.Scopes) {
 		t.Errorf("stored scopes = %v, want %v", show.Scopes, got.Scopes)
 	}
 }
 
-func TestReconnectRequestsTheScopeUnion(t *testing.T) {
+func TestReconnectRequestsTheStoredScopesAndTheAppDefaults(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	h.google.grant = func(requested []string) []string { return append(slices.Clone(requested), scopeGmailLabels) }
+	h.mustRun("connect", "gmail", "--as", "work")
+	h.google.grant = nil
 
-	r := h.mustRun("connect", "google", "--as", "work", "--services", "drive")
+	r := h.mustRun("connect", "gmail", "--as", "work")
 
 	requested := strings.Fields(h.google.authorizes[1].Get("scope"))
-	if !containsAll(requested, append(gmailScopes, scopeDrive)...) {
-		t.Errorf("reconnect requested %v, want gmail's granted scopes plus drive", requested)
+	if !containsAll(requested, append(gmailScopes, scopeGmailLabels)...) {
+		t.Errorf("reconnect requested %v, want the app's scopes plus the one already granted", requested)
 	}
 	got := decodeJSON[connected](t, r)
-	if got.Created || !containsAll(got.Scopes, append(gmailScopes, scopeDrive)...) {
+	if got.Created || !containsAll(got.Scopes, append(gmailScopes, scopeGmailLabels)...) {
 		t.Errorf("reconnect = %+v", got)
 	}
 	h.wantAccounts(1)
@@ -402,12 +404,12 @@ func TestReconnectRequestsTheScopeUnion(t *testing.T) {
 func TestReconnectRefusesADifferentSubject(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	h.mustRun("connect", "gmail", "--as", "work")
 	h.google.subject = "2002"
 
-	h.wantError(h.run("connect", "google", "--as", "work", "--services", "drive"), ExitUsage, "identity-mismatch")
-	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "google:work"))
-	if show.Identity != workIdentity || slices.Contains(show.Scopes, scopeDrive) {
+	h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUsage, "identity-mismatch")
+	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "gmail:work"))
+	if show.Identity != workIdentity || show.Provider != "gmail" {
 		t.Errorf("the account changed: %+v", show)
 	}
 }
@@ -415,11 +417,11 @@ func TestReconnectRefusesADifferentSubject(t *testing.T) {
 func TestReconnectFollowsTheSubjectThroughAnEmailRename(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	h.mustRun("connect", "gmail", "--as", "work")
 	h.google.identity = "renamed@work.example"
 
-	got := decodeJSON[connected](t, h.mustRun("connect", "google", "--as", "work", "--services", "drive"))
-	if got.Created || got.Identity != "renamed@work.example" || !containsAll(got.Scopes, scopeDrive) {
+	got := decodeJSON[connected](t, h.mustRun("connect", "gmail", "--as", "work"))
+	if got.Created || got.Identity != "renamed@work.example" || !containsAll(got.Scopes, gmailScopes...) {
 		t.Errorf("reconnect after a rename = %+v", got)
 	}
 }
@@ -432,7 +434,7 @@ func TestReconsentOfASubjectlessAccountKeepsNoOldCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := s.CreateAccount(context.Background(), vault.Account{Provider: "google", Alias: "work", Identity: workIdentity, Scopes: gmailScopes})
+	legacy, err := s.CreateAccount(context.Background(), vault.Account{Provider: "gmail", Alias: "work", Identity: workIdentity, Scopes: gmailScopes})
 	if err == nil {
 		err = s.PutCredential(context.Background(), legacy.ID, vault.Credential{AccessToken: "legacy-access", RefreshToken: legacyRefresh})
 	}
@@ -442,14 +444,14 @@ func TestReconsentOfASubjectlessAccountKeepsNoOldCredential(t *testing.T) {
 	}
 	h.google.noRefreshToken = true
 
-	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
+	h.mustRun("connect", "gmail", "--as", "work")
 
 	s, err = vault.Open(context.Background(), h.deps.env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	acct, err := s.GetAccount(context.Background(), "google", "work")
+	acct, err := s.GetAccount(context.Background(), "gmail", "work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,7 +470,7 @@ func TestConnectNeedsASubject(t *testing.T) {
 	h.addClient()
 	h.google.subject = ""
 
-	h.wantError(h.run("connect", "google", "--as", "work", "--services", "gmail"), ExitUpstreamClient, "identity-rejected")
+	h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUpstreamClient, "identity-rejected")
 	h.wantAccounts(0)
 }
 
@@ -490,7 +492,7 @@ func TestConnectScopeResponse(t *testing.T) {
 			h.addClient()
 			h.google.scopeReply = tc.reply
 
-			r := h.run("connect", "google", "--as", "work", "--services", "gmail")
+			r := h.run("connect", "gmail", "--as", "work")
 			if tc.exit == ExitOK {
 				if got := decodeJSON[connected](t, r); r.code != ExitOK || !containsAll(got.Scopes, gmailScopes...) {
 					t.Errorf("exit %d, connect = %+v", r.code, got)
@@ -505,40 +507,53 @@ func TestConnectScopeResponse(t *testing.T) {
 	}
 }
 
-func TestConnectServiceResolution(t *testing.T) {
+func TestConnectResolvesAnAppByProviderIDOrCommand(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 
 	for _, name := range []string{"drive", "google-drive"} {
-		scopes := strings.Fields(mustQueryParam(t, h.startTwoStep("--services", name).AuthorizeURL, "scope"))
-		if !containsAll(scopes, scopeOpenID, scopeEmail, scopeDrive) || slices.Contains(scopes, scopeGmailRO) {
-			t.Errorf("--services %s requested %v", name, scopes)
+		scopes := strings.Fields(mustQueryParam(t, h.startTwoStep(name).AuthorizeURL, "scope"))
+		if !slices.Equal(scopes, []string{scopeOpenID, scopeEmail, scopeDrive}) {
+			t.Errorf("connect %s requested %v, want only Drive's scopes", name, scopes)
 		}
 	}
+}
 
-	all := strings.Fields(mustQueryParam(t, h.startTwoStep().AuthorizeURL, "scope"))
-	if !containsAll(all, scopeOpenID, scopeEmail, scopeProfile, scopeGmailRO, scopeDrive, scopeCalendar) {
-		t.Errorf("default services requested %v, want the root plus every toolkit service", all)
-	}
-	if len(all) != len(slices.Compact(slices.Sorted(slices.Values(all)))) {
-		t.Errorf("scopes are not deduplicated: %v", all)
-	}
+func TestConnectRefusesAnIdentityRootAndListsTheApps(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
 
-	h.wantError(h.run("connect", "google", "--as", "work", "--services", "nope"), ExitUsage, "unknown-service")
-	h.wantError(h.run("connect", "google", "--as", "work", "--services", "gmail,slack"), ExitUsage, "service-not-in-provider")
+	for _, args := range [][]string{{"connect", "google", "--as", "work"}, {"connect", "google", "--as", "work", "--no-browser"}} {
+		env := h.wantError(h.run(args...), ExitUsage, "not-an-app")
+		for _, app := range []string{"gmail", "google-calendar", "google-chat", "google-docs", "google-drive"} {
+			if !strings.Contains(env.Error.Message, app) {
+				t.Errorf("%v: message %q does not list %s", args, env.Error.Message, app)
+			}
+		}
+	}
+	if len(h.google.authorizes) != 0 {
+		t.Error("an authorization was started for an identity root")
+	}
+	h.wantAccounts(0)
+}
+
+func TestConnectDoesNotTakeServices(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+
+	h.wantError(h.run("connect", "gmail", "--as", "work", "--services", "drive"), ExitUsage, "usage")
 }
 
 func TestConnectUsageErrors(t *testing.T) {
 	h := newHarness(t)
-	env := h.wantError(h.run("connect", "google", "--as", "work"), ExitUsage, "no-oauth-client")
-	if !strings.Contains(env.Error.Message, "addn client add") {
-		t.Errorf("message %q does not point to addn client add", env.Error.Message)
+	env := h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUsage, "no-oauth-client")
+	if !strings.Contains(env.Error.Message, "addn client add google") {
+		t.Errorf("message %q does not point to `addn client add google`", env.Error.Message)
 	}
 	h.addClient()
 	h.wantError(h.run("connect", "nope", "--as", "work"), ExitUsage, "unknown-provider")
-	h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUsage, "not-identity-root")
-	h.wantError(h.run("connect", "google"), ExitUsage, "usage")
-	h.wantError(h.run("connect", "google", "--as", "Not An Alias!"), ExitUsage, "invalid-account")
+	h.wantError(h.run("connect", "gmail"), ExitUsage, "usage")
+	h.wantError(h.run("connect", "gmail", "--as", "Not An Alias!"), ExitUsage, "invalid-account")
 	h.wantError(h.run("connect"), ExitUsage, "usage")
 }
 

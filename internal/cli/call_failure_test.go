@@ -10,7 +10,7 @@ import (
 )
 
 func TestCallFailureReportsAReplacedAccountAsAUsageError(t *testing.T) {
-	err := callFailure(vault.Account{Provider: "google", Alias: "work"}, proxy.ErrAccountChanged)
+	err := callFailure(vault.Account{Provider: "gmail", Alias: "work"}, "google", proxy.ErrAccountChanged)
 
 	failure := asError(err)
 	if failure.Code != "account-changed" || failure.Exit != ExitUsage {

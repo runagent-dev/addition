@@ -10,7 +10,7 @@ func TestCallOutputFileIsPrivate(t *testing.T) {
 	c := newCallHarness(t)
 	target := filepath.Join(t.TempDir(), "out.json")
 
-	c.mustRun("call", "-a", "work", "GET", "/x", "-o", target)
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x", "-o", target)
 
 	info, err := os.Stat(target)
 	if err != nil || info.Mode().Perm() != 0o600 {

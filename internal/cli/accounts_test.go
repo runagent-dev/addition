@@ -40,9 +40,9 @@ func (h *harness) wantAccounts(n int) []accountRow {
 	return rows
 }
 
-func (h *harness) connect(alias string, services string) {
+func (h *harness) connect(alias, app string) {
 	h.t.Helper()
-	h.mustRun("connect", "google", "--as", alias, "--services", services)
+	h.mustRun("connect", app, "--as", alias)
 }
 
 func TestAccountsListAndShow(t *testing.T) {
@@ -55,7 +55,7 @@ func TestAccountsListAndShow(t *testing.T) {
 
 	rows := h.wantAccounts(1)
 	row := rows[0]
-	if row.Provider != "google" || row.Alias != "work" || row.Identity != workIdentity || row.Status != "active" ||
+	if row.Provider != "gmail" || row.Alias != "work" || row.Identity != workIdentity || row.Status != "active" ||
 		!row.HasRefreshToken || row.Default || !containsAll(row.Scopes, gmailScopes...) {
 		t.Errorf("row = %+v", row)
 	}
@@ -66,13 +66,13 @@ func TestAccountsListAndShow(t *testing.T) {
 		t.Errorf("expires_at = %s, want %s", *row.ExpiresAt, wantExpiry)
 	}
 
-	for _, ref := range []string{"google:work", "gmail:work"} {
+	for _, ref := range []string{"gmail:work"} {
 		show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", ref))
 		if show.Alias != "work" || show.Identity != workIdentity {
 			t.Errorf("show %s = %+v", ref, show)
 		}
 	}
-	h.wantError(h.run("accounts", "show", "google:ghost"), ExitNeedsConnect, "not-connected")
+	h.wantError(h.run("accounts", "show", "gmail:ghost"), ExitNeedsConnect, "not-connected")
 	h.wantError(h.run("accounts", "show", "work"), ExitUsage, "usage")
 	h.wantError(h.run("accounts", "show", "nope:work"), ExitUsage, "unknown-provider")
 }
@@ -83,9 +83,9 @@ func TestAccountsDefault(t *testing.T) {
 	h.connect("work", "gmail")
 	h.connect("personal", "gmail")
 
-	r := h.mustRun("accounts", "default", "google:personal")
+	r := h.mustRun("accounts", "default", "gmail:personal")
 	out := decodeJSON[map[string]string](t, r)
-	if out["provider"] != "google" || out["default"] != "personal" {
+	if out["provider"] != "gmail" || out["default"] != "personal" {
 		t.Errorf("default = %v", out)
 	}
 	for _, row := range h.wantAccounts(2) {
@@ -93,7 +93,7 @@ func TestAccountsDefault(t *testing.T) {
 			t.Errorf("%s default = %v", row.Alias, row.Default)
 		}
 	}
-	h.wantError(h.run("accounts", "default", "google:ghost"), ExitNeedsConnect, "not-connected")
+	h.wantError(h.run("accounts", "default", "gmail:ghost"), ExitNeedsConnect, "not-connected")
 }
 
 func TestAccountsRemoveWithRevoke(t *testing.T) {
@@ -101,7 +101,7 @@ func TestAccountsRemoveWithRevoke(t *testing.T) {
 	h.addClient()
 	h.connect("work", "gmail")
 
-	r := h.mustRun("accounts", "remove", "google:work", "--revoke")
+	r := h.mustRun("accounts", "remove", "gmail:work", "--revoke")
 
 	out := decodeJSON[removed](t, r)
 	if !out.Removed || !out.Revoke.Attempted || !out.Revoke.OK {
@@ -114,7 +114,7 @@ func TestAccountsRemoveWithRevoke(t *testing.T) {
 	if rows := auditEvents(t, h.home); !slices.Equal(rows, []string{"init", "connect", "revoke"}) {
 		t.Errorf("audit events = %v", rows)
 	}
-	h.wantError(h.run("accounts", "remove", "google:work"), ExitNeedsConnect, "not-connected")
+	h.wantError(h.run("accounts", "remove", "gmail:work"), ExitNeedsConnect, "not-connected")
 	assertAuditHoldsNoSecrets(t, h)
 }
 
@@ -124,7 +124,7 @@ func TestAccountsRemoveSurvivesAFailedRevoke(t *testing.T) {
 	h.connect("work", "gmail")
 	h.google.revokeFails = true
 
-	out := decodeJSON[removed](t, h.mustRun("accounts", "remove", "google:work", "--revoke"))
+	out := decodeJSON[removed](t, h.mustRun("accounts", "remove", "gmail:work", "--revoke"))
 
 	if !out.Removed || !out.Revoke.Attempted || out.Revoke.OK || out.Revoke.Error == "" {
 		t.Errorf("remove = %+v", out)
@@ -136,9 +136,9 @@ func TestAccountsRemoveLocalOnly(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 	h.connect("work", "gmail")
-	h.mustRun("accounts", "default", "google:work")
+	h.mustRun("accounts", "default", "gmail:work")
 
-	out := decodeJSON[removed](t, h.mustRun("accounts", "remove", "google:work"))
+	out := decodeJSON[removed](t, h.mustRun("accounts", "remove", "gmail:work"))
 
 	if !out.Removed || out.Revoke.Attempted {
 		t.Errorf("remove = %+v", out)
@@ -155,22 +155,17 @@ func TestAccountsRemoveLocalOnly(t *testing.T) {
 	}
 }
 
-type serviceCheck struct {
-	Service       string   `json:"service"`
-	Ready         bool     `json:"ready"`
-	MissingScopes []string `json:"missing_scopes"`
-}
-
 type authCheck struct {
-	Provider        string         `json:"provider"`
-	Alias           string         `json:"alias"`
-	Connected       bool           `json:"connected"`
-	Status          string         `json:"status"`
-	AccessToken     string         `json:"access_token"`
-	ExpiresAt       *string        `json:"expires_at"`
-	HasRefreshToken bool           `json:"has_refresh_token"`
-	Scopes          []string       `json:"scopes"`
-	Services        []serviceCheck `json:"services"`
+	Provider        string   `json:"provider"`
+	Alias           string   `json:"alias"`
+	Connected       bool     `json:"connected"`
+	Status          string   `json:"status"`
+	AccessToken     string   `json:"access_token"`
+	ExpiresAt       *string  `json:"expires_at"`
+	HasRefreshToken bool     `json:"has_refresh_token"`
+	Scopes          []string `json:"scopes"`
+	ScopesReady     bool     `json:"scopes_ready"`
+	MissingScopes   []string `json:"missing_scopes"`
 }
 
 func TestAuthCheck(t *testing.T) {
@@ -178,39 +173,32 @@ func TestAuthCheck(t *testing.T) {
 	h.addClient()
 	h.connect("work", "gmail")
 
-	checks := decodeJSON[[]authCheck](t, h.mustRun("auth", "check"))
+	checks := decodeJSON[[]authCheck](t, h.mustRun("accounts", "check"))
 	if len(checks) != 1 {
 		t.Fatalf("checks = %+v", checks)
 	}
 	c := checks[0]
-	if c.Provider != "google" || c.Alias != "work" || !c.Connected || c.Status != "active" || c.AccessToken != "valid" || !c.HasRefreshToken {
+	if c.Provider != "gmail" || c.Alias != "work" || !c.Connected || c.Status != "active" || c.AccessToken != "valid" || !c.HasRefreshToken {
 		t.Errorf("check = %+v", c)
 	}
-	byService := map[string]serviceCheck{}
-	for _, s := range c.Services {
-		byService[s.Service] = s
-	}
-	if !byService["gmail"].Ready || len(byService["gmail"].MissingScopes) != 0 {
-		t.Errorf("gmail = %+v, want ready", byService["gmail"])
-	}
-	if d := byService["drive"]; d.Ready || !slices.Contains(d.MissingScopes, scopeDrive) {
-		t.Errorf("drive = %+v, want not ready, missing the drive scope", d)
+	if !c.ScopesReady || c.MissingScopes == nil || len(c.MissingScopes) != 0 {
+		t.Errorf("scopes_ready %v, missing_scopes %v; want ready and an empty list", c.ScopesReady, c.MissingScopes)
 	}
 
 	h.clock.Advance(56 * time.Minute)
-	if c := decodeJSON[[]authCheck](t, h.mustRun("auth", "check", "google:work"))[0]; c.AccessToken != "expiring" {
+	if c := decodeJSON[[]authCheck](t, h.mustRun("accounts", "check", "gmail:work"))[0]; c.AccessToken != "expiring" {
 		t.Errorf("4 minutes before expiry access_token = %q, want expiring", c.AccessToken)
 	}
 	h.clock.Advance(time.Hour)
-	if c := decodeJSON[[]authCheck](t, h.mustRun("auth", "check", "google:work"))[0]; c.AccessToken != "expired" {
+	if c := decodeJSON[[]authCheck](t, h.mustRun("accounts", "check", "gmail:work"))[0]; c.AccessToken != "expired" {
 		t.Errorf("after expiry access_token = %q, want expired", c.AccessToken)
 	}
-	h.wantError(h.run("auth", "check", "google:ghost"), ExitNeedsConnect, "not-connected")
+	h.wantError(h.run("accounts", "check", "gmail:ghost"), ExitNeedsConnect, "not-connected")
 }
 
 func TestAuthCheckWithNoAccounts(t *testing.T) {
 	h := newHarness(t)
-	if r := h.mustRun("auth", "check"); strings.TrimSpace(r.stdout) != "[]" {
+	if r := h.mustRun("accounts", "check"); strings.TrimSpace(r.stdout) != "[]" {
 		t.Errorf("stdout = %q, want []", r.stdout)
 	}
 }

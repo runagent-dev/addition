@@ -9,7 +9,8 @@ import (
 )
 
 // ResolveURL turns the caller's path into the URL to request and refuses any target whose host
-// is not one of the provider's allowed hosts, so the access token can only go there.
+// is not one of the provider's allowed hosts, or whose path is outside its allowed path prefixes,
+// so the access token can only go there.
 // An absolute path such as /drive/v3/files is resolved against the host of api.base_url;
 // an https URL must name an allowed host and carry no userinfo. queryFlags are k=v pairs
 // appended after the path's own query.
@@ -19,6 +20,9 @@ func ResolveURL(api catalog.API, rawPath string, queryFlags []string) (*url.URL,
 	}
 	target, err := resolveTarget(api, rawPath)
 	if err != nil {
+		return nil, err
+	}
+	if err := CheckPath(api, target); err != nil {
 		return nil, err
 	}
 	if _, err := url.ParseQuery(target.RawQuery); err != nil {
@@ -102,8 +106,39 @@ func hostNotAllowed(api catalog.API) *RequestError {
 		strings.Join(api.Hosts(), ", ")}
 }
 
+func pathNotAllowed(api catalog.API) *RequestError {
+	return &RequestError{Code: "path-not-allowed", Message: "the path must start with one of the provider's allowed prefixes and hold no dot segments, " +
+		"double slashes, backslashes, encoded slashes or whitespace: " + strings.Join(api.AllowedPathPrefixes, ", ")}
+}
+
+// CheckPath refuses a target whose path, exactly as it will be sent, is outside the provider's
+// allowed path prefixes or could be normalised by a server into a route outside them.
+// A provider without prefixes allows every path.
+func CheckPath(api catalog.API, target *url.URL) error {
+	if len(api.AllowedPathPrefixes) == 0 {
+		return nil
+	}
+	wire, err := url.Parse(target.String())
+	if err != nil {
+		return pathNotAllowed(api)
+	}
+	sent := wire.EscapedPath()
+	if !catalog.PlainPath(sent) || !slices.ContainsFunc(api.AllowedPathPrefixes, func(prefix string) bool { return strings.HasPrefix(sent, prefix) }) {
+		return pathNotAllowed(api)
+	}
+	return nil
+}
+
+// CheckTarget is CheckDestination plus CheckPath: whether the access token may be sent to target.
+func CheckTarget(api catalog.API, target *url.URL, allowCleartext bool) error {
+	if err := CheckDestination(api, target, allowCleartext); err != nil {
+		return err
+	}
+	return CheckPath(api, target)
+}
+
 // CheckDestination refuses a URL the access token may not be sent to: anything but https
-// (or http when allowCleartext, for tests) on a listed host, without userinfo.
+// (or http when allowCleartext, for tests) on a listed host, without userinfo. It ignores the path.
 func CheckDestination(api catalog.API, target *url.URL, allowCleartext bool) error {
 	schemeOK := target.Scheme == "https" || allowCleartext && target.Scheme == "http"
 	if !schemeOK || target.User != nil || target.Opaque != "" || target.Host == "" || !slices.Contains(api.Hosts(), catalog.HostKey(target)) {

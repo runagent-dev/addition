@@ -54,7 +54,7 @@ func TestProviderIdentityValidation(t *testing.T) {
 
 func TestShippedGoogleIdentity(t *testing.T) {
 	c := shipped(t)
-	for _, id := range []string{"google", "gmail", "google-drive", "google-calendar"} {
+	for _, id := range []string{"google", "gmail", "google-drive", "google-calendar", "google-chat", "google-docs"} {
 		got := mustProvider(t, c, id).OAuth2.Identity
 		if got == nil || got.URL != "https://openidconnect.googleapis.com/v1/userinfo" || got.Field != "email" || got.SubjectField != "sub" {
 			t.Errorf("%s identity = %+v", id, got)

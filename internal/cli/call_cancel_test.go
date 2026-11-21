@@ -34,7 +34,9 @@ func TestCallStopsReadingStdinOnTheFirstCancel(t *testing.T) {
 	t.Cleanup(func() { close(stdin.closed) })
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan result, 1)
-	go func() { finished <- c.runContext(ctx, stdin, "call", "-a", "work", "POST", "/x", "--data", "-") }()
+	go func() {
+		finished <- c.runContext(ctx, stdin, "call", "gmail", "-a", "work", "POST", "/x", "--data", "-")
+	}()
 
 	<-stdin.reading
 	cancel()
@@ -65,7 +67,7 @@ func TestCallReportsACancelledErrorBodyAsInterrupted(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan result, 1)
-	go func() { finished <- c.runContext(ctx, nil, "call", "-a", "work", "GET", "/x") }()
+	go func() { finished <- c.runContext(ctx, nil, "call", "gmail", "-a", "work", "GET", "/x") }()
 
 	<-stalled
 	cancel()

@@ -11,8 +11,14 @@ oauth2:
     - "https://www.googleapis.com/auth/calendar.events"
 
 api:
-  base_url: "https://www.googleapis.com/calendar/v3"
+  base_url: "https://www.googleapis.com"
+  allowed_hosts:
+    - "www.googleapis.com"
+    - "openidconnect.googleapis.com"
+  allowed_path_prefixes:
+    - "/calendar/"
 
 quirks:
-  - "Inherits Google OAuth; see google.yaml"
+  - "Inherits Google OAuth and its client; see google.yaml"
+  - "Paths start with /calendar/v3 and resolve against the host of base_url"
   - "Per-user rate limit: 500 requests per 100 seconds per user"

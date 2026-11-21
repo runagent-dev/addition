@@ -13,6 +13,7 @@ oauth2:
   authorize_url: ""
   token_url: ""
   revoke_url: null                  # Optional
+  revoke_scope: "token"             # "token" (revokes that token) or "grant" (also every sibling app's, as at Google)
   refresh_supported: true
   pkce_supported: true
   pkce_required: false
@@ -39,6 +40,7 @@ oauth2:
 api:
   base_url: ""
   # allowed_hosts: ["api.example.com"]  # Optional: hosts the token may be sent to; default is base_url's host
+  # allowed_path_prefixes: ["/v1/"]    # Optional: a request path must start with one; set it when apps share a host
   auth_header: "Authorization"
   auth_prefix: "Bearer"
   rate_limit:

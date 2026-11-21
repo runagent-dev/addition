@@ -87,6 +87,7 @@ func validateProvider(fields map[string]any, opts Options) error {
 		api.nonEmptyString("auth_header")
 		api.nonEmptyString("auth_prefix")
 		validateAllowedHosts(api, opts)
+		validatePathPrefixes(api)
 	}
 	return err
 }
@@ -126,10 +127,33 @@ func validateAllowedHosts(api fieldChecker, opts Options) {
 	}
 }
 
+// validatePathPrefixes checks the optional api.allowed_path_prefixes: plain paths that start with /.
+func validatePathPrefixes(api fieldChecker) {
+	raw, present := api.fields["allowed_path_prefixes"]
+	if !present || raw == nil {
+		return
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		api.fail("allowed_path_prefixes", "must be a list of paths")
+		return
+	}
+	for _, entry := range list {
+		prefix, isString := entry.(string)
+		if !isString || !PlainPath(prefix) || strings.ContainsAny(prefix, "?#%") {
+			api.fail("allowed_path_prefixes", "entries must start with / and hold no dot segments, empty segments, escapes, query or whitespace, got %#v", entry)
+			return
+		}
+	}
+}
+
 func validateOAuth2(o fieldChecker) {
 	o.nonEmptyString("authorize_url")
 	o.nonEmptyString("token_url")
 	o.optionalString("revoke_url")
+	if _, present := o.fields["revoke_scope"]; present {
+		o.oneOf("revoke_scope", revokeScopeToken, revokeScopeGrant)
+	}
 	o.boolean("refresh_supported")
 	o.boolean("pkce_supported")
 	o.boolean("pkce_required")

@@ -6,6 +6,7 @@ oauth2:
   authorize_url: "https://accounts.google.com/o/oauth2/v2/auth"
   token_url: "https://oauth2.googleapis.com/token"
   revoke_url: "https://oauth2.googleapis.com/revoke"
+  revoke_scope: "grant"
   refresh_supported: true
   pkce_supported: true
   pkce_required: false
@@ -29,13 +30,6 @@ api:
   base_url: "https://www.googleapis.com"
   allowed_hosts:
     - "www.googleapis.com"
-    - "gmail.googleapis.com"
-    - "docs.googleapis.com"
-    - "sheets.googleapis.com"
-    - "slides.googleapis.com"
-    - "drive.googleapis.com"
-    - "people.googleapis.com"
-    - "tasks.googleapis.com"
     - "openidconnect.googleapis.com"
   auth_header: "Authorization"
   auth_prefix: "Bearer"

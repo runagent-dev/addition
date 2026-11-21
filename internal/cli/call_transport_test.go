@@ -80,7 +80,7 @@ func TestCallAuditsTheLastStatusWhenInterruptedWhileWaiting(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c.deps.sleep = func(ctx context.Context, _ time.Duration) error { cancel(); return ctx.Err() }
 
-	r := c.runContext(ctx, nil, "call", "-a", "work", "GET", "/x")
+	r := c.runContext(ctx, nil, "call", "gmail", "-a", "work", "GET", "/x")
 
 	c.wantError(r, ExitInternal, "interrupted")
 	if rows := auditDetails(t, c.home, "call"); !slices.Equal(rows, []string{`{"method":"GET","status":"429"}`}) {

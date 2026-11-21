@@ -1,0 +1,22 @@
+id: "google-docs"
+name: "Google Docs"
+auth_type: "oauth2"
+extends: "google"
+
+oauth2:
+  default_scopes:
+    - "openid"
+    - "https://www.googleapis.com/auth/userinfo.email"
+    - "https://www.googleapis.com/auth/documents"
+
+api:
+  base_url: "https://docs.googleapis.com"
+  allowed_hosts:
+    - "docs.googleapis.com"
+    - "openidconnect.googleapis.com"
+  allowed_path_prefixes:
+    - "/v1/documents"
+
+quirks:
+  - "Inherits Google OAuth and its client; see google.yaml"
+  - "Paths start with /v1/documents"

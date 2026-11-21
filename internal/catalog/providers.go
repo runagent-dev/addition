@@ -21,12 +21,15 @@ type Provider struct {
 	Quirks   []string `yaml:"quirks"`
 	// Extends is the direct parent's id, empty for a root provider.
 	Extends string `yaml:"-"`
+	// IdentityRoot is the top of the extends chain: it owns the OAuth client the app's accounts use.
+	IdentityRoot string `yaml:"-"`
 }
 
 type OAuth2 struct {
 	AuthorizeURL         string                `yaml:"authorize_url"`
 	TokenURL             string                `yaml:"token_url"`
 	RevokeURL            string                `yaml:"revoke_url"`
+	RevokeScope          string                `yaml:"revoke_scope"`
 	RefreshSupported     bool                  `yaml:"refresh_supported"`
 	PKCESupported        bool                  `yaml:"pkce_supported"`
 	PKCERequired         bool                  `yaml:"pkce_required"`
@@ -39,6 +42,15 @@ type OAuth2 struct {
 	TokenResponseMapping *TokenResponseMapping `yaml:"token_response_mapping"`
 	Identity             *Identity             `yaml:"identity"`
 }
+
+// RevokesGrant reports whether revoking a token also invalidates every token the same user got through
+// the same OAuth client, as at Google, rather than only that token.
+func (o *OAuth2) RevokesGrant() bool { return o.RevokeScope == revokeScopeGrant }
+
+const (
+	revokeScopeToken = "token"
+	revokeScopeGrant = "grant"
+)
 
 // Identity names the endpoint that tells who an access token belongs to. SubjectField is the
 // stable account id that aliases match on; Field is a display name, such as an email.
@@ -56,13 +68,15 @@ type TokenResponseMapping struct {
 }
 
 // API describes where and how requests to a provider are made. AllowedHosts are the only hosts
-// an access token may be sent to; without them, only the host of BaseURL is.
+// an access token may be sent to; without them, only the host of BaseURL is. When
+// AllowedPathPrefixes is not empty, the path of a request must also start with one of them, on every host.
 type API struct {
-	BaseURL      string     `yaml:"base_url"`
-	AllowedHosts []string   `yaml:"allowed_hosts"`
-	AuthHeader   string     `yaml:"auth_header"`
-	AuthPrefix   string     `yaml:"auth_prefix"`
-	RateLimit    *RateLimit `yaml:"rate_limit"`
+	BaseURL             string     `yaml:"base_url"`
+	AllowedHosts        []string   `yaml:"allowed_hosts"`
+	AllowedPathPrefixes []string   `yaml:"allowed_path_prefixes"`
+	AuthHeader          string     `yaml:"auth_header"`
+	AuthPrefix          string     `yaml:"auth_prefix"`
+	RateLimit           *RateLimit `yaml:"rate_limit"`
 }
 
 // Hosts lists the hosts, as HostKey spells them, that requests with this API's credentials may reach.
@@ -108,7 +122,17 @@ func loadProviders(fsys fs.FS, opts Options) (map[string]*Provider, error) {
 			return nil, err
 		}
 	}
+	for _, p := range r.resolved {
+		p.IdentityRoot = rootOf(r.resolved, p)
+	}
 	return r.resolved, nil
+}
+
+func rootOf(providers map[string]*Provider, p *Provider) string {
+	for p.Extends != "" {
+		p = providers[p.Extends]
+	}
+	return p.ID
 }
 
 func readRawProviders(fsys fs.FS) (map[string]*rawProvider, error) {
@@ -222,6 +246,9 @@ func decodeProvider(fields map[string]any) (*Provider, error) {
 	var p Provider
 	if err := yaml.Unmarshal(data, &p); err != nil {
 		return nil, err
+	}
+	if p.OAuth2 != nil && p.OAuth2.RevokeScope == "" {
+		p.OAuth2.RevokeScope = revokeScopeToken
 	}
 	return &p, nil
 }

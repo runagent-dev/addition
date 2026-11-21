@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 const (
@@ -16,9 +17,11 @@ const (
 func (f *fakeGoogle) refreshGrant(w http.ResponseWriter, form url.Values) {
 	f.refreshes = append(f.refreshes, form)
 	w.Header().Set("Content-Type", "application/json")
-	current := f.currentRefresh
-	if current == "" {
-		current = fakeRefreshToken
+	knownRefresh := func(token string) bool {
+		if f.currentRefresh != "" {
+			return token == f.currentRefresh
+		}
+		return strings.HasPrefix(token, fakeRefreshToken)
 	}
 	n := len(f.refreshes)
 	switch {
@@ -31,7 +34,7 @@ func (f *fakeGoogle) refreshGrant(w http.ResponseWriter, form url.Values) {
 		echoed := echoMarker + " " + form.Encode()
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": f.refreshError, "error_description": echoed})
 		return
-	case form.Get("client_id") != fakeClientID || form.Get("client_secret") != fakeClientSecret || form.Get("refresh_token") != current:
+	case form.Get("client_id") != fakeClientID || form.Get("client_secret") != fakeClientSecret || !knownRefresh(form.Get("refresh_token")):
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 		return

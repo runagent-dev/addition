@@ -9,9 +9,11 @@ This file is loaded automatically by Claude Code when working in this repo. It c
 **Addition** (`addn`) is a **local-first, single-binary CLI that gives any coding agent authenticated access to the user's accounts**: several Gmail inboxes, several Drives, calendars, and later GitHub, Slack, Discord. Every credential stays on the user's machine in one encrypted SQLite file.
 
 ```bash
-addn connect google --as work --services gmail,drive,calendar
+addn connect gmail --as work
+addn connect google-drive --as work
+addn connect google-calendar --as work
 addn gmail search-messages -a work --query "has:attachment newer_than:7d"
-addn call -a work GET /calendar/v3/calendars/primary/events
+addn call google-calendar -a work GET /calendar/v3/calendars/primary/events
 ```
 
 It is a tool, not a platform: no server of ours, no account with us, no telemetry. Agents need only a shell. MCP and language wrappers are projections layered on top later.
@@ -28,7 +30,7 @@ It is a tool, not a platform: no server of ours, no account with us, no telemetr
 3. **Agent-first output.** Tool commands print JSON on stdout. Errors print `{"error":{"code","message"}}` on stderr with a stable exit code. Never prompt unless stdin is a TTY.
 4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, files written by `-o`, or test snapshots, and not as a provider's echo of a token it was sent (the `addn call` echo guard). There is no command that prints a token; agents reach APIs through `addn call`.
 5. **Provider config is data (YAML), provider quirks are code (adapters).** Keep `if provider == "slack"` out of the core engine.
-6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; more services means re-consent for the union of granted and requested scopes, not a new account.
+6. **One connection = one app + alias.** Each app is its own provider with its own scopes and hosts; the OAuth client is shared per identity root.
 7. **Tools as curated data.** Toolkit YAML is the source for generated commands, JSON schemas and (later) MCP tools. Commands are generated at runtime, not code-generated.
 
 ---
@@ -126,7 +128,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
 10. **Token extraction is data:** `oauth2.token_response_mapping` dot-paths, else the standard OAuth2 layout. Adapters may reject error shapes but never extract tokens.
 11. **Audit log:** connect / refresh / revoke / call events write a row; never token values, paths or queries.
-12. **Token destinations:** an access token is sent only over https to a host in the provider's `api.allowed_hosts` (default: the host of `api.base_url`). A target outside the list is refused before anything is sent, and redirects are never followed.
+12. **Token destinations:** an access token is sent only over https to a host in its own app's `api.allowed_hosts` (default: the host of `api.base_url`) and, when the app lists `api.allowed_path_prefixes`, only to a path that starts with one of them, on every host; so apps sharing a host (Drive and Calendar on `www.googleapis.com`) never receive each other's tokens. A path a server could normalise into another route (dot segments, double or encoded slashes, backslashes, whitespace) is refused, checked on the exact bytes sent where the token is attached. A target outside the list is refused before anything is sent, and redirects are never followed.
 13. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
 
 ---

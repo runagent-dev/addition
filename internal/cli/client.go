@@ -139,7 +139,7 @@ func newClientListCmd(d deps) *cobra.Command {
 	}
 }
 
-// identityRootProvider resolves id to an OAuth provider that owns its own accounts and client.
+// identityRootProvider resolves id to the OAuth provider that owns a client its apps share.
 func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, error) {
 	p, ok := c.Provider(id)
 	if !ok {
@@ -151,7 +151,7 @@ func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, err
 	}
 	if root != id {
 		return nil, &Error{Code: "not-identity-root", Exit: ExitUsage,
-			Message: fmt.Sprintf("%s accounts belong to %s; use %q and pick services with --services", id, root, root)}
+			Message: fmt.Sprintf("%s apps share the OAuth client of %s; run `addn client add %s`", id, root, root)}
 	}
 	if p.AuthType != "oauth2" || p.OAuth2 == nil {
 		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", id), Exit: ExitUsage}
