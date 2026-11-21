@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,8 @@ type Response struct {
 	Status int
 	Header http.Header
 	Body   io.ReadCloser
+	// Tokens are the access tokens sent across all attempts, which the response must not repeat.
+	Tokens []string
 }
 
 // Renewer replaces an access token the API rejected.
@@ -58,11 +61,16 @@ type Engine struct {
 // 401 or an exhausted 429, is returned as is.
 func (e *Engine) Do(ctx context.Context, req Request, accessToken string) (*Response, error) {
 	renewed, throttled := false, 0
+	var sent []string
 	for {
+		if !slices.Contains(sent, accessToken) {
+			sent = append(sent, accessToken)
+		}
 		resp, err := e.send(ctx, req, accessToken)
 		if err != nil {
 			return nil, err
 		}
+		resp.Tokens = sent
 		switch {
 		case resp.Status == http.StatusUnauthorized && !renewed:
 			renewed = true

@@ -325,15 +325,20 @@ func capBody(data []byte) ([]byte, error) {
 }
 
 // deliver writes the final response: a success body to stdout or the -o file, anything else as an upstream failure.
+// Everything derived from the response passes the echo guard, so an access token never leaves addn.
 func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
+	guard := proxy.NewEchoGuard(resp.Tokens)
 	if resp.Status < 200 || resp.Status > 299 {
-		return deliverFailure(cmd, resp)
+		return deliverFailure(cmd, resp, guard)
 	}
 	if out != nil {
-		return out.save(cmd, resp)
+		return out.save(cmd, resp, guard)
 	}
-	body := bufio.NewReaderSize(resp.Body, sniffLength)
+	body := bufio.NewReaderSize(guard.Reader(resp.Body), sniffLength)
 	head, err := body.Peek(sniffLength)
+	if errors.Is(err, proxy.ErrCredentialEcho) {
+		return credentialEcho()
+	}
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
 		return networkFailure()
 	}
@@ -345,10 +350,15 @@ func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 }
 
 // deliverFailure prints the upstream body, capped, and reports only the status. A redirect's body is never read.
-func deliverFailure(cmd *cobra.Command, resp *proxy.Response) error {
+func deliverFailure(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoGuard) error {
 	if resp.Status < 300 || resp.Status > 399 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-		if _, err := cmd.OutOrStdout().Write(body); err != nil {
+		inspected := io.LimitReader(resp.Body, maxErrorBody+int64(guard.Lookahead()))
+		watched := &failureReader{r: guard.Reader(inspected)}
+		_, err := io.Copy(cmd.OutOrStdout(), io.LimitReader(watched, maxErrorBody))
+		if errors.Is(watched.err, proxy.ErrCredentialEcho) {
+			return credentialEcho()
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -359,11 +369,19 @@ func networkFailure() *Error {
 	return &Error{Code: "network", Message: (&proxy.NetworkError{}).Error(), Exit: ExitUpstreamServer}
 }
 
-// copyBody streams src to dst, telling a broken upstream from a broken stdout.
+func credentialEcho() *Error {
+	return &Error{Code: "credential-echo", Exit: ExitUpstreamServer,
+		Message: "the API response repeated the access token and was withheld"}
+}
+
+// copyBody streams src to dst, telling an echoed token and a broken upstream from a broken stdout.
 func copyBody(dst io.Writer, src io.Reader) error {
 	watched := &failureReader{r: src}
 	_, err := io.Copy(dst, watched)
-	if watched.err != nil {
+	switch {
+	case errors.Is(watched.err, proxy.ErrCredentialEcho):
+		return credentialEcho()
+	case watched.err != nil:
 		return networkFailure()
 	}
 	return err

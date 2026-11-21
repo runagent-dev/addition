@@ -61,8 +61,11 @@ type savedSummary struct {
 	Path        string `json:"path"`
 }
 
-func (o *outputFile) save(cmd *cobra.Command, resp *proxy.Response) error {
-	size, err := o.write(resp)
+func (o *outputFile) save(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoGuard) error {
+	if guard.Leaks(resp.Header.Get("Content-Type")) {
+		return credentialEcho()
+	}
+	size, err := o.write(resp, guard)
 	if err != nil {
 		return err
 	}
@@ -71,16 +74,18 @@ func (o *outputFile) save(cmd *cobra.Command, resp *proxy.Response) error {
 	})
 }
 
-func (o *outputFile) write(resp *proxy.Response) (int64, error) {
+func (o *outputFile) write(resp *proxy.Response, guard *proxy.EchoGuard) (int64, error) {
 	tmp, err := os.CreateTemp(filepath.Dir(o.path), ".addn-*.part")
 	if err != nil {
 		return 0, badOutput("bad-output", "cannot create a temporary file next to %s: %v", o.path, err)
 	}
 	defer os.Remove(tmp.Name())
-	watched := &failureReader{r: resp.Body}
+	watched := &failureReader{r: guard.Reader(resp.Body)}
 	size, copyErr := tmp.ReadFrom(watched)
 	closeErr := tmp.Close()
 	switch {
+	case errors.Is(watched.err, proxy.ErrCredentialEcho):
+		return 0, credentialEcho()
 	case watched.err != nil:
 		return 0, networkFailure()
 	case copyErr != nil || closeErr != nil:
