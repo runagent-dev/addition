@@ -18,8 +18,8 @@ Think *"rclone / `gh`, but for every SaaS API, built for agents"*:
 ```bash
 addn client add google --file client_secret.json     # once; every Google app shares it
 addn connect gmail --as work
-addn connect google-drive --as work
-addn connect gmail --as personal
+addn connect google-drive --as personal
+addn connect google-calendar --as work
 
 addn gmail search-messages -a work --query "from:billing has:attachment newer_than:7d"
 addn gmail get-attachment  -a work --message 18c2… --attachment 0.1 -o ./invoice.pdf
@@ -169,7 +169,9 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   (`drive` = `google-drive`) and asks only for that app's `oauth2.default_scopes`; the authorize URL never
   carries `include_granted_scopes`, so Google cannot widen the token beyond the app. Connecting an identity
   root that has apps (`google`) is refused with `not-an-app` and the list of apps. Reconnecting the same
-  (app, alias) re-consents for the union of its stored scopes and the app's defaults.
+  (app, alias) re-consents for the union of its stored scopes and the app's defaults. Connecting, in both the
+  browser flow and `--complete`, first checks that the identity URL is on the app's `allowed_hosts` (as
+  `accounts check --live` does), else `identity-not-allowed` (exit `2`) before any authorization starts or code is redeemed.
 - **Stale re-consent:** a completion is refused (`stale-authorization`) if the alias
   gained scopes after the authorization started that it did not ask for.
 - **Back channel:** token, userinfo and revoke requests go straight to the HTTP
@@ -306,13 +308,23 @@ row gains `live` and `live_reason` (`ok`, `needs-reauth`, `no-refresh-token`, `n
 `openidconnect.googleapis.com`. Every account row also carries `scopes_ready` and `missing_scopes`, the app's default
 scopes the account was not granted.
 
+**Removing and revoking.** `accounts remove <app>:<alias>` deletes the account and its tokens locally and touches no
+other account and no network. With `--revoke` it first asks the provider to revoke the token, best effort. Whether
+that reaches other accounts is provider data: `oauth2.revoke_scope` is `token` (the default: only that token) or
+`grant` (Google: every token the same user got through the same OAuth client). For a `grant` provider, other accounts
+under the same identity root with the same identity subject (legacy `google:<alias>` rows included) would break, so
+the command refuses with `revoke-affects-other-apps` (exit `2`), naming them as `<app>:<alias>` and offering
+`--and-siblings`. With `--and-siblings` it revokes once and, in the same transaction as the removal, marks each
+sibling `needs-reauth` (their next call is exit `3`); the result carries `revoked: true` and
+`also_invalidated: ["google-drive:work", …]`. If the revoke fails, no sibling is marked.
+
 ### 2.6 Command grammar
 
 ```
 addn <provider> <tool> [-a <alias>] [--param value …] [-o file] [--all]
 addn call <app> [-a <alias>] <METHOD> <path> [--query k=v] [--data @file.json] [-o file]
 addn connect <app> --as <alias> [--no-browser]
-addn accounts [list|show|remove|default|check [--live]]
+addn accounts [list|show|remove <app>:<alias> [--revoke [--and-siblings]]|default|check [--live]]
 addn tools [--provider p] [--json]            addn skill install [--harness …]
 ```
 
@@ -353,7 +365,7 @@ can use the same day.
 | M2 | Vault | data dir, SQLite bootstrap + migrations, AES-GCM (+ `crypto_interop` conformance), master-key resolution, store API for clients / accounts / credentials / audit, `addn init` | — |
 | M3 | Connect | `addn client add/list` (Desktop-app client JSON), loopback + two-step `--no-browser` / `--complete` OAuth with a pending authorization in the vault, PKCE, one-use state, identity discovery from `oauth2.identity`, re-consent for the union of stored and default scopes (persist the scopes actually granted), `addn connect / accounts / auth check` (local status only) | accounts connected |
 | **M4** | **Raw call** | `addn call` (§2.5): host allow-list, token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming, `call` audit event; `auth check --live` | **✅ agents can hit any Google API** |
-| **M4b** | **Apps are separate connections** | each app its own provider, scopes, hosts and account (`gmail`, `google-drive`, `google-calendar`, new `google-chat` and `google-docs`); `connect <app>`, no `--services`; `call <app>` (app required, no `--provider`); `accounts check` (`auth check` kept as a hidden alias) with `scopes_ready` / `missing_scopes`; one OAuth client per identity root; `legacy-account` for pre-M4b rows | ✅ one "Connect" card per app |
+| **M4b** | **Apps are separate connections** | each app its own provider, scopes, hosts and account (`gmail`, `google-drive`, `google-calendar`, new `google-chat` and `google-docs`); `connect <app>`, no `--services`; `call <app>` (app required, no `--provider`); `accounts check` (`auth check` kept as a hidden alias) with `scopes_ready` / `missing_scopes`; one OAuth client per identity root; `legacy-account` for pre-M4b rows; `api.allowed_path_prefixes` keeps an app's token off other apps' routes on a shared host; `oauth2.revoke_scope` and `accounts remove --revoke [--and-siblings]` for Google's grant-wide revocation | ✅ one "Connect" card per app |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
 | M7 | Agent surface + release | `addn skill install` (SKILL.md for Claude Code / Codex / generic), `addn tools --json` schemas, goreleaser binaries (linux/mac/windows, amd64/arm64), install script, README | ✅ **v0.1.0** |
@@ -436,6 +448,8 @@ plus `effect:` tags on tools (used from Phase 2, cheap to add now).
    it automatically via `GOTOOLCHAIN`).
 8. **Apps are separate connections (2026-11-21, M4b):** every app is its own provider and its own connection, replacing the
    earlier "one account serves Gmail + Drive + Calendar" design. Each connection asks Google only for its app's scopes
-   (least privilege), is revoked on its own, and sends its token only to its app's hosts. The OAuth client stays
-   shared per identity root. Microsoft Teams is the planned example of a second identity root (own client, own apps).
+   (least privilege), can be removed on its own, and sends its token only to its app's hosts and routes. The OAuth
+   client stays shared per identity root. Revocation is the exception to "on its own": Google revokes the whole grant
+   (every token the user got through that client), so `accounts remove --revoke` refuses while sibling accounts of the
+   same identity exist (`oauth2.revoke_scope: grant` in the provider data) unless `--and-siblings` is given. Microsoft Teams is the planned example of a second identity root (own client, own apps).
    `addn call` names its app first, and `addn auth check` became `addn accounts check`.

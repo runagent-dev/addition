@@ -11,6 +11,7 @@ This file is loaded automatically by Claude Code when working in this repo. It c
 ```bash
 addn connect gmail --as work
 addn connect google-drive --as work
+addn connect google-calendar --as work
 addn gmail search-messages -a work --query "has:attachment newer_than:7d"
 addn call google-calendar -a work GET /calendar/v3/calendars/primary/events
 ```
