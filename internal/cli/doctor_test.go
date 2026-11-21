@@ -423,3 +423,40 @@ func TestDoctorReportsTheFirstFixInPriorityOrder(t *testing.T) {
 		t.Errorf("the legacy account is not reported next to the missing client: %+v", c)
 	}
 }
+
+func TestDoctorNamesAnOverPermissiveSideFileNotTheDataDir(t *testing.T) {
+	h := newHarness(t)
+	h.addClient()
+	side := filepath.Join(h.home, "addition.db-journal")
+	if err := os.WriteFile(side, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(side, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fix := "chmod 600 " + side
+
+	rep := wantNeedsAction(t, h.run("doctor"), fix)
+
+	v := rep.check(t, "vault")
+	if v.Status != "fail" || v.Summary != "addition.db-journal is readable by other users" || v.Fix != fix {
+		t.Errorf("vault check = %+v, want the side file named with %q", v, fix)
+	}
+	if err := os.Chmod(side, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantHealthy(t, h.run("doctor"))
+}
+
+func TestDoctorStillSaysChmod700WhenTheDataDirItselfIsTooOpen(t *testing.T) {
+	h := newHarness(t)
+	if err := os.Chmod(h.home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := wantNeedsAction(t, h.run("doctor"), "make the data dir accessible to your user only (chmod 700)")
+
+	if v := rep.check(t, "vault"); v.Status != "fail" || v.Summary != "the data dir is not private to this user" {
+		t.Errorf("vault check = %+v", v)
+	}
+}

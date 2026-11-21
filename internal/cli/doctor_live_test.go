@@ -466,7 +466,10 @@ func TestDoctorLiveStalledRefreshEndsWithTheTokenEndpointsOwnTimeout(t *testing.
 	}
 }
 
-func TestDoctorLiveWithholdsTheRefreshTokenUsedBetweenTwoRotations(t *testing.T) {
+// probeAfterTwoRotations runs doctor --live against an expired token whose first probe is a 401, so the
+// probe rotates the refresh token twice; the 403 that follows is body(intermediate token).
+func probeAfterTwoRotations(t *testing.T, body func(intermediate string) string) (result, string) {
+	t.Helper()
 	c := newSeededLeakHarness(t)
 	c.google.configure(func(g *fakeGoogle) { g.currentRefresh, g.rotateRefresh = lookalikeRefresh, true })
 	c.clock.Advance(2 * time.Hour)
@@ -477,17 +480,58 @@ func TestDoctorLiveWithholdsTheRefreshTokenUsedBetweenTwoRotations(t *testing.T)
 			status(401, `{"error":{"code":401}}`, "Content-Type", "application/json")(n, w, r)
 			return
 		}
-		nested := `{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"note":{"deep":["` + escapeAll(intermediate) + `"]}}}]}}`
-		status(403, nested, "Content-Type", "application/json")(n, w, r)
+		status(403, body(intermediate), "Content-Type", "application/json")(n, w, r)
 	})
-
 	r := c.run("doctor", "--live")
+	if n := c.google.refreshCount(); n != 2 {
+		t.Errorf("refreshes = %d, want the probe to have rotated the token twice", n)
+	}
+	return r, intermediate
+}
+
+func TestDoctorLiveWithholdsTheRefreshTokenUsedBetweenTwoRotations(t *testing.T) {
+	r, intermediate := probeAfterTwoRotations(t, func(token string) string {
+		return `{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"note":{"deep":["` + escapeAll(token) + `"]}}}]}}`
+	})
 
 	assertNoLeak(t, r, intermediate, lookalikeRefresh, fmt.Sprintf("%s%04d", rotatedRefreshPrefix, 2))
 	if probe := decodeDoctor(t, r).check(t, "live:gmail:work"); probe.Code != "forbidden" || probe.Hint != "" {
 		t.Errorf("live check = %+v, want the body withheld as forbidden with no hint", probe)
 	}
-	if n := c.google.refreshCount(); n != 2 {
-		t.Errorf("refreshes = %d, want the probe to have rotated the token twice", n)
+}
+
+func TestDoctorLiveSeesATokenHiddenByARepeatedJSONMember(t *testing.T) {
+	r, intermediate := probeAfterTwoRotations(t, func(token string) string {
+		return `{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"note":{"array":["` + escapeAll(token) + `"],"array":["clean"]}}}]}}`
+	})
+
+	assertNoLeak(t, r, intermediate)
+	if probe := decodeDoctor(t, r).check(t, "live:gmail:work"); probe.Code != "forbidden" || probe.Hint != "" {
+		t.Errorf("live check = %+v, want forbidden with no hint", probe)
+	}
+}
+
+func TestDoctorLiveDistrustsABodyThatIsNotOneWellFormedObject(t *testing.T) {
+	const disabled = `{"reason":"SERVICE_DISABLED"}`
+	bodies := map[string]string{
+		"repeated reason, disabled first": `{"error":{"details":[{"reason":"SERVICE_DISABLED","reason":"OTHER"}]}}`,
+		"repeated reason, disabled last":  `{"error":{"details":[{"reason":"OTHER","reason":"SERVICE_DISABLED"}]}}`,
+		"repeated details":                `{"error":{"details":[` + disabled + `],"details":[]}}`,
+		"repeated error":                  `{"error":{"details":[` + disabled + `]},"error":{}}`,
+		"trailing value":                  `{"error":{"details":[` + disabled + `]}} {}`,
+		"trailing garbage":                `{"error":{"details":[` + disabled + `]}} x`,
+		"truncated":                       `{"error":{"details":[` + disabled,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			c := newCallHarness(t)
+			c.api.respond(status(403, body, "Content-Type", "application/json"))
+
+			rep, _ := c.liveReport()
+
+			if probe := rep.check(t, "live:gmail:work"); probe.Code != "forbidden" || probe.Hint != "" {
+				t.Errorf("live check = %+v, want forbidden with no hint", probe)
+			}
+		})
 	}
 }
