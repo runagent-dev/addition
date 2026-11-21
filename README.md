@@ -25,14 +25,20 @@ Re-running the script upgrades in place. The installer verifies one thing: the s
 archive against the `checksums.txt` published next to it. Both files come from the same release
 origin, so with `ADDITION_BASE_URL` pointing at a mirror, the mirror has to be trusted. It also
 refuses an archive whose members are not plain files with exactly one `addition`, and caps the
-download at 100 MiB and the binary at 200 MiB. It does not verify provenance. Every release file carries a GitHub artifact
-attestation; check it separately:
+download at 100 MiB and the binary at 200 MiB. It does not verify provenance. A release has seven uploaded assets (four `tar.gz`, two `zip`
+and `checksums.txt`), and each carries a GitHub artifact attestation; the source archives GitHub
+adds to every release are not attested. Check an asset separately:
 
 ```bash
 gh attestation verify addition_linux_amd64.tar.gz \
   --repo runagent-dev/addition \
   --signer-workflow runagent-dev/addition/.github/workflows/release.yml
 ```
+
+Keep the install directory writable by you alone: the installer checks the destination and then
+replaces it, and does not defend against another user changing the directory in between. Redirects
+are limited to HTTPS with curl; with wget the first request must be HTTPS but redirects are not
+restricted, so prefer curl. How releases are cut and verified: [docs/RELEASING.md](docs/RELEASING.md).
 
 Other ways in:
 
@@ -55,6 +61,11 @@ addition providers                                      # apps addition knows
 addition tools                                          # curated tools, as JSON
 addition version
 ```
+
+No desktop keyring (a Linux server without a Secret Service)? Plain `addition init` fails with
+`keychain-unavailable`. Keep the master key in a file instead, `addition init --key-file` (it goes to
+`$ADDITION_HOME/master.key`, mode 0600), or export `ADDITION_MASTER_KEY` (64 hex characters) and run
+`addition init` as usual; the variable must then stay set for every later command.
 
 Headless or over SSH: `addition connect gmail --as work --no-browser`, then finish with
 `addition connect --complete '<url the browser landed on>'`. Run `addition <command> --help` for details.

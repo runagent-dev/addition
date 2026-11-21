@@ -7,6 +7,7 @@ on:
 permissions: {}
 
 env:
+  RELEASE_TAG_REGEX: '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
   GO_IMAGE: golang:1.27.4@sha256:205c7636d74e0ffbe3d007162df7d74f859f5a8c8322dfb9f907977686c126cf
   GORELEASER_IMAGE: goreleaser/goreleaser:v2.20.3@sha256:3019e0e61c99808e42ce60c9cf77f7882685ffd2bd09d18ef6da8f9c9810e71c
 
@@ -26,8 +27,8 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
-            echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease"
+          if [[ ! "$TAG" =~ $RELEASE_TAG_REGEX ]]; then
+            echo "::error::tag '$TAG' is not a SemVer 2.0 release tag such as v1.2.3 or v1.2.3-rc.1"
             exit 1
           fi
           git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null
@@ -59,16 +60,24 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # No token reaches goreleaser; it only builds. dist/ comes back as a tar on stdout.
+      # No token reaches goreleaser; it only builds, and builds the tag that triggered this run.
+      # dist/ comes back as a tar on stdout.
       - name: goreleaser build
         shell: bash
+        env:
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
         run: |
-          tar -c . | docker run -i --rm --entrypoint sh "$GORELEASER_IMAGE" -euc '
+          tar -c . | docker run -i --rm -e GORELEASER_CURRENT_TAG --entrypoint sh "$GORELEASER_IMAGE" -euc '
             mkdir /src && cd /src && tar -x
             git config --global --add safe.directory /src
             goreleaser release --clean --skip=publish >&2
             tar -c dist
           ' | tar -x
+      - name: dist holds the seven assets, built from this tag
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/check-release-dist.sh dist "$TAG"
       - id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

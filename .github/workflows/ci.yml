@@ -47,3 +47,4 @@ jobs:
               { echo "two builds of one commit produced different release files"; exit 1; }
           '
           docker run -i --rm koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb -s sh - < install.sh
+          docker run -i --rm koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb -s bash - < scripts/check-release-dist.sh

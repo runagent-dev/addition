@@ -7,6 +7,10 @@
 #   ADDITION_BASE_URL     releases URL, for mirrors and tests: https://, or http:// on 127.0.0.1 or localhost
 # stdout gets one JSON line on success; everything else goes to stderr, ending with a JSON error
 # envelope on failure.
+# The install directory must be writable only by you: the installer checks the destination and then
+# replaces it, and does not defend against another user changing that directory in between.
+# The whole script is one { ... } group, so a download cut short anywhere runs nothing.
+{
 set -eu
 LC_ALL=C
 export LC_ALL
@@ -16,7 +20,12 @@ RELEASES_URL=https://github.com/runagent-dev/addition/releases
 MAX_ARCHIVE_BYTES=104857600
 MAX_CHECKSUMS_BYTES=1048576
 MAX_BINARY_BYTES=209715200
+MAX_TAR_BYTES=210763776
+MAX_LISTING_BYTES=1048576
+MAX_LISTING_LINES=10000
+VERSION_REGEX='^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 
+caller_dir=$PWD
 workdir=""
 staged=""
 downloader=""
@@ -65,11 +74,12 @@ cleanup() {
   if [ -n "$staged" ]; then rm -f "$staged"; fi
 }
 
-# Prints the absolute path of an existing directory, newlines in the name included.
-canonical_dir() {
-  resolved=$(cd "$1" && pwd && echo x) || return 1
+# Sets $resolved to the absolute form (pwd flag $2: -L or -P) of an existing directory; the sentinel
+# keeps a trailing newline in the name.
+resolve_dir() {
+  resolved=$(cd "$1" 2>/dev/null && pwd "$2" && echo x) || return 1
   resolved=${resolved%x}
-  printf '%s' "${resolved%?}"
+  resolved=${resolved%?}
 }
 
 file_size() {
@@ -77,15 +87,19 @@ file_size() {
   echo $((size))
 }
 
-# Runs a command whose output files may not exceed about <bytes>; shells count ulimit blocks as 512 or
-# 1024 bytes, so callers still compare file_size exactly.
+# Runs a command whose output files may not exceed about <bytes>, and refuses to run it when the
+# limit cannot be set. Shells count ulimit blocks as 512 or 1024 bytes, so callers still compare
+# file_size exactly.
 capped() {
   limit=$1
   shift
+  status=0
   (
-    ulimit -f $((limit / 512 + 1)) 2>/dev/null || :
+    ulimit -f $((limit / 512 + 1)) 2>/dev/null || exit 125
     "$@"
-  )
+  ) || status=$?
+  [ "$status" -ne 125 ] || fail install-failed 1 "cannot enforce a file size limit with ulimit -f"
+  return "$status"
 }
 
 detect_platform() {
@@ -109,6 +123,7 @@ pick_tools() {
   else
     fail no-downloader 1 "neither curl nor wget is installed"
   fi
+  command -v gzip >/dev/null 2>&1 || fail no-gzip 1 "gzip is not installed"
   if command -v sha256sum >/dev/null 2>&1; then
     checksum_tool=sha256sum
   elif command -v shasum >/dev/null 2>&1; then
@@ -118,29 +133,8 @@ pick_tools() {
   fi
 }
 
-# Matches ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$
 valid_version() {
-  case $1 in
-    *-*)
-      core=${1%%-*}
-      prerelease=${1#*-}
-      [ -n "$prerelease" ] || return 1
-      case $prerelease in *[!0-9A-Za-z.]*) return 1 ;; esac
-      ;;
-    *) core=$1 ;;
-  esac
-  case $core in
-    *.*.*.*) return 1 ;;
-    *.*.*) ;;
-    *) return 1 ;;
-  esac
-  major=${core%%.*}
-  rest=${core#*.}
-  minor=${rest%%.*}
-  patch=${rest#*.}
-  for part in "$major" "$minor" "$patch"; do
-    case $part in "" | *[!0-9]*) return 1 ;; esac
-  done
+  CANDIDATE=$1 PATTERN=$VERSION_REGEX awk 'BEGIN { exit !(ENVIRON["CANDIDATE"] ~ ENVIRON["PATTERN"]) }'
 }
 
 # Sets release_path to the URL path below the releases base: latest/download or download/v<version>.
@@ -150,8 +144,8 @@ resolve_release_path() {
     release_path=latest/download
     return
   fi
+  valid_version "$requested" || fail invalid-version 2 "invalid ADDITION_VERSION '$requested'; use latest, v0.1.0 or 0.1.0"
   version=${requested#v}
-  valid_version "$version" || fail invalid-version 2 "invalid ADDITION_VERSION '$requested'; use latest, v0.1.0 or 0.1.0"
   requested=$version
   release_path=download/v$version
 }
@@ -165,7 +159,8 @@ resolve_base_url() {
       ;;
   esac
   case $base_url in
-    https://?* | http://127.0.0.1 | http://127.0.0.1:* | http://127.0.0.1/* | http://localhost | http://localhost:* | http://localhost/*) ;;
+    https://?*) protocols='=https' ;;
+    http://127.0.0.1 | http://127.0.0.1:* | http://127.0.0.1/* | http://localhost | http://localhost:* | http://localhost/*) protocols='=https,http' ;;
     *) fail invalid-base-url 2 "ADDITION_BASE_URL must start with https:// (http:// is accepted only for 127.0.0.1 and localhost)" ;;
   esac
 }
@@ -193,11 +188,18 @@ enter_workdir() {
   cd "$workdir" || fail install-failed 1 "cannot enter the temporary directory"
 }
 
+# Redirects are held to the same protocols as the first request.
 # shellcheck disable=SC2317
 run_downloader() {
   case "$downloader" in
-    curl) curl -fsSL -o "$2" -- "$1" </dev/null ;;
-    wget) wget -q -O "$2" -- "$1" </dev/null ;;
+    curl) curl -fsSL --proto "$protocols" --proto-redir "$protocols" -o "$2" -- "$1" </dev/null ;;
+    wget)
+      if [ "$protocols" = =https ]; then
+        wget -q --https-only -O "$2" -- "$1" </dev/null
+      else
+        wget -q -O "$2" -- "$1" </dev/null
+      fi
+      ;;
   esac
 }
 
@@ -252,12 +254,43 @@ verify_archive() {
   log "Verified sha256 of $1"
 }
 
+# shellcheck disable=SC2317
+inflate_to_tar() {
+  gzip -dc <"$1" >archive.tar
+}
+
+# shellcheck disable=SC2317
+list_names() {
+  tar -tf archive.tar </dev/null >names.txt 2>/dev/null
+}
+
+# shellcheck disable=SC2317
+list_details() {
+  tar -tvf archive.tar </dev/null >listing.txt 2>/dev/null
+}
+
+# Fails unless the file is at most the given size and number of lines.
+check_listing() {
+  [ "$(file_size "$1")" -le "$MAX_LISTING_BYTES" ] || fail archive-invalid 1 "the member list of $2 is larger than $MAX_LISTING_BYTES bytes"
+  lines=$(wc -l <"$1")
+  [ $((lines)) -le "$MAX_LISTING_LINES" ] || fail archive-invalid 1 "$2 has more than $MAX_LISTING_LINES members"
+}
+
 # Accepts an archive with one regular file named addition, no other kind of member, and no member
-# that is absolute or climbs out with "..".
+# that is absolute or climbs out with "..". Works on the plain tar so decompression is bounded too.
 validate_archive() {
-  if ! tar -tzf "$1" </dev/null >names.txt 2>/dev/null || ! tar -tvzf "$1" </dev/null >listing.txt 2>/dev/null; then
-    fail archive-invalid 1 "$1 is not a readable tar.gz archive"
+  if ! capped "$MAX_TAR_BYTES" inflate_to_tar "$1"; then
+    if [ -f archive.tar ] && [ "$(file_size archive.tar)" -gt "$MAX_TAR_BYTES" ]; then
+      fail binary-too-large 1 "$1 holds more than $MAX_TAR_BYTES bytes once decompressed"
+    fi
+    fail archive-invalid 1 "$1 is not a readable gzip file"
   fi
+  [ "$(file_size archive.tar)" -le "$MAX_TAR_BYTES" ] || fail binary-too-large 1 "$1 holds more than $MAX_TAR_BYTES bytes once decompressed"
+  if ! capped "$MAX_LISTING_BYTES" list_names || ! capped "$MAX_LISTING_BYTES" list_details; then
+    fail archive-invalid 1 "$1 is not a readable tar archive, or lists too many members"
+  fi
+  check_listing names.txt "$1"
+  check_listing listing.txt "$1"
   verdict=$(awk -v binary="$BINARY" '
     NR == FNR { kind[FNR] = substr($0, 1, 1); listed = FNR; next }
     {
@@ -270,10 +303,15 @@ validate_archive() {
   [ "$verdict" = ok ] || fail archive-invalid 1 "$1 must hold exactly one regular file named $BINARY and nothing that is not a regular file, absolute or outside its own folder"
 }
 
+# shellcheck disable=SC2317
+untar_binary() {
+  tar -xf archive.tar -C extract "$BINARY" </dev/null 2>/dev/null
+}
+
 extract_binary() {
   validate_archive "$1"
   mkdir extract
-  if ! capped "$MAX_BINARY_BYTES" tar -xzf "$1" -C extract "$BINARY" </dev/null 2>/dev/null; then
+  if ! capped "$MAX_BINARY_BYTES" untar_binary; then
     if [ -f "extract/$BINARY" ] && [ "$(file_size "extract/$BINARY")" -gt "$MAX_BINARY_BYTES" ]; then
       fail binary-too-large 1 "$BINARY in $1 is larger than $MAX_BINARY_BYTES bytes"
     fi
@@ -287,7 +325,8 @@ extract_binary() {
 
 install_binary() {
   mkdir -p "$install_dir" || fail install-failed 1 "cannot create $install_dir"
-  install_dir=$(canonical_dir "$install_dir") || fail install-failed 1 "cannot enter $install_dir"
+  resolve_dir "$install_dir" -L || fail install-failed 1 "cannot enter $install_dir"
+  install_dir=$resolved
   target=$install_dir/$BINARY
   if [ -d "$target" ]; then
     fail install-failed 1 "$target is a directory, not a file; remove it or choose another ADDITION_INSTALL_DIR"
@@ -304,16 +343,18 @@ installed_version() {
   printf '%s' "${reported:-$requested}"
 }
 
-# Succeeds when running `addition` would start the file just installed.
+# Succeeds when running `addition` would start the file just installed; run from the caller's directory.
 installed_on_path() {
   found=$(command -v "$BINARY" 2>/dev/null) || return 1
   case $found in
-    /*) ;;
-    *) found=./$found ;;
+    */*) ;;
+    *) return 1 ;;
   esac
-  found_dir=$(cd "$(dirname "$found")" 2>/dev/null && pwd -P) || return 1
-  installed_dir=$(cd "$install_dir" && pwd -P)
-  [ "$found_dir/$(basename "$found")" = "$installed_dir/$BINARY" ]
+  found_dir=${found%/*}
+  resolve_dir "${found_dir:-/}" -P || return 1
+  found_file=$resolved/${found##*/}
+  resolve_dir "$install_dir" -P || return 1
+  [ "$found_file" = "$resolved/$BINARY" ]
 }
 
 main() {
@@ -332,6 +373,7 @@ main() {
   install_binary
 
   version_reported=$(installed_version)
+  cd "$caller_dir" 2>/dev/null || :
   if installed_on_path; then
     on_path=true
   else
@@ -348,7 +390,5 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 
-# One compound command, so a script cut short anywhere inside it does not parse and runs nothing.
-{
-  main "$@"
+main "$@"
 }
