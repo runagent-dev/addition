@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/runagent-dev/addition/internal/vault"
 )
 
 const serviceDisabledBody = `{"error":{"code":403,"message":"Gmail API has not been used in project 123456789012 before or it is disabled.",` +
@@ -229,5 +233,127 @@ func TestDoctorLiveSendsTheTokenOnlyWhereTheAppAllows(t *testing.T) {
 
 	if hosts := c.transport.seen; !slices.Equal(hosts, []string{c.api.host()}) {
 		t.Errorf("requests went to %v, want only the app's API host", hosts)
+	}
+}
+
+// seededLeakHarness has a gmail account whose tokens look like project ids, so only an echo check can tell them apart.
+type seededLeakHarness struct {
+	*harness
+	api *fakeAPI
+}
+
+const (
+	lookalikeAccess  = "tokenlike-access-0123456789"
+	lookalikeRefresh = "tokenlike-refresh-9876543210"
+)
+
+func newSeededLeakHarness(t *testing.T) *seededLeakHarness {
+	t.Helper()
+	h := newHarness(t)
+	h.addClient()
+	api := newFakeAPI(t)
+	h.deps.catalogFS = pointAppAPIAt(t, h.deps.catalogFS, "gmail", api.host())
+	h.deps.httpClient = &http.Client{Transport: api.srv.Client().Transport, Timeout: 5 * time.Second}
+	seedAccount(t, h, vault.Credential{
+		AccessToken: lookalikeAccess, RefreshToken: lookalikeRefresh, TokenType: "Bearer", ExpiresAt: h.clock.Now().Add(time.Hour),
+	})
+	return &seededLeakHarness{harness: h, api: api}
+}
+
+// escapeAll writes every character as a \u escape, which a raw-bytes echo check cannot see.
+func escapeAll(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		fmt.Fprintf(&b, `\u%04x`, r)
+	}
+	return b.String()
+}
+
+func TestDoctorLiveNeverPrintsASecretFromAServiceDisabledBody(t *testing.T) {
+	const link = "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview"
+	secrets := map[string]string{"access token": lookalikeAccess, "refresh token": lookalikeRefresh, "client secret": fakeClientSecret}
+	places := map[string]func(s string) (reason, service, activation string){
+		"path": func(s string) (string, string, string) {
+			return "SERVICE_DISABLED", "gmail.googleapis.com", link + "/" + s + "?project=123456789012"
+		},
+		"query": func(s string) (string, string, string) {
+			return "SERVICE_DISABLED", "gmail.googleapis.com", link + "?project=123456789012&x=" + s
+		},
+		"fragment": func(s string) (string, string, string) {
+			return "SERVICE_DISABLED", "gmail.googleapis.com", link + "?project=123456789012#" + s
+		},
+		"userinfo": func(s string) (string, string, string) {
+			return "SERVICE_DISABLED", "gmail.googleapis.com", "https://" + s + "@console.developers.google.com/x"
+		},
+		"service": func(s string) (string, string, string) { return "SERVICE_DISABLED", s, link + "?project=123456789012" },
+		"reason": func(s string) (string, string, string) {
+			return "SERVICE_DISABLED-" + s, "gmail.googleapis.com", link + "?project=123456789012"
+		},
+		"project": func(s string) (string, string, string) {
+			return "SERVICE_DISABLED", "gmail.googleapis.com", link + "?project=" + s
+		},
+	}
+	for secretName, secret := range secrets {
+		for placeName, place := range places {
+			for encoding, encode := range map[string]func(string) string{"raw": func(s string) string { return s }, "escaped": escapeAll} {
+				t.Run(secretName+"/"+placeName+"/"+encoding, func(t *testing.T) {
+					c := newSeededLeakHarness(t)
+					reason, service, activation := place(encode(secret))
+					body := `{"error":{"code":403,"details":[{"reason":"` + reason + `","metadata":{"service":"` + service + `","activationUrl":"` + activation + `"}}]}}`
+					c.api.respond(status(403, body, "Content-Type", "application/json"))
+
+					r := c.run("doctor", "--live")
+
+					assertNoLeak(t, r, secret)
+					rep := decodeDoctor(t, r)
+					if probe := rep.check(t, "live:gmail:work"); probe.Code != "forbidden" {
+						t.Errorf("live check = %+v, want the body withheld as forbidden", probe)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestDoctorLiveIgnoresAServiceNameTheCatalogDoesNotHave(t *testing.T) {
+	c := newCallHarness(t)
+	body := strings.Replace(serviceDisabledBody, `"service":"gmail.googleapis.com"`, `"service":"other.googleapis.com"`, 1)
+	c.api.respond(status(403, body, "Content-Type", "application/json"))
+
+	rep, _ := c.liveReport()
+
+	want := activateRoot + "gmail.googleapis.com/overview?project=123456789012"
+	if probe := rep.check(t, "live:gmail:work"); probe.Code != "api-disabled" || probe.Hint != want || probe.Fix != "enable gmail.googleapis.com in the Cloud project" {
+		t.Errorf("live check = %+v, want the catalog's service and link %s", probe, want)
+	}
+}
+
+func TestDoctorLiveStalledErrorBodyIsUnavailable(t *testing.T) {
+	probeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { probeTimeout = defaultProbeTimeout })
+	c := newCallHarness(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	c.api.respond(func(_ int, w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"details":[`))
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	finished := make(chan result, 1)
+	go func() { finished <- c.run("doctor", "--live") }()
+
+	select {
+	case r := <-finished:
+		rep := wantHealthy(t, r)
+		if probe := rep.check(t, "live:gmail:work"); probe.Status != "warn" || probe.Code != "unavailable" {
+			t.Errorf("live check = %+v, want unavailable", probe)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("doctor --live hung on a stalled error body")
 	}
 }

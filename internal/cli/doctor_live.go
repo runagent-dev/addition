@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -27,6 +28,11 @@ const (
 	reasonServiceDisabled = "SERVICE_DISABLED"
 	maxProbeErrorBody     = 64 << 10
 )
+
+const defaultProbeTimeout = 15 * time.Second
+
+// probeTimeout bounds one probe, refresh and error body included.
+var probeTimeout = defaultProbeTimeout
 
 // activationHosts are the only hosts a provider's activation link may name before its project id is used.
 var activationHosts = []string{"console.developers.google.com", "console.cloud.google.com"}
