@@ -21,6 +21,8 @@ type Provider struct {
 	Quirks   []string `yaml:"quirks"`
 	// Extends is the direct parent's id, empty for a root provider.
 	Extends string `yaml:"-"`
+	// IdentityRoot is the top of the extends chain: it owns the OAuth client the app's accounts use.
+	IdentityRoot string `yaml:"-"`
 }
 
 type OAuth2 struct {
@@ -108,7 +110,17 @@ func loadProviders(fsys fs.FS, opts Options) (map[string]*Provider, error) {
 			return nil, err
 		}
 	}
+	for _, p := range r.resolved {
+		p.IdentityRoot = rootOf(r.resolved, p)
+	}
 	return r.resolved, nil
+}
+
+func rootOf(providers map[string]*Provider, p *Provider) string {
+	for p.Extends != "" {
+		p = providers[p.Extends]
+	}
+	return p.ID
 }
 
 func readRawProviders(fsys fs.FS) (map[string]*rawProvider, error) {

@@ -1,0 +1,24 @@
+id: "google-chat"
+name: "Google Chat"
+auth_type: "oauth2"
+extends: "google"
+
+oauth2:
+  default_scopes:
+    - "openid"
+    - "https://www.googleapis.com/auth/userinfo.email"
+    - "https://www.googleapis.com/auth/chat.spaces.readonly"
+    - "https://www.googleapis.com/auth/chat.messages.readonly"
+    - "https://www.googleapis.com/auth/chat.memberships.readonly"
+    - "https://www.googleapis.com/auth/chat.messages.create"
+
+api:
+  base_url: "https://chat.googleapis.com"
+  allowed_hosts:
+    - "chat.googleapis.com"
+    - "openidconnect.googleapis.com"
+
+quirks:
+  - "Inherits Google OAuth and its client; see google.yaml"
+  - "Paths start with /v1 (for example /v1/spaces)"
+  - "The Chat API must be enabled, and a Chat app configured, in the user's Google Cloud project"

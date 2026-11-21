@@ -11,8 +11,12 @@ oauth2:
 
 api:
   base_url: "https://www.googleapis.com"
+  allowed_hosts:
+    - "www.googleapis.com"
+    - "drive.googleapis.com"
+    - "openidconnect.googleapis.com"
 
 quirks:
-  - "Inherits Google OAuth; see google.yaml"
+  - "Inherits Google OAuth and its client; see google.yaml"
   - "File metadata lives under /drive/v3; uploads use the separate /upload/drive/v3 path"
   - "Responses include only id, name, mimeType and kind unless `fields` asks for more"

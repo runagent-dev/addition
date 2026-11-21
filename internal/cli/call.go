@@ -9,41 +9,44 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/runagent-dev/addition/internal/catalog"
 	"github.com/runagent-dev/addition/internal/oauth"
 	"github.com/runagent-dev/addition/internal/proxy"
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
 const (
-	defaultCallProvider = "google"
-	maxErrorBody        = 1 << 20
-	sniffLength         = 512
+	maxErrorBody = 1 << 20
+	sniffLength  = 512
 )
 
 // maxRequestBody caps a request body read from a file, stdin or a flag.
 var maxRequestBody int64 = 64 << 20
 
 type callFlags struct {
-	account, provider string
-	query, headers    []string
-	data, output      string
-	dataSet, force    bool
+	account        string
+	query, headers []string
+	data, output   string
+	dataSet, force bool
 }
 
 func newCallCmd(d deps) *cobra.Command {
 	var f callFlags
 	cmd := &cobra.Command{
-		Use:   "call [-a <alias>] <METHOD> <path> [--query k=v]... [--data @file.json|-|'<json>'] [-H 'Name: value']... [-o file] [--force]",
-		Short: "Call any provider API with a connected account's token",
-		Long: "Send one authenticated request to the provider's API and print the response body.\n\n" +
-			"<path> is absolute from the API host (/calendar/v3/calendars/primary/events) or an https URL\n" +
-			"on one of the provider's allowed hosts (see api.allowed_hosts in its YAML); nothing is sent to\n" +
-			"any other host. addn sets Authorization itself, refreshes an expiring token first, renews it\n" +
+		Use:   "call <app> [-a <alias>] <METHOD> <path> [--query k=v]... [--data @file.json|-|'<json>'] [-H 'Name: value']... [-o file] [--force]",
+		Short: "Call an app's API with a connected account's token",
+		Long: "Send one authenticated request to an app's API and print the response body.\n\n" +
+			"<app> is a provider id or toolkit command, e.g. gmail, drive (google-drive) or google-chat:\n" +
+			"addn call google-chat -a work GET /v1/spaces\n\n" +
+			"<path> is absolute from the app's API host (/calendar/v3/calendars/primary/events) or an https URL\n" +
+			"on one of the app's allowed hosts (see api.allowed_hosts in its YAML); nothing is sent to\n" +
+			"any other host, so an app's token never reaches another app's API. addn sets Authorization itself, refreshes an expiring token first, renews it\n" +
 			"once on a 401, and waits out 429 responses. Redirects are never followed.\n\n" +
 			"A 2xx text or JSON body goes to stdout verbatim. A binary body needs -o <file>, which writes it\n" +
 			"privately and prints {status, content_type, bytes, path}; an existing file needs --force.\n" +
@@ -52,17 +55,18 @@ func newCallCmd(d deps) *cobra.Command {
 			"3 when the account must be reconnected. A response that repeats the access token is withheld\n" +
 			"(credential-echo, exit 5), and so is one with any content coding\n" +
 			"(unsupported-encoding).\n\n" +
-			"-a is optional when one account is connected or a default is set; --provider names the provider\n" +
-			"when an alias exists under several.",
-		Args: cobra.ExactArgs(2),
+			"-a is optional when the app has one account connected or a default is set.",
+		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 2 {
+				return appMissing(cmd, d, args)
+			}
 			f.dataSet = cmd.Flags().Changed("data")
-			return runCall(cmd, d, args[0], args[1], f)
+			return runCall(cmd, d, args[0], args[1], args[2], f)
 		},
 	}
 	flags := cmd.Flags()
 	flags.StringVarP(&f.account, "account", "a", "", "alias of the account to use")
-	flags.StringVar(&f.provider, "provider", "", "provider of the account, when the alias is not unique")
 	flags.StringArrayVar(&f.query, "query", nil, "query parameter k=v; repeatable")
 	flags.StringVar(&f.data, "data", "", "request body: @file, - for stdin, or the body itself")
 	flags.StringArrayVarP(&f.headers, "header", "H", nil, "extra request header 'Name: value'; repeatable")
@@ -104,7 +108,40 @@ func prepareCall(ctx context.Context, stdin io.Reader, rawMethod string, f callF
 	return req, nil
 }
 
-func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags) error {
+// appMissing reports a call given only a method and a path, or an app without a path, as a usage error.
+func appMissing(cmd *cobra.Command, d deps, args []string) error {
+	if _, err := proxy.ParseMethod(args[0]); err != nil {
+		return usageError("call needs <app> <METHOD> <path>, e.g. `addn call gmail GET /gmail/v1/users/me/profile`")
+	}
+	return &Error{Code: "app-required", Exit: ExitUsage, Message: "call needs the app first, e.g. `addn call gmail " + args[0] + " " + args[1] + "`; " +
+		connectedAppsHint(cmd.Context(), d)}
+}
+
+// connectedAppsHint names the apps with an account, or says none is connected, for a usage message.
+func connectedAppsHint(ctx context.Context, d deps) string {
+	none := "no app is connected yet; run `addn connect <app> --as <alias>`"
+	a, err := openAccountSession(ctx, d)
+	if err != nil {
+		return none
+	}
+	defer a.store.Close()
+	accts, err := a.store.ListAccounts(ctx, "")
+	if err != nil {
+		return none
+	}
+	var apps []string
+	for _, acct := range accts {
+		if a.catalog.Connectable(acct.Provider) && !slices.Contains(apps, acct.Provider) {
+			apps = append(apps, acct.Provider)
+		}
+	}
+	if len(apps) == 0 {
+		return none
+	}
+	return "connected apps: " + strings.Join(apps, ", ")
+}
+
+func runCall(cmd *cobra.Command, d deps, appName, rawMethod, rawPath string, f callFlags) error {
 	ctx := cmd.Context()
 	req, err := prepareCall(ctx, cmd.InOrStdin(), rawMethod, f)
 	if err != nil {
@@ -116,13 +153,13 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 		return err
 	}
 	defer a.store.Close()
-	acct, err := a.callAccount(ctx, f.account, f.provider)
+	provider, err := a.app(ctx, appName, f.account)
 	if err != nil {
 		return err
 	}
-	provider, found := a.catalog.Provider(acct.Provider)
-	if !found {
-		return &Error{Code: "unknown-provider", Exit: ExitUsage, Message: fmt.Sprintf("%s is no longer in the provider catalog", acct.Provider)}
+	acct, err := a.callAccount(ctx, provider, f.account)
+	if err != nil {
+		return err
 	}
 	target, err := proxy.ResolveURL(provider.API, rawPath, f.query)
 	if err != nil {
@@ -132,7 +169,7 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
 	token, err := tokens.Access(ctx)
 	if err != nil {
-		return callFailure(acct, err)
+		return callFailure(acct, provider.IdentityRoot, err)
 	}
 	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, AllowCleartext: d.loopbackProviders, Renewer: tokens, Now: d.now, Sleep: d.sleep}
 	resp, err := engine.Do(ctx, proxy.Request{Method: req.method, URL: target, Header: req.header, Body: req.body}, token)
@@ -140,7 +177,7 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 		if attempted, sent := errors.AsType[*proxy.Attempted](err); sent {
 			recordCall(cmd, a.store, acct, req.method, attempted.Status)
 		}
-		return callFailure(acct, err)
+		return callFailure(acct, provider.IdentityRoot, err)
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, req.method, resp.Status)
@@ -179,7 +216,7 @@ func callRequestError(err error) error {
 }
 
 // callFailure maps token and transport failures to exit codes. Every message is addn's own.
-func callFailure(acct vault.Account, err error) error {
+func callFailure(acct vault.Account, clientProvider string, err error) error {
 	var refused *oauth.ProviderError
 	var tokenNet *oauth.NetworkError
 	var apiNet *proxy.NetworkError
@@ -196,7 +233,7 @@ func callFailure(acct vault.Account, err error) error {
 		return notConnected(accountRef{provider: acct.Provider, alias: acct.Alias})
 	case errors.Is(err, proxy.ErrNoOAuthClient):
 		return &Error{Code: "no-oauth-client", Exit: ExitUsage, Message: fmt.Sprintf(
-			"no OAuth client for %s; run `addn client add %s --file client_secret.json`", acct.Provider, acct.Provider)}
+			"no OAuth client for %s; run `addn client add %s --file client_secret.json`", acct.Provider, clientProvider)}
 	case errors.As(err, &refused):
 		return &Error{Code: "refresh-rejected", Message: refused.Error(), Exit: upstreamExit(refused.Status)}
 	case errors.As(err, &tokenNet), errors.As(err, &apiNet):
@@ -215,53 +252,46 @@ func upstreamExit(status int) int {
 	return ExitUpstreamClient
 }
 
-// callAccount picks the account a call uses: the alias, else the provider's default, else its only account.
-func (a *accountSession) callAccount(ctx context.Context, alias, providerFlag string) (vault.Account, error) {
-	root := ""
-	if providerFlag != "" {
-		var err error
-		if root, err = a.catalog.IdentityRoot(providerFlag); err != nil {
-			return vault.Account{}, &Error{Code: "unknown-provider", Exit: ExitUsage,
-				Message: fmt.Sprintf("unknown provider %q (see `addn providers`)", providerFlag)}
+// app resolves the app a command names. An identity root is refused: as a legacy-account error
+// when the vault still holds its account, else as not-an-app.
+func (a *accountSession) app(ctx context.Context, name, alias string) (*catalog.Provider, error) {
+	p, ok := lookupProvider(a.catalog, name)
+	if !ok || a.catalog.Connectable(p.ID) {
+		return appProvider(a.catalog, name)
+	}
+	stored, err := a.store.ListAccounts(ctx, p.ID)
+	if err != nil {
+		return nil, vaultError(err)
+	}
+	for _, acct := range stored {
+		if alias == "" || acct.Alias == alias {
+			return nil, legacyAccountError(a.catalog, acct)
 		}
 	}
-	candidates, err := a.store.ListAccounts(ctx, root)
+	return nil, notAnApp(a.catalog, p)
+}
+
+// callAccount picks the app's account a call uses: the alias, else the app's default, else its only account.
+func (a *accountSession) callAccount(ctx context.Context, app *catalog.Provider, alias string) (vault.Account, error) {
+	if alias != "" {
+		acct, err := a.store.GetAccount(ctx, app.ID, alias)
+		if errors.Is(err, vault.ErrNotFound) {
+			return vault.Account{}, notConnected(accountRef{provider: app.ID, alias: alias})
+		}
+		if err != nil {
+			return vault.Account{}, vaultError(err)
+		}
+		return acct, nil
+	}
+	candidates, err := a.store.ListAccounts(ctx, app.ID)
 	if err != nil {
 		return vault.Account{}, vaultError(err)
 	}
-	if alias != "" {
-		return a.byAlias(candidates, alias, root)
-	}
-	return a.byDefault(ctx, candidates, root)
-}
-
-func (a *accountSession) byAlias(candidates []vault.Account, alias, root string) (vault.Account, error) {
-	var matches []vault.Account
-	for _, acct := range candidates {
-		if acct.Alias == alias {
-			matches = append(matches, acct)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return vault.Account{}, notConnected(accountRef{provider: orDefault(root), alias: alias})
-	case 1:
-		return matches[0], nil
-	}
-	return vault.Account{}, &Error{Code: "ambiguous-account", Exit: ExitUsage,
-		Message: fmt.Sprintf("the alias %q exists under several providers; pass --provider", alias)}
-}
-
-func (a *accountSession) byDefault(ctx context.Context, candidates []vault.Account, root string) (vault.Account, error) {
 	if len(candidates) == 0 {
 		return vault.Account{}, &Error{Code: "not-connected", Exit: ExitNeedsConnect,
-			Message: fmt.Sprintf("no account is connected; run `addn connect %s --as <alias>`", orDefault(root))}
+			Message: fmt.Sprintf("no %s account is connected; run `addn connect %s --as <alias>`", app.ID, app.ID)}
 	}
-	if root == "" && !allSameProvider(candidates) {
-		return vault.Account{}, &Error{Code: "ambiguous-account", Exit: ExitUsage, Message: "accounts of several providers are connected; pass --provider and -a"}
-	}
-	provider := candidates[0].Provider
-	if def, err := a.store.DefaultAccount(ctx, provider); err == nil {
+	if def, err := a.store.DefaultAccount(ctx, app.ID); err == nil {
 		for _, acct := range candidates {
 			if acct.Alias == def {
 				return acct, nil
@@ -278,24 +308,8 @@ func (a *accountSession) byDefault(ctx context.Context, candidates []vault.Accou
 		aliases[i] = acct.Alias
 	}
 	return vault.Account{}, &Error{Code: "account-required", Exit: ExitUsage, Message: fmt.Sprintf(
-		"several accounts are connected (%s); pass -a <alias> or set a default with `addn accounts default %s:<alias>`",
-		strings.Join(aliases, ", "), provider)}
-}
-
-func allSameProvider(accts []vault.Account) bool {
-	for _, acct := range accts {
-		if acct.Provider != accts[0].Provider {
-			return false
-		}
-	}
-	return true
-}
-
-func orDefault(provider string) string {
-	if provider == "" {
-		return defaultCallProvider
-	}
-	return provider
+		"several %s accounts are connected (%s); pass -a <alias> or set a default with `addn accounts default %s:<alias>`",
+		app.ID, strings.Join(aliases, ", "), app.ID)}
 }
 
 func readRequestBody(ctx context.Context, stdin io.Reader, f callFlags) ([]byte, error) {

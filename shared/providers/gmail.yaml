@@ -13,7 +13,10 @@ oauth2:
 
 api:
   base_url: "https://gmail.googleapis.com"
+  allowed_hosts:
+    - "gmail.googleapis.com"
+    - "openidconnect.googleapis.com"
 
 quirks:
-  - "Inherits Google OAuth; see google.yaml"
+  - "Inherits Google OAuth and its client; see google.yaml"
   - "Per-user rate limit: 250 quota units per user per second"

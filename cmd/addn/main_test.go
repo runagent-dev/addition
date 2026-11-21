@@ -85,7 +85,7 @@ func TestTransportLogsNeverReachStderr(t *testing.T) {
 	var pending struct {
 		AuthorizeURL string `json:"authorize_url"`
 	}
-	if err := json.Unmarshal([]byte(mustAddn("connect", "google", "--as", "work", "--no-browser", "--services", "gmail")), &pending); err != nil {
+	if err := json.Unmarshal([]byte(mustAddn("connect", "gmail", "--as", "work", "--no-browser")), &pending); err != nil {
 		t.Fatal(err)
 	}
 	authorize, err := url.Parse(pending.AuthorizeURL)

@@ -8,6 +8,7 @@ type providerListing struct {
 	AuthType     string  `json:"auth_type"`
 	Extends      *string `json:"extends"`
 	IdentityRoot string  `json:"identity_root"`
+	Connectable  bool    `json:"connectable"`
 }
 
 func newProvidersCmd(d deps) *cobra.Command {
@@ -26,7 +27,7 @@ func newProvidersCmd(d deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				row := providerListing{ID: p.ID, Name: p.Name, AuthType: p.AuthType, IdentityRoot: root}
+				row := providerListing{ID: p.ID, Name: p.Name, AuthType: p.AuthType, IdentityRoot: root, Connectable: c.Connectable(p.ID)}
 				if p.Extends != "" {
 					row.Extends = &p.Extends
 				}

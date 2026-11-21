@@ -18,7 +18,6 @@ const pendingAuthTTL = 10 * time.Minute
 
 type connectFlags struct {
 	alias     string
-	services  string
 	noBrowser bool
 	complete  string
 }
@@ -26,31 +25,33 @@ type connectFlags struct {
 func newConnectCmd(d deps) *cobra.Command {
 	var f connectFlags
 	cmd := &cobra.Command{
-		Use:   "connect <provider> --as <alias> [--services gmail,drive,calendar] [--no-browser]",
-		Short: "Connect an account through the provider's OAuth consent screen",
-		Long: "Connect an account, or re-consent an existing alias for more services.\n\n" +
+		Use:   "connect <app> --as <alias> [--no-browser]",
+		Short: "Connect one app's account through its OAuth consent screen",
+		Long: "Connect an account of one app, such as gmail, google-drive or google-chat (see `addn providers`).\n" +
+			"Each app is its own connection: it asks only for its own scopes and can be removed on its own.\n" +
+			"The same alias may be used in several apps. The app is a provider id or toolkit command\n" +
+			"(drive or google-drive).\n\n" +
 			"By default addn opens the consent screen in your browser and waits up to 5 minutes for\n" +
 			"the redirect to a listener on 127.0.0.1.\n\n" +
 			"Headless or over SSH, use two steps:\n" +
-			"  addn connect google --as work --no-browser\n" +
+			"  addn connect gmail --as work --no-browser\n" +
 			"      prints JSON with authorize_url; open it on any device and approve. The browser then\n" +
 			"      lands on http://127.0.0.1:<port>/callback?code=…&state=…, a page that fails to load;\n" +
 			"      copy the full URL from the address bar.\n" +
 			"  addn connect --complete '<that URL>'\n" +
 			"      finishes the connection. Each authorization works once, for 10 minutes.\n\n" +
-			"--services picks services by command or provider id (drive or google-drive); without it,\n" +
-			"addn asks for every service that has tools. Reconnecting asks for the union of the scopes\n" +
-			"already granted and the new ones, and stores what the provider actually granted.",
+			"Reconnecting an alias asks for the union of the scopes already granted and the app's own,\n" +
+			"and stores what the provider actually granted.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if f.complete != "" {
-				if len(args) > 0 || f.alias != "" || f.services != "" || f.noBrowser {
+				if len(args) > 0 || f.alias != "" || f.noBrowser {
 					return usageError("--complete takes only the redirect URL")
 				}
 				return completeTwoStep(cmd, d, f.complete)
 			}
 			if len(args) != 1 {
-				return usageError("connect needs a provider, e.g. `addn connect google --as work`")
+				return usageError("connect needs an app, e.g. `addn connect gmail --as work`")
 			}
 			if f.alias == "" {
 				return usageError("connect needs --as <alias>")
@@ -59,7 +60,6 @@ func newConnectCmd(d deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&f.alias, "as", "", "alias for the account, e.g. work")
-	cmd.Flags().StringVar(&f.services, "services", "", "comma-separated services to authorize, e.g. gmail,drive,calendar")
 	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "print the authorize URL and finish later with --complete")
 	cmd.Flags().StringVar(&f.complete, "complete", "", "finish a --no-browser connect with the URL the browser landed on")
 	return cmd
@@ -81,16 +81,12 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	if err != nil {
 		return err
 	}
-	provider, err := identityRootProvider(c, providerID)
+	provider, err := connectableApp(c, providerID)
 	if err != nil {
 		return err
 	}
 	if err := vault.ValidateAccountName(provider.ID, f.alias); err != nil {
 		return vaultError(err)
-	}
-	scopes, err := requestedScopes(c, provider, f.services)
-	if err != nil {
-		return err
 	}
 	s, err := d.openVault(ctx)
 	if err != nil {
@@ -101,20 +97,32 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	if err != nil {
 		return err
 	}
-	target.scopes = unionScopes(target.accountScopes, scopes)
+	target.scopes = unionScopes(target.accountScopes, provider.OAuth2.DefaultScopes)
 	if f.noBrowser {
 		return startTwoStep(cmd, d, s, target)
 	}
 	return connectViaLoopback(cmd, d, s, target)
 }
 
-// loadTarget loads the OAuth client and the scopes the alias already holds.
+// connectableApp resolves name to an app that signs in with OAuth.
+func connectableApp(c *catalog.Catalog, name string) (*catalog.Provider, error) {
+	p, err := appProvider(c, name)
+	if err != nil {
+		return nil, err
+	}
+	if p.AuthType != "oauth2" || p.OAuth2 == nil {
+		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", p.ID), Exit: ExitUsage}
+	}
+	return p, nil
+}
+
+// loadTarget loads the identity root's OAuth client and the scopes the app's alias already holds.
 func loadTarget(ctx context.Context, s *vault.Store, provider *catalog.Provider, alias string) (connectTarget, error) {
-	client, err := s.GetOAuthClient(ctx, provider.ID)
+	client, err := s.GetOAuthClient(ctx, provider.IdentityRoot)
 	if errors.Is(err, vault.ErrNotFound) {
 		return connectTarget{}, &Error{Code: "no-oauth-client", Exit: ExitUsage, Message: fmt.Sprintf(
 			"no OAuth client for %s; create a \"Desktop app\" client and run `addn client add %s --file client_secret.json`",
-			provider.ID, provider.ID)}
+			provider.ID, provider.IdentityRoot)}
 	}
 	if err != nil {
 		return connectTarget{}, vaultError(err)
@@ -248,7 +256,7 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 	if err != nil {
 		return oauthError(err)
 	}
-	provider, err := identityRootProvider(c, pending.Provider)
+	provider, err := connectableApp(c, pending.Provider)
 	if err != nil {
 		return err
 	}

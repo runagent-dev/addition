@@ -29,13 +29,6 @@ api:
   base_url: "https://www.googleapis.com"
   allowed_hosts:
     - "www.googleapis.com"
-    - "gmail.googleapis.com"
-    - "docs.googleapis.com"
-    - "sheets.googleapis.com"
-    - "slides.googleapis.com"
-    - "drive.googleapis.com"
-    - "people.googleapis.com"
-    - "tasks.googleapis.com"
     - "openidconnect.googleapis.com"
   auth_header: "Authorization"
   auth_prefix: "Bearer"

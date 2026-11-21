@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestTwoAppsUnderOneAliasAreTwoIndependentAccounts(t *testing.T) {
 	for _, row := range rows {
 		byApp[row.Provider] = row
 	}
-	if !slices.Equal(byApp["gmail"].Scopes, gmailScopes) || !slices.Equal(byApp["google-drive"].Scopes, driveScopes) {
+	if !containsAll(byApp["gmail"].Scopes, gmailScopes...) || slices.Contains(byApp["gmail"].Scopes, scopeDrive) || !slices.Equal(byApp["google-drive"].Scopes, driveScopes) {
 		t.Errorf("gmail scopes %v, drive scopes %v; each account holds only its own app's", byApp["gmail"].Scopes, byApp["google-drive"].Scopes)
 	}
 	if got := strings.Fields(h.google.authorizes[0].Get("scope")); slices.Contains(got, scopeDrive) {
@@ -107,7 +108,7 @@ func TestAuthCheckIsAHiddenAliasOfAccountsCheck(t *testing.T) {
 			t.Errorf("%v: auth check printed %q / %q, accounts check %q / %q", extra, viaAuth.stdout, viaAuth.stderr, viaAccounts.stdout, viaAccounts.stderr)
 		}
 	}
-	if help := c.mustRun("--help").stdout; strings.Contains(help, "auth") || !strings.Contains(help, "accounts") {
+	if help := c.mustRun("--help").stdout; regexp.MustCompile(`(?m)^\s+auth\s`).MatchString(help) || !strings.Contains(help, "accounts") {
 		t.Errorf("root help lists the deprecated alias or omits accounts:\n%s", help)
 	}
 	if help := c.mustRun("accounts", "--help").stdout; !strings.Contains(help, "check") {

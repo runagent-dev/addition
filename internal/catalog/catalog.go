@@ -51,16 +51,38 @@ func (c *Catalog) Provider(id string) (*Provider, bool) {
 	return p, ok
 }
 
-// IdentityRoot returns the top of id's extends chain, which owns its accounts and OAuth client.
+// IdentityRoot returns the top of id's extends chain, which owns the OAuth client its accounts use.
 func (c *Catalog) IdentityRoot(id string) (string, error) {
 	p, ok := c.providers[id]
 	if !ok {
 		return "", fmt.Errorf("unknown provider %q", id)
 	}
-	for p.Extends != "" {
-		p = c.providers[p.Extends]
+	return p.IdentityRoot, nil
+}
+
+// Connectable reports whether id is an app: a provider no other provider extends. Accounts
+// belong to apps; an identity root with apps only shares its OAuth client and endpoints.
+func (c *Catalog) Connectable(id string) bool {
+	if _, ok := c.providers[id]; !ok {
+		return false
 	}
-	return p.ID, nil
+	for _, p := range c.providers {
+		if p.Extends == id {
+			return false
+		}
+	}
+	return true
+}
+
+// Apps lists the connectable providers under rootID, sorted by id.
+func (c *Catalog) Apps(rootID string) []*Provider {
+	var apps []*Provider
+	for _, p := range c.Providers() {
+		if p.IdentityRoot == rootID && c.Connectable(p.ID) {
+			apps = append(apps, p)
+		}
+	}
+	return apps
 }
 
 // Toolkits returns every toolkit sorted by provider id.

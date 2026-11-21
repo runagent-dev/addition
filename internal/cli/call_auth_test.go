@@ -89,7 +89,7 @@ func TestInvalidGrantMeansNeedsReauthAndNeverLoops(t *testing.T) {
 	r := c.call("-a", "work", "GET", "/x")
 
 	env := c.wantError(r, ExitNeedsConnect, "needs-reauth")
-	if !strings.Contains(env.Error.Message, "addn connect google --as work") {
+	if !strings.Contains(env.Error.Message, "addn connect gmail --as work") {
 		t.Errorf("message %q does not tell the user to reconnect", env.Error.Message)
 	}
 	if r.stdout != "" || len(c.api.requests()) != 0 {
@@ -180,7 +180,7 @@ func TestA401WithoutARefreshTokenNeedsReconnect(t *testing.T) {
 	r := c.call("-a", "work", "GET", "/x")
 
 	env := c.wantError(r, ExitNeedsConnect, "needs-reauth")
-	if !strings.Contains(env.Error.Message, "addn connect google --as work") {
+	if !strings.Contains(env.Error.Message, "addn connect gmail --as work") {
 		t.Errorf("message %q", env.Error.Message)
 	}
 	if len(c.api.requests()) != 1 || c.google.refreshCount() != 0 {
