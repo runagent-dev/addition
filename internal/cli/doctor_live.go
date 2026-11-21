@@ -86,7 +86,11 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, http.MethodGet, resp.Status)
-	return probeVerdict(acct, provider.API, resp, *held), nil
+	verdict := probeVerdict(acct, provider.API, resp, *held)
+	if verdict.Code == probeForbidden && ctx.Err() != nil {
+		return unavailableVerdict("the API did not finish answering in time, so the account could not be checked"), nil
+	}
+	return verdict, nil
 }
 
 // collectingRenewer notes the vault's secrets after every renewal, so each refresh token a probe rotates through is held.
@@ -144,8 +148,8 @@ func unavailableVerdict(summary string) doctorCheck {
 
 func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, held heldValues) doctorCheck {
 	disabled, err := serviceDisabled(resp, held.secrets)
-	if errors.Is(err, context.DeadlineExceeded) {
-		return unavailableVerdict("the API did not finish answering in time, so the account could not be checked")
+	if err != nil && !errors.Is(err, proxy.ErrCredentialEcho) {
+		return unavailableVerdict("the API did not finish answering, so the account could not be checked")
 	}
 	if disabled && api.Service != "" {
 		return doctorCheck{
@@ -168,8 +172,7 @@ type errorDetails struct {
 
 // serviceDisabled reports only whether a Google error's reason is SERVICE_DISABLED; no other value of
 // the body is used or printed. The body is withheld, as if it had no such reason, when it repeats a
-// token or secret in any form, raw or JSON-escaped. A non-nil err means the body could not be read;
-// it is context.DeadlineExceeded when the probe ran out of time.
+// token or secret in any form, raw or JSON-escaped. A non-nil err means the body could not be read.
 func serviceDisabled(resp *proxy.Response, secrets []string) (bool, error) {
 	if hasContentCoding(resp.Header) {
 		return false, nil
