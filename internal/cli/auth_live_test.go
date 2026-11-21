@@ -16,13 +16,13 @@ type liveRow struct {
 
 func (c *callHarness) liveRows() []liveRow {
 	c.t.Helper()
-	return decodeJSON[[]liveRow](c.t, c.mustRun("auth", "check", "--live"))
+	return decodeJSON[[]liveRow](c.t, c.mustRun("accounts", "check", "--live"))
 }
 
 func TestAuthCheckWithoutLiveIsUnchanged(t *testing.T) {
 	c := newCallHarness(t)
 
-	r := c.mustRun("auth", "check")
+	r := c.mustRun("accounts", "check")
 
 	var rows []map[string]any
 	if err := json.Unmarshal([]byte(r.stdout), &rows); err != nil {
@@ -30,7 +30,7 @@ func TestAuthCheckWithoutLiveIsUnchanged(t *testing.T) {
 	}
 	for _, key := range []string{"live", "live_reason"} {
 		if _, present := rows[0][key]; present {
-			t.Errorf("auth check without --live reports %q", key)
+			t.Errorf("accounts check without --live reports %q", key)
 		}
 	}
 	if c.transport.total() != 0 {
@@ -88,7 +88,7 @@ func TestAuthCheckLiveReasons(t *testing.T) {
 			c := newCallHarness(t)
 			tc.setup(c)
 
-			r := c.mustRun("auth", "check", "--live")
+			r := c.mustRun("accounts", "check", "--live")
 
 			rows := decodeJSON[[]liveRow](t, r)
 			if rows[0].Live == nil || *rows[0].Live || rows[0].LiveReason != tc.reason || rows[0].Status != tc.status {
@@ -104,7 +104,7 @@ func TestAuthCheckLiveReasons(t *testing.T) {
 func TestAuthCheckLiveForANamedAccount(t *testing.T) {
 	c := newCallHarness(t)
 
-	r := c.mustRun("auth", "check", "google:work", "--live")
+	r := c.mustRun("accounts", "check", "gmail:work", "--live")
 
 	if rows := decodeJSON[[]liveRow](t, r); len(rows) != 1 || rows[0].Live == nil || !*rows[0].Live {
 		t.Errorf("rows = %+v", rows)

@@ -31,7 +31,7 @@ func (c *callHarness) cancelWhileHeld(h *heldRefresh, args ...string) result {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	finished := make(chan result, 1)
-	go func() { finished <- c.runContext(ctx, nil, append([]string{"call"}, args...)...) }()
+	go func() { finished <- c.runContext(ctx, nil, append([]string{"call", "gmail"}, args...)...) }()
 	<-h.arrived
 	cancel()
 	var r result
@@ -106,7 +106,7 @@ func TestCallWaitingForTheVaultLockStopsOnTheFirstCancel(t *testing.T) {
 	time.AfterFunc(200*time.Millisecond, cancel)
 
 	started := time.Now()
-	r := c.runContext(ctx, nil, "call", "-a", "work", "GET", "/x")
+	r := c.runContext(ctx, nil, "call", "gmail", "-a", "work", "GET", "/x")
 
 	c.wantError(r, ExitInternal, "interrupted")
 	if elapsed := time.Since(started); elapsed > 3*time.Second {

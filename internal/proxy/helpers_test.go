@@ -84,14 +84,14 @@ func (e *tokenEndpoint) form(i int) url.Values {
 	return e.forms[i]
 }
 
-// googleProvider is the shipped google provider with its token endpoint pointed at tokenURL.
-func googleProvider(t *testing.T, tokenURL string) *catalog.Provider {
+// gmailProvider is the shipped gmail app, which inherits Google's token endpoint, pointed at tokenURL.
+func gmailProvider(t *testing.T, tokenURL string) *catalog.Provider {
 	t.Helper()
 	c, err := catalog.Load(shared.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	shipped, _ := c.Provider("google")
+	shipped, _ := c.Provider("gmail")
 	p := *shipped
 	oauth2 := *shipped.OAuth2
 	oauth2.TokenURL = tokenURL
@@ -99,7 +99,7 @@ func googleProvider(t *testing.T, tokenURL string) *catalog.Provider {
 	return &p
 }
 
-// vaultFixture is an initialised vault holding one google account, "work", with a credential.
+// vaultFixture is an initialised vault holding one gmail account, "work",, with a credential.
 type vaultFixture struct {
 	t        *testing.T
 	env      vault.Env
@@ -133,9 +133,9 @@ func newVaultFixture(t *testing.T, cred vault.Credential) *vaultFixture {
 		t.Fatalf("Init: %v", err)
 	}
 	f := &vaultFixture{t: t, env: env, clock: clock, endpoint: newTokenEndpoint(t)}
-	f.provider = googleProvider(t, f.endpoint.srv.URL)
+	f.provider = gmailProvider(t, f.endpoint.srv.URL)
 	f.store = f.open()
-	acct, err := f.store.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work", Identity: "me@work.example", Scopes: []string{"openid"}})
+	acct, err := f.store.CreateAccount(ctx, vault.Account{Provider: "gmail", Alias: "work", Identity: "me@work.example", Scopes: []string{"openid"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func (f *vaultFixture) credential() vault.Credential {
 
 func (f *vaultFixture) status() string {
 	f.t.Helper()
-	acct, err := f.store.GetAccount(context.Background(), "google", "work")
+	acct, err := f.store.GetAccount(context.Background(), "gmail", "work")
 	if err != nil {
 		f.t.Fatal(err)
 	}

@@ -35,9 +35,9 @@ func TestCallNeverLeaksCredentialsOnAnyPath(t *testing.T) {
 	c.expireToken()
 	run("GET", "/x")
 	run("GET", "/x")
-	c.mustRun("auth", "check", "--live")
+	c.mustRun("accounts", "check", "--live")
 	c.mustRun("accounts", "list")
-	c.mustRun("accounts", "show", "google:work")
+	c.mustRun("accounts", "show", "gmail:work")
 	c.api.srv.Close()
 	run("GET", "/x")
 

@@ -90,17 +90,9 @@ func TestAllowedHostsValidation(t *testing.T) {
 func TestShippedProvidersListTheirAPIHosts(t *testing.T) {
 	c := shipped(t)
 
-	google := mustProvider(t, c, "google")
-	for _, host := range []string{
-		"www.googleapis.com", "gmail.googleapis.com", "docs.googleapis.com", "sheets.googleapis.com",
-	} {
-		if !slices.Contains(google.API.Hosts(), host) {
-			t.Errorf("google hosts %v lack %s", google.API.Hosts(), host)
-		}
-	}
-	for _, id := range []string{"gmail", "google-drive", "google-calendar"} {
-		if got := mustProvider(t, c, id).API.Hosts(); !slices.Equal(got, google.API.Hosts()) {
-			t.Errorf("%s hosts = %v, want google's %v", id, got, google.API.Hosts())
+	for id, want := range shippedAppHosts {
+		if got := mustProvider(t, c, id).API.Hosts(); !slices.Equal(got, want) {
+			t.Errorf("%s hosts = %v, want %v", id, got, want)
 		}
 	}
 	for _, p := range c.Providers() {

@@ -90,7 +90,7 @@ func TestCompleteReleasesTheClaimWhenNoConnectionWasMade(t *testing.T) {
 		}
 		return nil
 	})
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
 	if env.Error.Message != "network error contacting the token endpoint" {
@@ -116,7 +116,7 @@ func TestCompleteDropsTheAuthorizationWhenTheExchangeOutcomeIsUnknown(t *testing
 			h.addClient()
 			fail := makeFailure(t)
 			h.failTokenRequests(func(int) failure { return fail })
-			landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+			landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 			env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
 			if !strings.Contains(env.Error.Message, "addn connect") {
@@ -132,7 +132,7 @@ func TestCompleteDropsTheAuthorizationWhenTheProviderAnswers5xx(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
 	h.google.tokenStatus = http.StatusBadGateway
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "token-exchange-rejected")
 	if !strings.Contains(env.Error.Message, "addn connect") {
@@ -160,7 +160,7 @@ func TestDenialLeavesAClaimedAuthorizationAlone(t *testing.T) {
 		once.Do(func() { close(arrived) })
 		<-release
 	}
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 	completion := make(chan result, 1)
 	go func() { completion <- h.run("connect", "--complete", landed) }()
@@ -178,7 +178,7 @@ func TestDenialLeavesAClaimedAuthorizationAlone(t *testing.T) {
 func TestCompleteWhileAnotherCompletionIsInProgress(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 	cb, err := oauth.ParseCallback(landed)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestConcurrentCompletionsExchangeOnce(t *testing.T) {
 	h.addClient()
 	for round := range 5 {
 		alias := fmt.Sprintf("work%d", round)
-		p := decodeJSON[pendingOut](t, h.mustRun("connect", "google", "--as", alias, "--no-browser", "--services", "gmail"))
+		p := decodeJSON[pendingOut](t, h.mustRun("connect", "gmail", "--as", alias, "--no-browser"))
 		landed := h.google.consent(p.AuthorizeURL)
 		before := len(h.google.exchanges)
 
@@ -233,24 +233,26 @@ func TestConcurrentCompletionsExchangeOnce(t *testing.T) {
 func TestOverlappingReconsentsRefuseAStaleCompletion(t *testing.T) {
 	h := newHarness(t)
 	h.addClient()
-	h.mustRun("connect", "google", "--as", "work", "--services", "gmail")
-	driveURL := h.google.consent(h.startTwoStep("--services", "drive").AuthorizeURL)
-	calendarURL := h.google.consent(h.startTwoStep("--services", "calendar").AuthorizeURL)
+	h.mustRun("connect", "gmail", "--as", "work")
+	firstURL := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
+	secondURL := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
-	h.mustRun("connect", "--complete", driveURL)
-	env := h.wantError(h.run("connect", "--complete", calendarURL), ExitUsage, "stale-authorization")
+	h.google.grant = func(requested []string) []string { return append(slices.Clone(requested), scopeGmailLabels) }
+	h.mustRun("connect", "--complete", firstURL)
+	h.google.grant = nil
+	env := h.wantError(h.run("connect", "--complete", secondURL), ExitUsage, "stale-authorization")
 	if !strings.Contains(env.Error.Message, "addn connect") {
 		t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
 	}
 
-	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "google:work"))
-	if !containsAll(show.Scopes, scopeDrive) || slices.Contains(show.Scopes, scopeCalendar) {
-		t.Errorf("stored scopes = %v, want drive kept and calendar not yet added", show.Scopes)
+	show := decodeJSON[accountRow](t, h.mustRun("accounts", "show", "gmail:work"))
+	if !containsAll(show.Scopes, scopeGmailLabels) {
+		t.Errorf("stored scopes = %v, want the scope the first completion granted kept", show.Scopes)
 	}
-	h.wantError(h.run("connect", "--complete", calendarURL), ExitUsage, "unknown-state")
+	h.wantError(h.run("connect", "--complete", secondURL), ExitUsage, "unknown-state")
 
-	again := decodeJSON[connected](t, h.mustRun("connect", "google", "--as", "work", "--services", "calendar"))
-	if !containsAll(again.Scopes, scopeDrive, scopeCalendar) {
+	again := decodeJSON[connected](t, h.mustRun("connect", "gmail", "--as", "work"))
+	if !containsAll(again.Scopes, append(gmailScopes, scopeGmailLabels)...) {
 		t.Errorf("reconnect for the union = %v", again.Scopes)
 	}
 }
@@ -259,7 +261,7 @@ func TestProviderDiagnosticsNeverEchoWhatAddnSent(t *testing.T) {
 	t.Run("token exchange", func(t *testing.T) {
 		h := newHarness(t)
 		h.addClient()
-		landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+		landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 		h.google.echo = true
 		h.wantError(h.run("connect", "--complete", landed), ExitUpstreamClient, "token-exchange-rejected")
 	})
@@ -267,13 +269,13 @@ func TestProviderDiagnosticsNeverEchoWhatAddnSent(t *testing.T) {
 		h := newHarness(t)
 		h.addClient()
 		h.failTokenRequests(func(int) failure { return failEchoing })
-		h.wantError(h.run("connect", "google", "--as", "work"), ExitUpstreamServer, "network")
+		h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUpstreamServer, "network")
 	})
 	t.Run("userinfo", func(t *testing.T) {
 		h := newHarness(t)
 		h.addClient()
 		h.google.userinfoBad = true
-		env := h.wantError(h.run("connect", "google", "--as", "work"), ExitUpstreamClient, "identity-rejected")
+		env := h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUpstreamClient, "identity-rejected")
 		if !strings.Contains(env.Error.Message, "HTTP 401") || !strings.Contains(env.Error.Message, "invalid_request") {
 			t.Errorf("message %q lacks the status or the allowlisted code", env.Error.Message)
 		}
@@ -283,7 +285,7 @@ func TestProviderDiagnosticsNeverEchoWhatAddnSent(t *testing.T) {
 		h.addClient()
 		h.connect("work", "gmail")
 		h.google.echo = true
-		out := decodeJSON[removed](t, h.mustRun("accounts", "remove", "google:work", "--revoke"))
+		out := decodeJSON[removed](t, h.mustRun("accounts", "remove", "gmail:work", "--revoke"))
 		if out.Revoke.OK || !strings.Contains(out.Revoke.Error, "HTTP 400") {
 			t.Errorf("revoke = %+v", out.Revoke)
 		}
@@ -297,8 +299,8 @@ func TestProviderDiagnosticsNeverEchoWhatAddnSent(t *testing.T) {
 			if echo {
 				code = "authorization-error"
 			}
-			h.wantError(h.run("connect", "google", "--as", "work"), ExitUpstreamClient, code)
-			landed := h.google.consent(h.startTwoStep().AuthorizeURL)
+			h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUpstreamClient, code)
+			landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 			h.wantError(h.run("connect", "--complete", landed), ExitUpstreamClient, code)
 		}
 	})

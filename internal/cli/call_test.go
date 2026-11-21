@@ -65,7 +65,7 @@ func TestCallInjectsTheTokenAndStreamsTheBodyVerbatim(t *testing.T) {
 func TestCallMergesThePathsQueryWithQueryFlags(t *testing.T) {
 	c := newCallHarness(t)
 
-	c.mustRun("call", "-a", "work", "GET", "/calendar/v3/calendars/primary/events?maxResults=5", "--query", "timeMin=2026-01-01T00:00:00Z")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/calendar/v3/calendars/primary/events?maxResults=5", "--query", "timeMin=2026-01-01T00:00:00Z")
 
 	query, _ := url.ParseQuery(c.api.requests()[0].RawQuery)
 	if query.Get("maxResults") != "5" || query.Get("timeMin") != "2026-01-01T00:00:00Z" {
@@ -109,7 +109,7 @@ func TestCallSendsTheBodyFromAnInlineFlagAFileOrStdin(t *testing.T) {
 func TestCallPassesOrdinaryHeadersAndKeepsAnExplicitContentType(t *testing.T) {
 	c := newCallHarness(t)
 
-	c.mustRun("call", "-a", "work", "PATCH", "/drive/v3/files/1", "--data", `{"name":"n"}`,
+	c.mustRun("call", "gmail", "-a", "work", "PATCH", "/drive/v3/files/1", "--data", `{"name":"n"}`,
 		"-H", "Content-Type: application/merge-patch+json", "-H", "X-Goog-User-Project: proj", "-H", "X-Multi: a", "-H", "X-Multi: b")
 
 	h := c.api.requests()[0].Header
@@ -303,7 +303,7 @@ func TestCallRefusesAnOversizedBody(t *testing.T) {
 
 func TestCallDecodesAsJSONWhenTheUpstreamIsJSON(t *testing.T) {
 	c := newCallHarness(t)
-	r := c.mustRun("call", "-a", "work", "GET", "/x")
+	r := c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 
 	var v map[string]any
 	if err := json.Unmarshal([]byte(r.stdout), &v); err != nil || v["ok"] != true {

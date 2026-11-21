@@ -95,7 +95,7 @@ func TestCallWithoutForceFailsBeforeSendingWhereHardLinksAreUnavailable(t *testi
 		t.Errorf("directory = %v, want it empty", names)
 	}
 
-	c.mustRun("call", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "forced"), "--force")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "forced"), "--force")
 	if names := dirNames(t, dir); !slices.Equal(names, []string{"forced"}) {
 		t.Errorf("--force needs no hard link, directory = %v", names)
 	}
@@ -199,7 +199,7 @@ func TestCallCleansUpAPartialFileWhenInterruptedMidStream(t *testing.T) {
 		cancel()
 	}()
 
-	r := c.runContext(ctx, nil, "call", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "out.bin"))
+	r := c.runContext(ctx, nil, "call", "gmail", "-a", "work", "GET", "/x", "-o", filepath.Join(dir, "out.bin"))
 
 	c.wantError(r, ExitInternal, "interrupted")
 	if names := dirNames(t, dir); len(names) != 0 {

@@ -13,7 +13,7 @@ func TestCallRefreshesAnExpiredTokenBeforeSending(t *testing.T) {
 	c := newCallHarness(t)
 	c.expireToken()
 
-	c.mustRun("call", "-a", "work", "GET", "/x")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 
 	if c.google.refreshCount() != 1 {
 		t.Fatalf("refresh grants = %d, want 1", c.google.refreshCount())
@@ -31,7 +31,7 @@ func TestCallRefreshesAnExpiredTokenBeforeSending(t *testing.T) {
 	if rows := auditDetails(t, c.home, "refresh"); !slices.Equal(rows, []string{`{"outcome":"ok"}`}) {
 		t.Errorf("refresh audit = %v", rows)
 	}
-	c.mustRun("call", "-a", "work", "GET", "/x")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 	if c.google.refreshCount() != 1 {
 		t.Error("the refreshed token was refreshed again before it expired")
 	}
@@ -41,10 +41,10 @@ func TestCallRefreshesAnExpiredTokenBeforeSending(t *testing.T) {
 func TestCallStoresARotatedRefreshToken(t *testing.T) {
 	c := newCallHarness(t, func(g *fakeGoogle) { g.rotateRefresh = true })
 	c.expireToken()
-	c.mustRun("call", "-a", "work", "GET", "/x")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 	c.expireToken()
 
-	c.mustRun("call", "-a", "work", "GET", "/x")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 
 	if got := c.google.refreshForm(1).Get("refresh_token"); got != rotatedRefreshPrefix+"0001" {
 		t.Errorf("the second refresh sent %q, want the rotated refresh token", got)
@@ -107,8 +107,8 @@ func TestInvalidGrantMeansNeedsReauthAndNeverLoops(t *testing.T) {
 	}
 
 	c.google.configure(func(g *fakeGoogle) { g.refreshError = "" })
-	c.mustRun("connect", "google", "--as", "work", "--services", "gmail")
-	c.mustRun("call", "-a", "work", "GET", "/x")
+	c.mustRun("connect", "gmail", "--as", "work")
+	c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 }
 
 func TestOtherRefreshFailuresAreUpstreamErrorsAndKeepTheAccount(t *testing.T) {
@@ -143,7 +143,7 @@ func TestA401IsRefreshedAndRetriedOnce(t *testing.T) {
 	c := newCallHarness(t)
 	c.api.respond(requireToken(refreshedAccessPrefix + "0001"))
 
-	r := c.mustRun("call", "-a", "work", "POST", "/x", "--data", `{"a":1}`)
+	r := c.mustRun("call", "gmail", "-a", "work", "POST", "/x", "--data", `{"a":1}`)
 
 	if n := c.google.refreshCount(); n != 1 {
 		t.Errorf("refresh grants = %d, want 1", n)
@@ -201,7 +201,7 @@ func TestCallRetriesThrottlingHonouringRetryAfter(t *testing.T) {
 		jsonBody(`{"ok":true}`)(n, w, r)
 	})
 
-	r := c.mustRun("call", "-a", "work", "POST", "/x", "--data", "payload")
+	r := c.mustRun("call", "gmail", "-a", "work", "POST", "/x", "--data", "payload")
 
 	if got := c.slept(); !slices.Equal(got, []time.Duration{2 * time.Second, 2 * time.Second}) {
 		t.Errorf("sleeps = %v, want [2s 2s]", got)

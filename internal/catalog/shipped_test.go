@@ -38,7 +38,7 @@ func TestShippedProviders(t *testing.T) {
 	for _, p := range c.Providers() {
 		ids = append(ids, p.ID)
 	}
-	want := []string{"github", "gmail", "google", "google-calendar", "google-drive", "slack"}
+	want := []string{"github", "gmail", "google", "google-calendar", "google-chat", "google-docs", "google-drive", "slack"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("provider ids = %v, want %v", ids, want)
 	}
@@ -50,7 +50,9 @@ func TestShippedGoogleFamilyExtendsGoogle(t *testing.T) {
 
 	for id, baseURL := range map[string]string{
 		"gmail":           "https://gmail.googleapis.com",
-		"google-calendar": "https://www.googleapis.com/calendar/v3",
+		"google-calendar": "https://www.googleapis.com",
+		"google-chat":     "https://chat.googleapis.com",
+		"google-docs":     "https://docs.googleapis.com",
 		"google-drive":    "https://www.googleapis.com",
 	} {
 		t.Run(id, func(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -37,12 +38,14 @@ const (
 )
 
 const (
-	scopeOpenID   = "openid"
-	scopeEmail    = "https://www.googleapis.com/auth/userinfo.email"
-	scopeProfile  = "https://www.googleapis.com/auth/userinfo.profile"
-	scopeGmailRO  = "https://www.googleapis.com/auth/gmail.readonly"
-	scopeDrive    = "https://www.googleapis.com/auth/drive"
-	scopeCalendar = "https://www.googleapis.com/auth/calendar"
+	scopeOpenID      = "openid"
+	scopeEmail       = "https://www.googleapis.com/auth/userinfo.email"
+	scopeProfile     = "https://www.googleapis.com/auth/userinfo.profile"
+	scopeGmailRO     = "https://www.googleapis.com/auth/gmail.readonly"
+	scopeGmailModify = "https://www.googleapis.com/auth/gmail.modify"
+	scopeGmailLabels = "https://www.googleapis.com/auth/gmail.labels"
+	scopeDrive       = "https://www.googleapis.com/auth/drive"
+	scopeCalendar    = "https://www.googleapis.com/auth/calendar"
 )
 
 type issuedCode struct {
@@ -66,16 +69,18 @@ type fakeGoogle struct {
 	tokenStatus int
 	// noRefreshToken leaves refresh_token out of the token response, as a re-consent may.
 	noRefreshToken bool
-	userinfoBad    bool
-	revokeFails    bool
-	onToken        func()
-	codes          map[string]issuedCode
-	issued         []string
-	authorizes     []url.Values
-	exchanges      []url.Values
-	verifiers      []string
-	revoked        []string
-	pkceOK         int
+	// tokenFor, if set, picks the tokens for a grant; both must start with the fixed fake tokens.
+	tokenFor    func(granted []string) (access, refresh string)
+	userinfoBad bool
+	revokeFails bool
+	onToken     func()
+	codes       map[string]issuedCode
+	issued      []string
+	authorizes  []url.Values
+	exchanges   []url.Values
+	verifiers   []string
+	revoked     []string
+	pkceOK      int
 
 	refreshes      []url.Values
 	refreshError   string
@@ -176,8 +181,12 @@ func (f *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
 	if f.grant != nil {
 		granted = f.grant(granted)
 	}
+	access, refresh := fakeAccessToken, fakeRefreshToken
+	if f.tokenFor != nil {
+		access, refresh = f.tokenFor(granted)
+	}
 	reply := map[string]any{
-		"access_token": fakeAccessToken, "refresh_token": fakeRefreshToken, "token_type": "Bearer",
+		"access_token": access, "refresh_token": refresh, "token_type": "Bearer",
 		"expires_in": 3599, "scope": strings.Join(granted, " "),
 	}
 	if f.noRefreshToken {
@@ -200,7 +209,7 @@ func (f *fakeGoogle) userinfo(w http.ResponseWriter, r *http.Request) {
 		echoError(w, http.StatusUnauthorized, r.Header.Get("Authorization"))
 		return
 	}
-	if token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); token != fakeAccessToken && !f.validAccess[token] {
+	if token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); !strings.HasPrefix(token, fakeAccessToken) && !f.validAccess[token] {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -240,7 +249,8 @@ func (f *fakeGoogle) consent(authorizeURL string) string {
 	return resp.Header.Get("Location")
 }
 
-// catalogFS is the shipped catalog with Google's endpoints pointed at the fake.
+// catalogFS is the shipped catalog with Google's endpoints pointed at the fake, and the fake's
+// host allowed on every provider that lists Google's identity host, as the identity URL requires.
 func (f *fakeGoogle) catalogFS() fs.FS {
 	f.t.Helper()
 	out := fstest.MapFS{}
@@ -257,7 +267,9 @@ func (f *fakeGoogle) catalogFS() fs.FS {
 			data = bytes.ReplaceAll(data, []byte("https://oauth2.googleapis.com/token"), []byte(f.srv.URL+"/token"))
 			data = bytes.ReplaceAll(data, []byte("https://oauth2.googleapis.com/revoke"), []byte(f.srv.URL+"/revoke"))
 			data = bytes.ReplaceAll(data, []byte("https://openidconnect.googleapis.com/v1/userinfo"), []byte(f.srv.URL+"/userinfo"))
-			data = mustReplace(f.t, data, `    - "www.googleapis.com"`, "    - \"www.googleapis.com\"\n    - \""+strings.TrimPrefix(f.srv.URL, "http://")+"\"")
+		}
+		if strings.HasPrefix(path, "providers/") {
+			data = allowHost(data, strings.TrimPrefix(f.srv.URL, "http://"))
 		}
 		out[path] = &fstest.MapFile{Data: data}
 		return nil
@@ -266,6 +278,13 @@ func (f *fakeGoogle) catalogFS() fs.FS {
 		f.t.Fatal(err)
 	}
 	return out
+}
+
+const identityHostLine = "    - \"openidconnect.googleapis.com\""
+
+// allowHost lists host in the provider's allowed_hosts, if it has the identity host to follow.
+func allowHost(data []byte, host string) []byte {
+	return bytes.Replace(data, []byte(identityHostLine), []byte(identityHostLine+"\n    - \""+host+"\""), 1)
 }
 
 type fakeClock struct {
@@ -465,4 +484,21 @@ func decodeJSON[T any](t *testing.T, r result) T {
 		t.Fatalf("stdout is not the expected JSON: %v\nstdout: %q", err, r.stdout)
 	}
 	return v
+}
+
+const (
+	scopeChatSpaces = "https://www.googleapis.com/auth/chat.spaces.readonly"
+	scopeDocuments  = "https://www.googleapis.com/auth/documents"
+)
+
+// distinctTokensPerApp makes every app's grant carry its own tokens, so a test can tell whose token went where.
+func distinctTokensPerApp(g *fakeGoogle) {
+	g.tokenFor = func(granted []string) (string, string) {
+		for scope, app := range map[string]string{scopeGmailRO: "gmail", scopeDrive: "drive", scopeChatSpaces: "chat", scopeCalendar: "calendar", scopeDocuments: "docs"} {
+			if slices.Contains(granted, scope) {
+				return fakeAccessToken + "-" + app, fakeRefreshToken + "-" + app
+			}
+		}
+		return fakeAccessToken, fakeRefreshToken
+	}
 }

@@ -296,10 +296,10 @@ func TestRotatedRefreshTokenIsUsedForTheNextRefresh(t *testing.T) {
 func (f *vaultFixture) replaceAccount(cred vault.Credential) vault.Account {
 	f.t.Helper()
 	ctx := context.Background()
-	if err := f.store.RemoveAccount(ctx, "google", "work"); err != nil {
+	if err := f.store.RemoveAccount(ctx, "gmail", "work"); err != nil {
 		f.t.Fatal(err)
 	}
-	other, err := f.store.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work", Identity: "other@work.example", Scopes: []string{"openid"}})
+	other, err := f.store.CreateAccount(ctx, vault.Account{Provider: "gmail", Alias: "work", Identity: "other@work.example", Scopes: []string{"openid"}})
 	if err != nil {
 		f.t.Fatal(err)
 	}

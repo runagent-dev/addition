@@ -1,27 +1,19 @@
 package cli
 
 import (
-	"context"
 	"strings"
 	"testing"
-
-	"github.com/runagent-dev/addition/internal/vault"
 )
 
 func TestCallResolvesTheAccount(t *testing.T) {
 	t.Run("the only account needs no -a", func(t *testing.T) {
 		c := newCallHarness(t)
 
-		r := c.mustRun("call", "GET", "/x")
+		r := c.mustRun("call", "gmail", "GET", "/x")
 
 		if len(c.api.requests()) != 1 || r.stdout == "" {
 			t.Errorf("requests %d, stdout %q", len(c.api.requests()), r.stdout)
 		}
-	})
-	t.Run("a service provider names its identity root", func(t *testing.T) {
-		c := newCallHarness(t)
-
-		c.mustRun("call", "--provider", "gmail", "-a", "work", "GET", "/x")
 	})
 	t.Run("several accounts need -a or a default", func(t *testing.T) {
 		c := newCallHarness(t)
@@ -41,9 +33,9 @@ func TestCallResolvesTheAccount(t *testing.T) {
 			t.Error("a request was sent without knowing the account")
 		}
 
-		c.mustRun("accounts", "default", "google:home")
-		c.mustRun("call", "GET", "/x")
-		c.mustRun("call", "-a", "work", "GET", "/x")
+		c.mustRun("accounts", "default", "gmail:home")
+		c.mustRun("call", "gmail", "GET", "/x")
+		c.mustRun("call", "gmail", "-a", "work", "GET", "/x")
 		if len(c.api.requests()) != 2 {
 			t.Errorf("API requests = %d, want 2", len(c.api.requests()))
 		}
@@ -54,39 +46,50 @@ func TestCallResolvesTheAccount(t *testing.T) {
 		r := c.call("-a", "ghost", "GET", "/x")
 
 		env := c.wantError(r, ExitNeedsConnect, "not-connected")
-		if !strings.Contains(env.Error.Message, "addn connect") {
+		if !strings.Contains(env.Error.Message, "addn connect gmail --as ghost") {
 			t.Errorf("message %q does not say how to connect", env.Error.Message)
 		}
 	})
-	t.Run("no accounts at all", func(t *testing.T) {
+	t.Run("an app with no account is not connected", func(t *testing.T) {
 		h := newHarness(t)
 
-		r := h.run("call", "GET", "/x")
+		r := h.run("call", "gmail", "GET", "/x")
 
 		h.wantError(r, ExitNeedsConnect, "not-connected")
 	})
-	t.Run("an unknown provider is a usage error", func(t *testing.T) {
+	t.Run("an unknown app is a usage error", func(t *testing.T) {
 		c := newCallHarness(t)
 
-		c.wantError(c.call("--provider", "nope", "-a", "work", "GET", "/x"), ExitUsage, "unknown-provider")
+		c.wantError(c.run("call", "nope", "-a", "work", "GET", "/x"), ExitUsage, "unknown-provider")
 	})
-	t.Run("an alias shared by two providers is ambiguous", func(t *testing.T) {
-		c := newCallHarness(t)
-		s, err := c.deps.openVault(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer s.Close()
-		if _, err := s.CreateAccount(context.Background(), vault.Account{Provider: "github", Alias: "work"}); err != nil {
-			t.Fatal(err)
-		}
+}
 
-		c.wantError(c.call("-a", "work", "GET", "/x"), ExitUsage, "ambiguous-account")
-		c.mustRun("call", "--provider", "google", "-a", "work", "GET", "/x")
-		if len(c.api.requests()) != 1 {
-			t.Errorf("API requests = %d, want 1", len(c.api.requests()))
+func TestCallNeedsTheAppFirst(t *testing.T) {
+	c := newCallHarness(t)
+	c.attachApp("google-drive", "home", "2002")
+
+	r := c.run("call", "-a", "work", "GET", "/x")
+
+	env := c.wantError(r, ExitUsage, "app-required")
+	for _, app := range []string{"gmail", "google-drive"} {
+		if !strings.Contains(env.Error.Message, app) {
+			t.Errorf("message %q does not name the connected app %s", env.Error.Message, app)
 		}
-	})
+	}
+	if n := len(c.api.requests()); n != 0 {
+		t.Errorf("%d requests were sent without an app", n)
+	}
+}
+
+func TestCallHasNoProviderFlag(t *testing.T) {
+	c := newCallHarness(t)
+
+	for _, flag := range []string{"--provider", "-p"} {
+		c.wantError(c.run("call", flag, "gmail", "GET", "/x"), ExitUsage, "usage")
+	}
+	if n := len(c.api.requests()); n != 0 {
+		t.Errorf("%d requests were sent", n)
+	}
 }
 
 func TestCallRefusesHostsOutsideTheAllowListBeforeSendingAnything(t *testing.T) {
@@ -131,7 +134,7 @@ func TestCallRefusesHostsOutsideTheAllowListBeforeSendingAnything(t *testing.T) 
 func TestCallAllowsAnAbsoluteURLOnAnAllowedHost(t *testing.T) {
 	c := newCallHarness(t)
 
-	c.mustRun("call", "-a", "work", "GET", c.api.url("/gmail/v1/users/me/profile?alt=json"), "--query", "fields=emailAddress")
+	c.mustRun("call", "gmail", "-a", "work", "GET", c.api.url("/gmail/v1/users/me/profile?alt=json"), "--query", "fields=emailAddress")
 
 	got := c.api.requests()[0]
 	if got.Path != "/gmail/v1/users/me/profile" || got.RawQuery != "alt=json&fields=emailAddress" {
@@ -170,7 +173,7 @@ func TestCallRefusesAnAccountThatNeedsReauthWithoutSendingAnything(t *testing.T)
 	r := c.call("-a", "work", "GET", "/x")
 
 	env := c.wantError(r, ExitNeedsConnect, "needs-reauth")
-	if c.transport.total() != 0 || !strings.Contains(env.Error.Message, "addn connect google --as work") {
+	if c.transport.total() != 0 || !strings.Contains(env.Error.Message, "addn connect gmail --as work") {
 		t.Errorf("%d requests, message %q; want a local refusal that names `addn connect`", c.transport.total(), env.Error.Message)
 	}
 }
