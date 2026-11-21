@@ -74,7 +74,7 @@ func TestParseHeadersAllowsTabPadding(t *testing.T) {
 }
 
 func TestParseHeadersRefusesHopByHopAndUpgradeHeaders(t *testing.T) {
-	for _, h := range []string{"Upgrade: websocket", "upgrade: h2c", "Connection: upgrade", "connection: close", "TE: trailers", "te: gzip", "Trailer: X-Foo", "Keep-Alive: timeout=5", "keep-alive: 1"} {
+	for _, h := range []string{"Upgrade: websocket", "upgrade: h2c", "Connection: upgrade", "connection: close", "TE: trailers", "te: gzip", "Trailer: X-Foo", "Keep-Alive: timeout=5", "keep-alive: 1", "Accept-Encoding: gzip", "accept-encoding: br", "Accept-Encoding: identity"} {
 		t.Run(h, func(t *testing.T) {
 			if _, err := proxy.ParseHeaders([]string{h}); requestErrorCode(err) != "forbidden-header" {
 				t.Errorf("err = %v, want code forbidden-header", err)

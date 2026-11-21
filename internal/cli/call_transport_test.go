@@ -5,8 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -97,32 +95,6 @@ func gzipped(t *testing.T, text string) []byte {
 	_, _ = zw.Write([]byte(text))
 	_ = zw.Close()
 	return buf.Bytes()
-}
-
-func TestCallRefusesAnEncodedBodyOnStdout(t *testing.T) {
-	c := newCallHarness(t)
-	body := gzipped(t, `{"ok":true}`)
-	c.api.respond(status(200, string(body), "Content-Type", "application/json", "Content-Encoding", "gzip"))
-
-	r := c.call("-a", "work", "GET", "/x", "-H", "Accept-Encoding: gzip")
-
-	c.wantError(r, ExitUsage, "binary-response")
-	if r.stdout != "" {
-		t.Errorf("stdout = %q, want nothing: encoded bytes are not JSON", r.stdout)
-	}
-}
-
-func TestCallSavesAnEncodedBodyAsItArrived(t *testing.T) {
-	c := newCallHarness(t)
-	body := gzipped(t, `{"ok":true}`)
-	c.api.respond(status(200, string(body), "Content-Type", "application/json", "Content-Encoding", "gzip"))
-	target := filepath.Join(t.TempDir(), "out.json.gz")
-
-	c.mustRun("call", "-a", "work", "GET", "/x", "-H", "Accept-Encoding: gzip", "-o", target)
-
-	if data, _ := os.ReadFile(target); !bytes.Equal(data, body) {
-		t.Errorf("file = %d bytes, want the %d encoded bytes verbatim", len(data), len(body))
-	}
 }
 
 func TestCallStillDecodesGzipItAskedForItself(t *testing.T) {
