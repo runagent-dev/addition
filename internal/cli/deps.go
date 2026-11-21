@@ -24,6 +24,8 @@ type deps struct {
 	// stdin replaces the process's standard input when set; sleep replaces waiting between retries.
 	stdin io.Reader
 	sleep func(ctx context.Context, d time.Duration) error
+	// loopbackProviders is for tests: providers may list host:port API hosts and be reached over http.
+	loopbackProviders bool
 }
 
 func productionDeps() deps {
@@ -37,7 +39,7 @@ func productionDeps() deps {
 }
 
 func (d deps) loadCatalog() (*catalog.Catalog, error) {
-	c, err := catalog.Load(d.catalogFS)
+	c, err := catalog.LoadWithOptions(d.catalogFS, catalog.Options{AllowHostPorts: d.loopbackProviders})
 	if err != nil {
 		return nil, &Error{Code: "catalog", Message: err.Error(), Exit: ExitInternal}
 	}

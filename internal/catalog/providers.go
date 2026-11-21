@@ -97,12 +97,12 @@ type rawProvider struct {
 	fields  map[string]any
 }
 
-func loadProviders(fsys fs.FS) (map[string]*Provider, error) {
+func loadProviders(fsys fs.FS, opts Options) (map[string]*Provider, error) {
 	raws, err := readRawProviders(fsys)
 	if err != nil {
 		return nil, err
 	}
-	r := &providerResolver{raws: raws, merged: map[string]map[string]any{}, resolved: map[string]*Provider{}}
+	r := &providerResolver{opts: opts, raws: raws, merged: map[string]map[string]any{}, resolved: map[string]*Provider{}}
 	for _, id := range slices.Sorted(maps.Keys(raws)) {
 		if err := r.resolve(id, nil); err != nil {
 			return nil, err
@@ -147,6 +147,7 @@ func readRawProviders(fsys fs.FS) (map[string]*rawProvider, error) {
 }
 
 type providerResolver struct {
+	opts     Options
 	raws     map[string]*rawProvider
 	merged   map[string]map[string]any
 	resolved map[string]*Provider
@@ -182,7 +183,7 @@ func (r *providerResolver) resolve(id string, chain []string) error {
 	}
 	delete(fields, "extends")
 
-	if err := validateProvider(fields); err != nil {
+	if err := validateProvider(fields, r.opts); err != nil {
 		return fail("%v", err)
 	}
 	p, err := decodeProvider(fields)

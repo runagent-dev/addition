@@ -257,6 +257,7 @@ func (f *fakeGoogle) catalogFS() fs.FS {
 			data = bytes.ReplaceAll(data, []byte("https://oauth2.googleapis.com/token"), []byte(f.srv.URL+"/token"))
 			data = bytes.ReplaceAll(data, []byte("https://oauth2.googleapis.com/revoke"), []byte(f.srv.URL+"/revoke"))
 			data = bytes.ReplaceAll(data, []byte("https://openidconnect.googleapis.com/v1/userinfo"), []byte(f.srv.URL+"/userinfo"))
+			data = mustReplace(f.t, data, `    - "www.googleapis.com"`, "    - \"www.googleapis.com\"\n    - \""+strings.TrimPrefix(f.srv.URL, "http://")+"\"")
 		}
 		out[path] = &fstest.MapFile{Data: data}
 		return nil
@@ -307,11 +308,12 @@ func newHarness(t *testing.T) *harness {
 	env.Now = clock.Now
 	h := &harness{t: t, home: home, google: g, clock: clock, challenges: map[string]bool{}}
 	h.deps = deps{
-		catalogFS:       g.catalogFS(),
-		env:             env,
-		httpClient:      &http.Client{Timeout: 5 * time.Second},
-		openBrowser:     h.browse,
-		loopbackTimeout: 5 * time.Second,
+		catalogFS:         g.catalogFS(),
+		env:               env,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		openBrowser:       h.browse,
+		loopbackTimeout:   5 * time.Second,
+		loopbackProviders: true,
 	}
 	t.Cleanup(h.assertNothingLeaked)
 	h.mustRun("init", "--key-file")

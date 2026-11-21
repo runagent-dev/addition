@@ -102,7 +102,12 @@ func hostNotAllowed(api catalog.API) *RequestError {
 		strings.Join(api.Hosts(), ", ")}
 }
 
-// CheckDestination refuses a URL the access token may not be sent to.
+// CheckDestination refuses a URL the access token may not be sent to: anything but https
+// (or http when allowCleartext, for tests) on a listed host, without userinfo.
 func CheckDestination(api catalog.API, target *url.URL, allowCleartext bool) error {
+	schemeOK := target.Scheme == "https" || allowCleartext && target.Scheme == "http"
+	if !schemeOK || target.User != nil || target.Opaque != "" || target.Host == "" || !slices.Contains(api.Hosts(), catalog.HostKey(target)) {
+		return hostNotAllowed(api)
+	}
 	return nil
 }

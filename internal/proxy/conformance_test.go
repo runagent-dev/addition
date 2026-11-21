@@ -138,6 +138,7 @@ func TestProxyRequestFixtures(t *testing.T) {
 			}
 			e := newEngine(&fakeRenewer{}, &sleeps{})
 			e.API = p.API
+			e.API.AllowedHosts = []string{catalog.HostKey(target)}
 
 			resp, _, err := do(t, e, req, "tok")
 

@@ -132,7 +132,7 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	if err != nil {
 		return callFailure(acct, err)
 	}
-	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, Renewer: tokens, Now: d.now, Sleep: d.sleep}
+	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, AllowCleartext: d.loopbackProviders, Renewer: tokens, Now: d.now, Sleep: d.sleep}
 	resp, err := engine.Do(ctx, proxy.Request{Method: req.method, URL: target, Header: req.header, Body: req.body}, token)
 	if err != nil {
 		if attempted, sent := errors.AsType[*proxy.Attempted](err); sent {

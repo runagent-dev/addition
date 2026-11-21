@@ -18,7 +18,18 @@ type Catalog struct {
 
 // Load reads providers/ and toolkits/ from fsys. Files starting with "_" are templates and are skipped.
 func Load(fsys fs.FS) (*Catalog, error) {
-	providers, err := loadProviders(fsys)
+	return LoadWithOptions(fsys, Options{})
+}
+
+// Options relax load-time checks for tests.
+type Options struct {
+	// AllowHostPorts lets api hosts name a port, for loopback fixtures; real providers use 443 only.
+	AllowHostPorts bool
+}
+
+// LoadWithOptions is Load with opts.
+func LoadWithOptions(fsys fs.FS, opts Options) (*Catalog, error) {
+	providers, err := loadProviders(fsys, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -95,15 +106,4 @@ func yamlFiles(fsys fs.FS, dir string) ([]string, error) {
 		files = append(files, path.Join(dir, name))
 	}
 	return files, nil
-}
-
-// Options relax load-time checks for tests.
-type Options struct {
-	// AllowHostPorts lets api hosts name a port, for loopback fixtures; real providers use 443 only.
-	AllowHostPorts bool
-}
-
-// LoadWithOptions is Load with opts.
-func LoadWithOptions(fsys fs.FS, opts Options) (*Catalog, error) {
-	return Load(fsys)
 }

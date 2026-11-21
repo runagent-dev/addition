@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/runagent-dev/addition/internal/catalog"
 	"github.com/runagent-dev/addition/internal/oauth"
 	"github.com/runagent-dev/addition/internal/proxy"
 	"github.com/runagent-dev/addition/internal/vault"
@@ -131,6 +133,9 @@ func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Accou
 	if !found || provider.OAuth2 == nil || provider.OAuth2.Identity == nil {
 		return "no-identity-endpoint"
 	}
+	if !identityURLAllowed(provider, d.loopbackProviders) {
+		return "identity-not-allowed"
+	}
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
 	token, err := tokens.Access(ctx)
 	if err != nil {
@@ -138,6 +143,12 @@ func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Accou
 	}
 	_, err = oauth.FetchIdentity(ctx, d.httpClient, provider, token)
 	return liveIdentityReason(err)
+}
+
+// identityURLAllowed checks the identity endpoint the token is about to be sent to against the provider's allowed hosts.
+func identityURLAllowed(provider *catalog.Provider, allowCleartext bool) bool {
+	target, err := url.Parse(provider.OAuth2.Identity.URL)
+	return err == nil && proxy.CheckDestination(provider.API, target, allowCleartext) == nil
 }
 
 func liveTokenReason(err error) string {
