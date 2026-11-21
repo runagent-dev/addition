@@ -443,6 +443,22 @@ func TestDoctorLiveStalledErrorBodyIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDoctorLiveErrorBodyCutShortIsUnavailable(t *testing.T) {
+	c := newCallHarness(t)
+	c.api.respond(func(_ int, w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "1000")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"details":[`))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	})
+	rep := wantHealthy(t, c.run("doctor", "--live"))
+	if probe := rep.check(t, "live:gmail:work"); probe.Status != "warn" || probe.Code != "unavailable" {
+		t.Errorf("live check = %+v, want unavailable", probe)
+	}
+}
+
 func TestDoctorLiveStalledRefreshEndsWithTheTokenEndpointsOwnTimeout(t *testing.T) {
 	probeTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { probeTimeout = defaultProbeTimeout })
