@@ -26,11 +26,13 @@ addition client add google --file client_secret.json
 addition connect gmail --as work --no-browser
 read -r URL
 addition connect --complete "$URL"
-# 5. call its API
+# 5. check the setup: exit 0 means every check passed
+addition doctor
+# 6. call its API
 addition call gmail -a work GET /gmail/v1/users/me/profile
 ```
 
-Step 2 is the headless form. Where a Secret Service or keychain exists, plain `addition init` keeps the key there; on a desktop `addition connect gmail --as work` opens the browser itself (`addition guide connect`). `--key-file` keeps the key in `$ADDITION_HOME/master.key` (mode 0600) and is not supported on Windows, which uses the Credential Manager. The `read -r URL` step takes the callback URL from stdin, never from a command line. When something fails, `addition doctor` reports the vault, key source and accounts once it is in your build; `addition guide troubleshooting` covers the rest.
+Step 2 is the headless form. Where a Secret Service or keychain exists, plain `addition init` keeps the key there; on a desktop `addition connect gmail --as work` opens the browser itself (`addition guide connect`). `--key-file` keeps the key in `$ADDITION_HOME/master.key` (mode 0600) and is not supported on Windows, which uses the Credential Manager. The `read -r URL` step takes the callback URL from stdin, never from a command line. When something fails, `addition doctor` reports the vault, key source and accounts (exit 3 means it found something for you to do; run its `next` command); `addition guide troubleshooting` covers the rest.
 
 No Google Cloud project yet? See `addition guide troubleshooting`.
 

@@ -30,7 +30,7 @@ Branch on `code` (stable), not `message`. Exit: 1 internal, 2 usage, 3 needs (re
 | `token-exchange-rejected`, `identity-rejected`, `revoke-rejected`, `refresh-rejected` | 4 or 5 | Provider refused; check the OAuth client, reconnect |
 | `upstream-error`, `unsupported-encoding` | 4 or 5 | Read the body on stdout; a compressed response is withheld |
 | `network`, `credential-echo` | 5 | Retry later |
-| `interrupted`, `output`, `internal`, `catalog`, `guide`, `vault` | 1 | A `call` was cancelled, stdout was unwritable, or a bug: reinstall; `addition doctor` once it is in your build |
+| `interrupted`, `output`, `internal`, `catalog`, `guide`, `vault` | 1 | A `call` was cancelled, stdout was unwritable, or a bug: reinstall; `addition doctor` shows what is wrong |
 | `vault-busy` | 1 | Retry |
 | `not-initialized` | 2 | `addition init` |
 | `keychain-unavailable`, `no-master-key`, `wrong-master-key`, `invalid-master-key`, `key-file-unsupported` | 2 | Key problems: `addition guide troubleshooting` |
