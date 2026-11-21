@@ -310,7 +310,7 @@ func TestOpenUpgradesASchemaOneVault(t *testing.T) {
 	s, f := newStore(t)
 	_ = s.Close()
 	db := rawDB(t, f.home)
-	if _, err := db.Exec(`DROP TABLE pending_auth; ALTER TABLE accounts DROP COLUMN subject;
+	if _, err := db.Exec(`DROP TABLE pending_auth; ALTER TABLE accounts DROP COLUMN subject; ALTER TABLE credentials DROP COLUMN revision;
 		UPDATE meta SET value = '1' WHERE key = 'schema_version'`); err != nil {
 		t.Fatal(err)
 	}

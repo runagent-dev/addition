@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/runagent-dev/addition/internal/catalog"
@@ -24,6 +25,9 @@ type TokenManager struct {
 	Now      func() time.Time
 	// BeforeWriterLock, if set, runs once the credential has been read and the writer lock is about to be requested.
 	BeforeWriterLock func()
+
+	mu        sync.Mutex
+	handedOut *seen
 }
 
 // Access returns the account's access token, refreshing it first if it expires within AccessTokenSkew.
@@ -48,16 +52,47 @@ func (m *TokenManager) Access(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	m.remember(cred)
 	if !m.expiring(cred) {
 		return cred.AccessToken, nil
 	}
-	return m.refresh(ctx, m.expiring)
+	return m.refresh(ctx, seen{revision: cred.Revision, haveRevision: true})
 }
 
-// Renew replaces an access token the API rejected. If another process already stored a
-// different token, that one is returned without a refresh.
+// Renew replaces an access token the API rejected. If another process committed a refresh since
+// this one read the credential, that token is returned without a second refresh.
 func (m *TokenManager) Renew(ctx context.Context, rejected string) (string, error) {
-	return m.refresh(ctx, func(c vault.Credential) bool { return c.AccessToken == rejected })
+	return m.refresh(ctx, m.lastSeen(rejected))
+}
+
+// seen is what a caller knew of the credential before asking for a refresh: its revision, or,
+// for a caller that never read it, only the text of the token the API rejected.
+type seen struct {
+	revision     int64
+	haveRevision bool
+	rejected     string
+}
+
+func (s seen) isStale(c vault.Credential) bool {
+	if s.haveRevision {
+		return c.Revision == s.revision
+	}
+	return c.AccessToken == s.rejected
+}
+
+func (m *TokenManager) remember(c vault.Credential) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.handedOut = &seen{revision: c.Revision, haveRevision: true}
+}
+
+func (m *TokenManager) lastSeen(rejected string) seen {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.handedOut != nil {
+		return *m.handedOut
+	}
+	return seen{rejected: rejected}
 }
 
 func (m *TokenManager) now() time.Time {
@@ -73,8 +108,8 @@ func (m *TokenManager) expiring(c vault.Credential) bool {
 
 // refresh re-reads the credential inside the writer transaction and, only if stale still holds,
 // trades its refresh token for new tokens. A refusal is committed as audit and account state.
-func (m *TokenManager) refresh(ctx context.Context, stale func(vault.Credential) bool) (string, error) {
-	var token string
+func (m *TokenManager) refresh(ctx context.Context, caller seen) (string, error) {
+	var latest vault.Credential
 	var failure error
 	if m.BeforeWriterLock != nil {
 		m.BeforeWriterLock()
@@ -104,8 +139,8 @@ func (m *TokenManager) refresh(ctx context.Context, stale func(vault.Credential)
 		if err != nil {
 			return err
 		}
-		if !stale(cred) {
-			token = cred.AccessToken
+		if !caller.isStale(cred) {
+			latest = cred
 			return nil
 		}
 		if cred.RefreshToken == "" {
@@ -128,13 +163,20 @@ func (m *TokenManager) refresh(ctx context.Context, stale func(vault.Credential)
 			}
 			return recordRefreshFailure(ctx, tx, acct, isDeadGrant(err))
 		}
-		token = fresh.AccessToken
-		return storeRefreshed(ctx, tx, acct, cred, fresh, m.now())
+		if err := storeRefreshed(ctx, tx, acct, cred, fresh, m.now()); err != nil {
+			return err
+		}
+		latest, err = tx.GetCredential(ctx, acct.ID)
+		return err
 	})
 	if err != nil {
 		return "", err
 	}
-	return token, failure
+	if failure != nil {
+		return "", failure
+	}
+	m.remember(latest)
+	return latest.AccessToken, nil
 }
 
 func storeRefreshed(ctx context.Context, tx *vault.Tx, acct vault.Account, old vault.Credential, fresh oauth.Tokens, now time.Time) error {

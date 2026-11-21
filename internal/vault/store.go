@@ -360,7 +360,8 @@ func (o ops) PutCredential(ctx context.Context, accountID int64, c Credential) e
 			refresh_token_encrypted = excluded.refresh_token_encrypted,
 			token_type = excluded.token_type,
 			expires_at = excluded.expires_at,
-			updated_at = excluded.updated_at`,
+			updated_at = excluded.updated_at,
+			revision = credentials.revision + 1`,
 		accountID, access, refresh, c.TokenType, expires, o.timestamp())
 	if isForeignKeyViolation(err) {
 		return fmt.Errorf("account %d: %w", accountID, ErrNotFound)
@@ -373,9 +374,9 @@ func (o ops) GetCredential(ctx context.Context, accountID int64) (Credential, er
 	var access, updated string
 	var refresh, expires sql.NullString
 	err := o.q.QueryRowContext(ctx, `
-		SELECT access_token_encrypted, refresh_token_encrypted, token_type, expires_at, updated_at
+		SELECT access_token_encrypted, refresh_token_encrypted, token_type, expires_at, updated_at, revision
 		FROM credentials WHERE account_id = ?`, accountID).
-		Scan(&access, &refresh, &c.TokenType, &expires, &updated)
+		Scan(&access, &refresh, &c.TokenType, &expires, &updated, &c.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Credential{}, fmt.Errorf("credential for account %d: %w", accountID, ErrNotFound)
 	}
