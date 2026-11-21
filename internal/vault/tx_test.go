@@ -136,4 +136,19 @@ func TestWithImmediateTxHonoursCancellation(t *testing.T) {
 			t.Fatalf("write from a cancelled transaction was committed (err = %v)", err)
 		}
 	})
+
+	t.Run("settled work commits after cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		err := s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
+			settle := tx.Settle(ctx)
+			cancel()
+			return tx.PutCredential(settle, acct.ID, vault.Credential{AccessToken: "kept"})
+		})
+		if err != nil {
+			t.Fatalf("err = %v, want the settled write committed without error", err)
+		}
+		if got, err := s.GetCredential(context.Background(), acct.ID); err != nil || got.AccessToken != "kept" {
+			t.Fatalf("credential = %+v, %v; want the settled write", got, err)
+		}
+	})
 }
