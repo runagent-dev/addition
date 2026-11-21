@@ -88,3 +88,23 @@ func TestWaitingForTheWriterLockHonoursCancellation(t *testing.T) {
 		t.Errorf("the abandoned acquisition left the lock held: %v", err)
 	}
 }
+
+func TestAuditWithinDeadlineGivesUpWhenTheDeadlinePasses(t *testing.T) {
+	holder, f := newStore(t)
+	acct, err := holder.CreateAccount(context.Background(), vault.Account{Provider: "google", Alias: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contender := mustOpen(t, f)
+	release := holdWriterLock(t, holder)
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	err = contender.AuditWithinDeadline(ctx, vault.CallEvent{AccountID: acct.ID, Method: "GET", Status: 204})
+
+	if err == nil || time.Since(started) > 3*time.Second {
+		t.Errorf("err = %v after %v; want a failure about when the deadline passed", err, time.Since(started))
+	}
+}
