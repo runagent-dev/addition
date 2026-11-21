@@ -214,53 +214,69 @@ host of the provider's `api.base_url`) or an `https` URL whose host is listed in
 Any other host or scheme, userinfo, a `//host` path, or an opaque URL is `host-not-allowed` (exit `2`), and nothing is
 sent: not the request, and not a token refresh either. The access token is only ever sent to a listed host over https.
 `--query` pairs are appended after the path's own query. `-H` may not set `Authorization`, `Host`, `Cookie`,
-`Proxy-*`, `Content-Length`, `Transfer-Encoding`, `Upgrade`, `Connection`, `TE`, `Trailer`, `Keep-Alive` or a
-method-override header (`forbidden-header`, exit `2`); raw control characters, tab aside, are `bad-header`.
+`Proxy-*`, `Content-Length`, `Transfer-Encoding`, `Accept-Encoding`, `Upgrade`, `Connection`, `TE`, `Trailer`,
+`Keep-Alive` or a method-override header (`forbidden-header`, exit `2`); raw control characters, tab aside, are `bad-header`.
 The engine checks the destination again where it attaches the token (https only, a listed host, no userinfo), and
 catalog validation rejects any `allowed_hosts` or `base_url` port: the token goes to port 443 only.
 `--data` is a literal body, `@file` or `-` for stdin, capped at 64 MiB; the body is buffered so it can be replayed,
-and defaults to `Content-Type: application/json`.
+and defaults to `Content-Type: application/json`. A SIGINT while stdin is being read ends the command at once.
 
 **Token.** A token that expires within 60 s is refreshed first, under the vault writer lock: the credential is
 re-read inside the transaction, so a refresh another process already committed (a newer credential revision) is
 reused and the token endpoint is hit once per rotation. Every token read must find the account selected at the
 start of the command: an alias removed and connected again meanwhile fails as `account-changed` (exit `2`) and
 nothing is sent. A rotated refresh token is stored in the same transaction as the new access token, and a
-`refresh` audit event records `ok`, `failed` or `needs-reauth`. `invalid_grant` marks the account `needs-reauth`
-and ends in exit `3`; it is never retried. Later calls fail with exit `3` before any request.
+`refresh` audit event records `ok`, `failed` or `needs-reauth`. Cancellation is checked before the token endpoint is
+called; from then on the provider may have rotated the grant, so the exchange (bounded by its own 30 s timeout) and its
+commit finish whatever the command's context says, the API request is not sent, and `interrupted` is reported only
+afterwards. Cancelling while only waiting for the writer lock, or for vault open or migration to get it, returns at once
+and never releases a lock another process holds; a migration that holds the lock runs to its commit.
+`invalid_grant` marks the account `needs-reauth` and ends in exit `3`; it is never retried. Later calls fail with
+exit `3` before any request.
 
 **Retries.** A `401` renews the token once (re-reading what another process stored first) and resends; a second
 `401` is an upstream error. With no refresh token, a `401` is exit `3`. A `429` is retried up to three times,
 waiting for `Retry-After` (seconds or an HTTP date) or, without it, 1 s, 2 s, 4 s with jitter, never more than
-30 s (an all-digit value, however large, saturates at the cap). Nothing else is retried: not `5xx`, not network
-errors, and the HTTP transport never replays a request either: each attempt is its own connection with a body
-the transport cannot resend, so a connection lost after a mutation was sent ends in `network` even with an
-`Idempotency-Key`. A rejected `401`/`429` response is closed unread. Requests go to the transport itself, so no
-`Location` is ever parsed or followed: a `3xx`, whatever its `Location`, is an upstream failure and its body is
+30 s (an all-digit value, however large, saturates at the cap; a number with any other character is malformed and
+backs off instead). Nothing else is retried: not `5xx`, not network errors, and the HTTP transport never replays a
+request either. The call engine speaks HTTP/1.1 on a fresh connection per attempt (a copy of the client's transport
+with keep-alives and HTTP/2 off, proxy and TLS settings kept), with a body the transport cannot resend, so neither a
+reused-connection retry nor an HTTP/2 refused-stream retry exists: a connection lost after a mutation was sent ends in
+`network` even with an `Idempotency-Key`. The token refresh keeps the client's own transport. A rejected
+`401`/`429` response is closed unread. Requests go to the transport itself, so no `Location` is ever parsed or followed: a `3xx`, whatever its `Location`, is an upstream failure and its body is
 not read.
 
-**Output.** A `2xx` text, JSON or XML body is streamed to stdout verbatim, exit `0`. Any other `2xx` body, and any
-body with a `Content-Encoding` (only when the caller asked for one with `-H 'Accept-Encoding: …'`), is refused
-as `binary-response` (exit `2`) unless `-o` is given; `-o` saves encoded bytes as they arrived.
+**Output.** A `2xx` text, JSON or XML body is streamed to stdout verbatim, exit `0`. Any other `2xx` body is refused
+as `binary-response` (exit `2`) unless `-o` is given. addn alone negotiates content coding: it asks for gzip, which the
+transport decodes before anything is checked, and the caller's `Accept-Encoding` is refused. A response that still
+carries a coding other than `identity` (`br`, `zstd`, or gzip the server sent unasked) is withheld on every path,
+stdout, an error body and `-o`, as `unsupported-encoding` (exit `5`, or `4`/`5` by status for a non-2xx answer) with
+nothing written.
 `-o` opens the target's directory once and creates a `0600` temp file in it, before anything is sent; the finished
 body is published into that same directory, so renaming the path mid-call cannot strand a part file. Without
 `--force` publication is an atomic no-replace (a hard link, then the temp name is removed); a directory that cannot
 do that is `bad-output` before the request, and `--force` renames over a regular file. A symlink at the target is
-always refused. The summary `{"status","content_type","bytes","path"}` is printed once the file is in place.
+always refused. The temp name is gone before the summary `{"status","content_type","bytes","path"}` is printed, so a
+writer killed by a closed stdout leaves only the finished file; `path` is the `-o` argument exactly as given. `-o`
+assumes the output directory is not writable by other users: another writer of that directory could swap the temp
+name or race the `--force` check before the rename.
 SIGINT and SIGTERM cancel the command (`interrupted`, exit `1`) after removing the temp file.
 
 **Echo guard.** Every response-derived output (stdout body, the capped error body, the `-o` file and its summary's
 `content_type`) is checked for each access token sent across all attempts, including a token renewed mid-call.
 Bytes are held back across reads and at the 1 MiB cap so a split match is caught before any of it is emitted. A
 match is the local error `credential-echo` (exit `5`), emits nothing more and discards the temp file. It matches
-the token text as sent; a provider that transforms or compresses it is outside the guarantee.
+the token text as sent; a provider that transforms it (encodes it, splits it) is outside the guarantee, and a
+compressed body never reaches the guard undecoded (see Output).
+Every failure to read a response body, on every path, is `network` (exit `5`) or `interrupted` with addn's own fixed
+message: no Go, parser or upstream text ever reaches stderr, so a malformed chunk or trailer cannot repeat a token.
 A non-2xx answer writes no file; its body (at most 1 MiB) goes to stdout verbatim, stderr gets the envelope
 `{"error":{"code":"upstream-error","message":"HTTP <status>"}}`, and the exit is `4` for 4xx/3xx and `5` for 5xx.
 A network, DNS or TLS failure is `network` (exit `5`); error text never contains the URL, query, headers or tokens.
 
 **Audit.** One `call` event per command, after the final response head arrives: account id, method and final
 status (`0` when none arrived). It is written even if the command was cancelled after the API answered, on a short
-independent context. A failed audit write is reported as a `{"notice":"audit-failed"}` line on stderr
+independent context whose 5 s deadline also bounds the wait for a writer lock another process holds. A failed audit write is reported as a `{"notice":"audit-failed"}` line on stderr
 and does not change the result.
 
 `addn auth check --live` runs the same refresh-if-needed path for each account and asks the provider's identity
