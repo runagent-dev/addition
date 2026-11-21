@@ -229,7 +229,8 @@ nothing is sent. A rotated refresh token is stored in the same transaction as th
 `refresh` audit event records `ok`, `failed` or `needs-reauth`. Cancellation is checked before the token endpoint is
 called; from then on the provider may have rotated the grant, so the exchange (bounded by its own 30 s timeout) and its
 commit finish whatever the command's context says, the API request is not sent, and `interrupted` is reported only
-afterwards. Cancelling while only waiting for the writer lock, or for vault open or migration to get it, returns at once
+afterwards. If the provider invalidates the grant but its reply stalls past that timeout, there is no new grant to
+commit and the stored one stays, which ends in `needs-reauth` like a crash before commit. Cancelling while only waiting for the writer lock, or for vault open or migration to get it, returns at once
 and never releases a lock another process holds; a migration that holds the lock runs to its commit.
 `invalid_grant` marks the account `needs-reauth` and ends in exit `3`; it is never retried. Later calls fail with
 exit `3` before any request.
@@ -247,9 +248,9 @@ reused-connection retry nor an HTTP/2 refused-stream retry exists: a connection 
 not read.
 
 **Output.** A `2xx` text, JSON or XML body is streamed to stdout verbatim, exit `0`. Any other `2xx` body is refused
-as `binary-response` (exit `2`) unless `-o` is given. addn alone negotiates content coding: it asks for gzip, which the
-transport decodes before anything is checked, and the caller's `Accept-Encoding` is refused. A response that still
-carries a coding other than `identity` (`br`, `zstd`, or gzip the server sent unasked) is withheld on every path,
+as `binary-response` (exit `2`) unless `-o` is given. addn alone sets `Accept-Encoding`, always to `identity`, and
+the caller's is refused. A response that carries any coding other than `identity` (`gzip`, `br`, `zstd`, in one or
+several `Content-Encoding` fields) is withheld on every path, except a `HEAD` answer, which has no body,
 stdout, an error body and `-o`, as `unsupported-encoding` (exit `5`, or `4`/`5` by status for a non-2xx answer) with
 nothing written.
 `-o` opens the target's directory once and creates a `0600` temp file in it, before anything is sent; the finished

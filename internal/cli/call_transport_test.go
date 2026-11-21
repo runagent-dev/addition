@@ -96,22 +96,3 @@ func gzipped(t *testing.T, text string) []byte {
 	_ = zw.Close()
 	return buf.Bytes()
 }
-
-func TestCallStillDecodesGzipItAskedForItself(t *testing.T) {
-	c := newCallHarness(t)
-	c.api.respond(func(_ int, w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Header.Get("Accept-Encoding") == "gzip" {
-			w.Header().Set("Content-Encoding", "gzip")
-			_, _ = w.Write(gzipped(t, `{"ok":true}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"ok":false}`))
-	})
-
-	r := c.call("-a", "work", "GET", "/x")
-
-	if r.code != ExitOK || r.stdout != `{"ok":true}` {
-		t.Errorf("exit %d, stdout %q; the transport's own gzip must stay transparent", r.code, r.stdout)
-	}
-}

@@ -50,7 +50,7 @@ func newCallCmd(d deps) *cobra.Command {
 			"For any other status the upstream body goes to stdout and a JSON envelope on stderr carries\n" +
 			"code upstream-error and the status. Exit codes: 4 for a 4xx or 3xx, 5 for a 5xx or the network,\n" +
 			"3 when the account must be reconnected. A response that repeats the access token is withheld\n" +
-			"(credential-echo, exit 5), and so is one with a content coding addn cannot inspect\n" +
+			"(credential-echo, exit 5), and so is one with any content coding\n" +
 			"(unsupported-encoding).\n\n" +
 			"-a is optional when one account is connected or a default is set; --provider names the provider\n" +
 			"when an alias exists under several.",
@@ -144,7 +144,7 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, req.method, resp.Status)
-	return sealCallError(ctx, deliver(cmd, resp, req.out))
+	return sealCallError(ctx, deliver(cmd, req.method, resp, req.out))
 }
 
 // sealCallError lets only addn's own errors out of a call whose request was sent, so no Go or upstream error text can reach the user.
@@ -353,9 +353,9 @@ func capBody(data []byte) ([]byte, error) {
 
 // deliver writes the final response: a success body to stdout or the -o file, anything else as an upstream failure.
 // Everything derived from the response passes the echo guard, so an access token never leaves addn.
-func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
+func deliver(cmd *cobra.Command, method string, resp *proxy.Response, out *outputFile) error {
 	guard := proxy.NewEchoGuard(resp.Tokens)
-	if bodyIsRead(resp.Status) && hasContentCoding(resp.Header) {
+	if bodyIsRead(resp.Status) && method != http.MethodHead && hasContentCoding(resp.Header) {
 		return unsupportedEncoding(resp.Status)
 	}
 	if resp.Status < 200 || resp.Status > 299 {
@@ -389,7 +389,7 @@ func deliverFailure(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoG
 // bodyIsRead is false for a redirect, whose body is never read.
 func bodyIsRead(status int) bool { return status < 300 || status > 399 }
 
-// hasContentCoding reports a coding left on the body: the transport removes the one it decoded itself.
+// hasContentCoding reports any coding on the body; the transport never decodes one.
 func hasContentCoding(h http.Header) bool {
 	for _, value := range h.Values("Content-Encoding") {
 		for coding := range strings.SplitSeq(value, ",") {
@@ -431,7 +431,7 @@ func readFailure(cmd *cobra.Command, err error) *Error {
 }
 
 func interrupted() *Error {
-	return &Error{Code: "interrupted", Exit: ExitInternal, Message: "interrupted before the call finished"}
+	return &Error{Code: "interrupted", Exit: ExitInternal, Message: "interrupted before the command finished"}
 }
 
 func credentialEcho() *Error {

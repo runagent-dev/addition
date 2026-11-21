@@ -9,7 +9,7 @@ import (
 )
 
 // ownedHeaders are set by addn, or change what a request means to the server or a proxy, or what the connection does.
-// Accept-Encoding is addn's so that only a coding the transport decodes, and addn then inspects, is ever requested.
+// Accept-Encoding is addn's: it always asks for identity, so a coded response is never decoded and never released.
 var ownedHeaders = map[string]bool{
 	"Authorization": true, "Host": true, "Cookie": true, "Content-Length": true, "Transfer-Encoding": true,
 	"X-Http-Method-Override": true, "X-Method-Override": true, "X-Http-Method": true,

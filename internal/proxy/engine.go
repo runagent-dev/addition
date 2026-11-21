@@ -152,6 +152,7 @@ func (e *Engine) transport() http.RoundTripper {
 }
 
 // singleAttempt returns a copy of an *http.Transport that cannot send a request twice by itself:
+// it never negotiates compression, so any content coding on a response reaches the caller undecoded;
 // every request gets a fresh HTTP/1.1 connection, so Go's retry of a request on a reused connection
 // and HTTP/2's retry of a refused stream both have nothing to act on. The proxy and TLS settings are kept.
 // Any other RoundTripper is used as given.
@@ -162,6 +163,7 @@ func singleAttempt(base http.RoundTripper) http.RoundTripper {
 	}
 	clone := original.Clone()
 	clone.DisableKeepAlives = true
+	clone.DisableCompression = true
 	clone.ForceAttemptHTTP2 = false
 	clone.Protocols = new(http.Protocols)
 	clone.Protocols.SetHTTP1(true)
@@ -208,6 +210,7 @@ func (e *Engine) build(ctx context.Context, req Request, accessToken string) (*h
 		header, prefix = "Authorization", "Bearer"
 	}
 	httpReq.Header.Set(header, strings.TrimSpace(prefix+" "+accessToken))
+	httpReq.Header.Set("Accept-Encoding", "identity")
 	return httpReq, nil
 }
 

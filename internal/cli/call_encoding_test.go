@@ -31,10 +31,7 @@ func encodedReply(code int, coding string, body func(token string) []byte) func(
 }
 
 func TestCallNeverReleasesABodyThatCarriesAContentCoding(t *testing.T) {
-	const (
-		undecoded = "unsupported-encoding"
-		echoed    = "credential-echo"
-	)
+	const undecoded = "unsupported-encoding"
 	cases := []struct {
 		name    string
 		coding  string
@@ -53,9 +50,9 @@ func TestCallNeverReleasesABodyThatCarriesAContentCoding(t *testing.T) {
 		{"gzip with a range request on 200", "gzip", []string{"-H", "Range: bytes=0-"}, 200, false, undecoded, ExitUpstreamServer, true},
 		{"gzip with a range request on 200 saved", "gzip", []string{"-H", "Range: bytes=0-"}, 200, true, undecoded, ExitUpstreamServer, true},
 		{"gzip with a range request on 400", "gzip", []string{"-H", "Range: bytes=0-"}, 400, false, undecoded, ExitUpstreamClient, true},
-		{"gzip the transport decodes on 200", "gzip", nil, 200, false, echoed, ExitUpstreamServer, true},
-		{"gzip the transport decodes on 200 saved", "gzip", nil, 200, true, echoed, ExitUpstreamServer, true},
-		{"gzip the transport decodes on 400", "gzip", nil, 400, false, echoed, ExitUpstreamServer, true},
+		{"gzip on 200", "gzip", nil, 200, false, undecoded, ExitUpstreamServer, true},
+		{"gzip on 200 saved", "gzip", nil, 200, true, undecoded, ExitUpstreamServer, true},
+		{"gzip on 400", "gzip", nil, 400, false, undecoded, ExitUpstreamClient, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,5 +92,71 @@ func TestCallLetsAnIdentityCodingThrough(t *testing.T) {
 
 	if r.code != ExitOK || r.stdout != `{"ok":true}` {
 		t.Errorf("exit %d, stdout %q; identity is no coding", r.code, r.stdout)
+	}
+}
+
+func TestCallRefusesRepeatedContentEncodingFields(t *testing.T) {
+	for _, status := range []int{200, 400, 502} {
+		for _, saved := range []bool{false, true} {
+			c := newCallHarness(t)
+			c.api.respond(func(_ int, w http.ResponseWriter, r *http.Request) {
+				token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Add("Content-Encoding", "gzip")
+				w.Header().Add("Content-Encoding", "gzip")
+				w.WriteHeader(status)
+				_, _ = w.Write(gzipped(t, string(gzipped(t, `{"echo":"`+token+`"}`))))
+			})
+			dir := t.TempDir()
+			args := []string{"-a", "work", "GET", "/x"}
+			if saved {
+				args = append(args, "-o", filepath.Join(dir, "out.json"))
+			}
+
+			r := c.call(args...)
+
+			if r.stdout != "" {
+				t.Errorf("status %d saved %v: stdout = %q, want nothing", status, saved, r.stdout)
+			}
+			if names := dirNames(t, dir); len(names) != 0 {
+				t.Errorf("status %d saved %v: directory = %v, want no file", status, saved, names)
+			}
+			if env := decodeError(t, r.stderr); env.Error.Code != "unsupported-encoding" {
+				t.Errorf("status %d saved %v: error code = %q, want unsupported-encoding", status, saved, env.Error.Code)
+			}
+		}
+	}
+}
+
+func TestCallAsksForAnUncompressedResponse(t *testing.T) {
+	c := newCallHarness(t)
+	c.api.respond(status(200, `{"ok":true}`, "Content-Type", "application/json"))
+
+	r := c.call("-a", "work", "GET", "/x")
+
+	if r.code != ExitOK {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+	for _, req := range c.api.requests() {
+		if got := req.Header.Get("Accept-Encoding"); got != "identity" {
+			t.Errorf("Accept-Encoding = %q, want identity", got)
+		}
+	}
+}
+
+func TestCallHeadIgnoresCodingMetadataOfAnAbsentBody(t *testing.T) {
+	c := newCallHarness(t)
+	c.api.respond(status(200, "", "Content-Type", "application/json", "Content-Encoding", "gzip"))
+
+	r := c.call("-a", "work", "HEAD", "/x")
+
+	if r.code != ExitOK {
+		t.Errorf("exit %d, stderr %q; a HEAD response has no body to inspect", r.code, r.stderr)
+	}
+}
+
+func TestInterruptionMessageNamesNoCommand(t *testing.T) {
+	if msg := interrupted().Message; strings.Contains(msg, "call") {
+		t.Errorf("message %q names the call command", msg)
 	}
 }
