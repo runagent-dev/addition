@@ -156,6 +156,16 @@ func (c *callHarness) attachApp(app, alias, subject string) *fakeAPI {
 	return api
 }
 
+// attachRoutedApp is attachApp on a server that other apps may share, with the app's own routes enforced.
+func (c *callHarness) attachRoutedApp(app, alias, subject string, api *fakeAPI) {
+	c.t.Helper()
+	c.deps.catalogFS = pointAppRoutesAt(c.t, c.deps.catalogFS, app, api.host())
+	c.google.configure(func(g *fakeGoogle) { g.subject = subject })
+	c.connect(alias, app)
+	c.google.configure(func(g *fakeGoogle) { g.subject = workSubject })
+	c.transport.reset()
+}
+
 func (c *callHarness) recordSleep(_ context.Context, d time.Duration) error {
 	c.sleepMu.Lock()
 	defer c.sleepMu.Unlock()
@@ -198,8 +208,19 @@ func (c *callHarness) wantUpstream(r result, exit, httpStatus int, body string) 
 
 var baseURLLine = regexp.MustCompile(`(?m)^  base_url: ".*"$`)
 
-// pointAppAPIAt names host as the app's API host and lists it as an allowed one.
+// pointAppAPIAt names host as the app's API host and lists it as an allowed one. It also lets
+// every path through, so tests need not use the app's real routes; pointAppRoutesAt keeps them.
 func pointAppAPIAt(t *testing.T, src fs.FS, app, host string) fs.FS {
+	t.Helper()
+	return editProvider(t, pointAppRoutesAt(t, src, app, host), app, func(data []byte) []byte {
+		return pathPrefixBlock.ReplaceAll(data, []byte("  allowed_path_prefixes:\n    - \"/\"\n"))
+	})
+}
+
+var pathPrefixBlock = regexp.MustCompile(`(?m)^  allowed_path_prefixes:\n(?:    - ".*"\n)+`)
+
+// pointAppRoutesAt is pointAppAPIAt with the app's own path prefixes left in force.
+func pointAppRoutesAt(t *testing.T, src fs.FS, app, host string) fs.FS {
 	t.Helper()
 	return editProvider(t, src, app, func(data []byte) []byte {
 		data = allowHost(data, host)
