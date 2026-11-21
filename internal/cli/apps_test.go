@@ -130,7 +130,7 @@ func TestLegacyIdentityRootAccountsAskForAReconnect(t *testing.T) {
 		{"accounts", "default", "google:work"}, {"call", "google", "-a", "work", "GET", "/x"},
 	} {
 		env := h.wantError(h.run(args...), ExitNeedsConnect, "legacy-account")
-		if !strings.Contains(env.Error.Message, "addn connect gmail --as work") || !strings.Contains(env.Error.Message, "addn accounts remove google:work") {
+		if !strings.Contains(env.Error.Message, "addition connect gmail --as work") || !strings.Contains(env.Error.Message, "addition accounts remove google:work") {
 			t.Errorf("%v: message %q does not say how to reconnect and clean up", args, env.Error.Message)
 		}
 	}
@@ -146,7 +146,7 @@ func TestLegacyIdentityRootAccountsAskForAReconnect(t *testing.T) {
 		t.Errorf("bulk live check = %+v, want the legacy row, connected, not live, reason legacy-account", live)
 	}
 	if wire.total() != 0 {
-		t.Errorf("%d requests left addn; a legacy credential must never be refreshed or sent anywhere", wire.total())
+		t.Errorf("%d requests left addition; a legacy credential must never be refreshed or sent anywhere", wire.total())
 	}
 	rows := h.wantAccounts(1)
 	if rows[0].Provider != "google" || rows[0].Status != "legacy" {
@@ -159,7 +159,7 @@ func TestLegacyIdentityRootAccountsAskForAReconnect(t *testing.T) {
 	h.wantError(h.run("call", "google", "-a", "work", "GET", "/x"), ExitUsage, "not-an-app")
 }
 
-// seedLegacyAccountWithExpiredCredential stores google:work as an older addn did, with a real
+// seedLegacyAccountWithExpiredCredential stores google:work as an older addition did, with a real
 // encrypted credential whose access token has expired, so any refresh would reach the token endpoint.
 func seedLegacyAccountWithExpiredCredential(t *testing.T, h *harness) {
 	t.Helper()
@@ -218,7 +218,7 @@ func TestAnAppAccountCannotReachAnotherAppsHosts(t *testing.T) {
 		t.Errorf("the chat server received %d requests from a gmail account", n)
 	}
 	if c.transport.total() != 0 {
-		t.Errorf("%d requests left addn; a refused target must not even refresh the token", c.transport.total())
+		t.Errorf("%d requests left addition; a refused target must not even refresh the token", c.transport.total())
 	}
 }
 

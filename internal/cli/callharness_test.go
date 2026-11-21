@@ -89,7 +89,7 @@ func requireToken(token string) func(int, http.ResponseWriter, *http.Request) {
 	}
 }
 
-// recordingTransport notes the host of every request that leaves addn.
+// recordingTransport notes the host of every request that leaves addition.
 type recordingTransport struct {
 	base http.RoundTripper
 	mu   sync.Mutex

@@ -28,8 +28,8 @@ type fakeEnv struct {
 func newFakeEnv(t *testing.T) *fakeEnv {
 	t.Helper()
 	keyring.MockInit()
-	home := filepath.Join(privateTempDir(t), "addn-home")
-	return &fakeEnv{vars: map[string]string{"ADDN_HOME": home, "HOME": privateTempDir(t)}, home: home, goos: "linux"}
+	home := filepath.Join(privateTempDir(t), "addition-home")
+	return &fakeEnv{vars: map[string]string{"ADDITION_HOME": home, "HOME": privateTempDir(t)}, home: home, goos: "linux"}
 }
 
 func (f *fakeEnv) set(key, value string) { f.vars[key] = value }

@@ -27,9 +27,9 @@ import (
 	"time"
 )
 
-const runMainEnv = "ADDN_TEST_RUN_MAIN"
+const runMainEnv = "ADDITION_TEST_RUN_MAIN"
 
-// TestMain lets a test re-run this binary as the real addn executable.
+// TestMain lets a test re-run this binary as the real addition executable.
 func TestMain(m *testing.M) {
 	if os.Getenv(runMainEnv) == "1" {
 		main()
@@ -42,11 +42,11 @@ const (
 	secretMarker = "GOCSPX-subprocess-secret-marker"
 )
 
-// TestTransportLogsNeverReachStderr runs addn as a process against a token endpoint that answers,
+// TestTransportLogsNeverReachStderr runs addition as a process against a token endpoint that answers,
 // then sends unsolicited bytes repeating the request, which net/http's transport logs by default.
 func TestTransportLogsNeverReachStderr(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("SSL_CERT_FILE, which points addn at the fixture's certificate, is honoured only on Linux")
+		t.Skip("SSL_CERT_FILE, which points addition at the fixture's certificate, is honoured only on Linux")
 	}
 	dir := privateDir(t)
 	proxy, served := tokenEndpointProxy(t, dir)
@@ -54,11 +54,11 @@ func TestTransportLogsNeverReachStderr(t *testing.T) {
 		runMainEnv + "=1",
 		"HOME=" + privateDir(t),
 		"XDG_DATA_HOME=" + privateDir(t),
-		"ADDN_HOME=" + filepath.Join(dir, "addn"),
+		"ADDITION_HOME=" + filepath.Join(dir, "addition"),
 		"HTTPS_PROXY=" + proxy,
 		"SSL_CERT_FILE=" + filepath.Join(dir, "ca.pem"),
 	}
-	addn := func(args ...string) (int, string, string) {
+	addition := func(args ...string) (int, string, string) {
 		cmd := exec.Command(os.Args[0], args...)
 		cmd.Env = env
 		var stdout, stderr bytes.Buffer
@@ -72,20 +72,20 @@ func TestTransportLogsNeverReachStderr(t *testing.T) {
 		}
 		return code, stdout.String(), stderr.String()
 	}
-	mustAddn := func(args ...string) string {
-		code, stdout, stderr := addn(args...)
+	mustAddition := func(args ...string) string {
+		code, stdout, stderr := addition(args...)
 		if code != 0 {
-			t.Fatalf("addn %v: exit %d\nstderr: %s", args, code, stderr)
+			t.Fatalf("addition %v: exit %d\nstderr: %s", args, code, stderr)
 		}
 		return stdout
 	}
 
-	mustAddn("init", "--key-file")
-	mustAddn("client", "add", "google", "--file", clientFile(t, dir))
+	mustAddition("init", "--key-file")
+	mustAddition("client", "add", "google", "--file", clientFile(t, dir))
 	var pending struct {
 		AuthorizeURL string `json:"authorize_url"`
 	}
-	if err := json.Unmarshal([]byte(mustAddn("connect", "gmail", "--as", "work", "--no-browser")), &pending); err != nil {
+	if err := json.Unmarshal([]byte(mustAddition("connect", "gmail", "--as", "work", "--no-browser")), &pending); err != nil {
 		t.Fatal(err)
 	}
 	authorize, err := url.Parse(pending.AuthorizeURL)
@@ -95,7 +95,7 @@ func TestTransportLogsNeverReachStderr(t *testing.T) {
 	q := authorize.Query()
 	landed := q.Get("redirect_uri") + "?" + url.Values{"code": {"4/fixture-code"}, "state": {q.Get("state")}}.Encode()
 
-	code, _, stderr := addn("connect", "--complete", landed)
+	code, _, stderr := addition("connect", "--complete", landed)
 
 	if served.Load() != 1 {
 		t.Fatalf("the token endpoint served %d requests, want 1", served.Load())

@@ -33,7 +33,7 @@ const (
 	fakeRefreshToken = "1//fake-refresh-token-0001"
 	workIdentity     = "me@work.example"
 	workSubject      = "1001"
-	// echoMarker tags provider diagnostics that repeat what addn sent; it must never be shown.
+	// echoMarker tags provider diagnostics that repeat what addition sent; it must never be shown.
 	echoMarker = "echo-marker"
 )
 
@@ -304,7 +304,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// harness is an initialised vault, a fake Google and the deps that wire addn to them.
+// harness is an initialised vault, a fake Google and the deps that wire addition to them.
 // When the test ends it checks every command it ran for leaked secrets.
 type harness struct {
 	t      *testing.T
@@ -356,7 +356,7 @@ func (h *harness) visit(authorizeURL string) error {
 
 var challengeParam = regexp.MustCompile(`code_challenge=([A-Za-z0-9_-]{43})`)
 
-// run records every PKCE challenge addn hands the browser or prints, so the leak check can
+// run records every PKCE challenge addition hands the browser or prints, so the leak check can
 // recognise a verifier even when the provider never saw its authorization.
 func (h *harness) run(args ...string) result { return h.runWithStdin(nil, args...) }
 
@@ -394,7 +394,7 @@ func (h *harness) mustRun(args ...string) result {
 	h.t.Helper()
 	r := h.run(args...)
 	if r.code != ExitOK {
-		h.t.Fatalf("addn %v: exit %d\nstdout: %s\nstderr: %s", args, r.code, r.stdout, r.stderr)
+		h.t.Fatalf("addition %v: exit %d\nstdout: %s\nstderr: %s", args, r.code, r.stdout, r.stderr)
 	}
 	return r
 }
@@ -464,7 +464,7 @@ func writeClientFile(t *testing.T, kind string) string {
 	body := map[string]any{kind: map[string]any{
 		"client_id":     fakeClientID,
 		"client_secret": fakeClientSecret,
-		"project_id":    "addn-test",
+		"project_id":    "addition-test",
 		"auth_uri":      "https://accounts.google.com/o/oauth2/auth",
 		"token_uri":     "https://oauth2.googleapis.com/token",
 		"redirect_uris": []string{"http://localhost"},

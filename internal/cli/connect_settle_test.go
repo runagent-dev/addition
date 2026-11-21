@@ -119,7 +119,7 @@ func TestCompleteDropsTheAuthorizationWhenTheExchangeOutcomeIsUnknown(t *testing
 			landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 			env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "network")
-			if !strings.Contains(env.Error.Message, "addn connect") {
+			if !strings.Contains(env.Error.Message, "addition connect") {
 				t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
 			}
 			h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
@@ -135,7 +135,7 @@ func TestCompleteDropsTheAuthorizationWhenTheProviderAnswers5xx(t *testing.T) {
 	landed := h.google.consent(h.startTwoStep("gmail").AuthorizeURL)
 
 	env := h.wantError(h.run("connect", "--complete", landed), ExitUpstreamServer, "token-exchange-rejected")
-	if !strings.Contains(env.Error.Message, "addn connect") {
+	if !strings.Contains(env.Error.Message, "addition connect") {
 		t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
 	}
 	h.wantError(h.run("connect", "--complete", landed), ExitUsage, "unknown-state")
@@ -241,7 +241,7 @@ func TestOverlappingReconsentsRefuseAStaleCompletion(t *testing.T) {
 	h.mustRun("connect", "--complete", firstURL)
 	h.google.grant = nil
 	env := h.wantError(h.run("connect", "--complete", secondURL), ExitUsage, "stale-authorization")
-	if !strings.Contains(env.Error.Message, "addn connect") {
+	if !strings.Contains(env.Error.Message, "addition connect") {
 		t.Errorf("message %q does not tell the user to connect again", env.Error.Message)
 	}
 
@@ -257,7 +257,7 @@ func TestOverlappingReconsentsRefuseAStaleCompletion(t *testing.T) {
 	}
 }
 
-func TestProviderDiagnosticsNeverEchoWhatAddnSent(t *testing.T) {
+func TestProviderDiagnosticsNeverEchoWhatAdditionSent(t *testing.T) {
 	t.Run("token exchange", func(t *testing.T) {
 		h := newHarness(t)
 		h.addClient()

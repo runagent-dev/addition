@@ -62,7 +62,7 @@ func TestCallReportsAMalformedTrailerWithoutRepeatingIt(t *testing.T) {
 	}
 }
 
-func TestSealCallErrorKeepsOnlyAddnsOwnErrors(t *testing.T) {
+func TestSealCallErrorKeepsOnlyAdditionsOwnErrors(t *testing.T) {
 	own := &Error{Code: "bad-output", Exit: ExitUsage, Message: "cannot write"}
 	if got := sealCallError(context.Background(), own); got != own {
 		t.Errorf("a typed error was replaced by %v", got)

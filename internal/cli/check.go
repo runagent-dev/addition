@@ -18,11 +18,11 @@ import (
 // expiringWindow is how close to expiry an access token counts as expiring.
 const expiringWindow = 5 * time.Minute
 
-// newAuthCmd is the deprecated `addn auth check`, hidden from help and running `addn accounts check`.
+// newAuthCmd is the deprecated `addition auth check`, hidden from help and running `addition accounts check`.
 func newAuthCmd(d deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "auth",
-		Short:  "Deprecated: use `addn accounts check`",
+		Short:  "Deprecated: use `addition accounts check`",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE:   func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
@@ -126,7 +126,7 @@ func accessTokenState(cred vault.Credential, found bool, now time.Time) string {
 const liveOK = "ok"
 
 // liveCheck refreshes the account's token if needed and asks the identity endpoint whether it
-// works. The result is a reason code addn chose, never provider text.
+// works. The result is a reason code addition chose, never provider text.
 func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Account) string {
 	provider, found := a.catalog.Provider(acct.Provider)
 	if found && !a.catalog.Connectable(provider.ID) {

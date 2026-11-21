@@ -39,7 +39,7 @@ func newAccountsRemoveCmd(d deps) *cobra.Command {
 			"With --revoke, first ask the provider to revoke the token; that is best effort, and the account\n" +
 			"is removed locally either way. Where the provider revokes a whole grant (Google does: every token\n" +
 			"the same user got through the same OAuth client, so Gmail, Drive, Calendar and the other apps of\n" +
-			"that user stop working), addn refuses with revoke-affects-other-apps, naming the other accounts,\n" +
+			"that user stop working), addition refuses with revoke-affects-other-apps, naming the other accounts,\n" +
 			"unless you add --and-siblings: then it revokes once and marks those accounts needs-reauth, in the\n" +
 			"same step as the removal, so their next call asks you to reconnect them.\n" +
 			"The result lists them in also_invalidated. To drop one app without affecting the others, omit --revoke.",

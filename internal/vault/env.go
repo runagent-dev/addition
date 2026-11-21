@@ -46,17 +46,17 @@ const appDir = "addition"
 // ErrRelativePath rejects a relative data-dir base, which would make the vault depend on the working directory.
 var ErrRelativePath = errors.New("the data dir must be an absolute path")
 
-// ResolveHome returns the absolute data dir: $ADDN_HOME, else the platform's user data dir.
+// ResolveHome returns the absolute data dir: $ADDITION_HOME, else the platform's user data dir.
 func ResolveHome(env Env) (string, error) {
 	env = env.withDefaults()
-	if home := env.getenv("ADDN_HOME"); home != "" {
-		return absoluteBase("ADDN_HOME", home)
+	if home := env.getenv("ADDITION_HOME"); home != "" {
+		return absoluteBase("ADDITION_HOME", home)
 	}
 	switch env.GOOS {
 	case "windows":
 		base := env.getenv("LOCALAPPDATA")
 		if base == "" {
-			return "", errors.New("cannot locate the data dir: set ADDN_HOME or LOCALAPPDATA")
+			return "", errors.New("cannot locate the data dir: set ADDITION_HOME or LOCALAPPDATA")
 		}
 		return joinBase("LOCALAPPDATA", base, appDir)
 	case "darwin":
@@ -106,7 +106,7 @@ func checkInsideProfile(env Env, home string) error {
 	}
 	for _, path := range []string{home, resolveExisting(home)} {
 		if !isWithin(profile, path) && !isWithin(resolvedProfile, path) {
-			return fmt.Errorf("%w: %s is outside USERPROFILE (%s); on Windows ADDN_HOME must be inside your profile", ErrInsecureHome, path, profile)
+			return fmt.Errorf("%w: %s is outside USERPROFILE (%s); on Windows ADDITION_HOME must be inside your profile", ErrInsecureHome, path, profile)
 		}
 	}
 	return nil
@@ -133,7 +133,7 @@ func isWithin(dir, path string) bool {
 func userHome(env Env) (string, error) {
 	home := env.getenv("HOME")
 	if home == "" {
-		return "", errors.New("cannot locate the data dir: set ADDN_HOME or HOME")
+		return "", errors.New("cannot locate the data dir: set ADDITION_HOME or HOME")
 	}
 	return home, nil
 }

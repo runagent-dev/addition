@@ -121,10 +121,10 @@ func newVaultFixture(t *testing.T, cred vault.Credential) *vaultFixture {
 	if err := os.Chmod(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ADDN_HOME", filepath.Join(dir, "addn"))
+	t.Setenv("ADDITION_HOME", filepath.Join(dir, "addition"))
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", home)
-	_ = os.Unsetenv("ADDN_MASTER_KEY")
+	_ = os.Unsetenv("ADDITION_MASTER_KEY")
 	clock := &fakeClock{t: t0}
 	env := vault.OSEnv()
 	env.Now = clock.Now
@@ -149,7 +149,7 @@ func newVaultFixture(t *testing.T, cred vault.Credential) *vaultFixture {
 	return f
 }
 
-// open returns another connection to the vault, as a second addn process would have.
+// open returns another connection to the vault, as a second addition process would have.
 func (f *vaultFixture) open() *vault.Store {
 	f.t.Helper()
 	s, err := vault.Open(context.Background(), f.env)

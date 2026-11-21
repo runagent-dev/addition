@@ -31,7 +31,7 @@ func newToolsCmd(d deps) *cobra.Command {
 				return err
 			}
 			if _, ok := c.Provider(provider); provider != "" && !ok {
-				return usageError(fmt.Sprintf("unknown provider %q (see `addn providers`)", provider))
+				return usageError(fmt.Sprintf("unknown provider %q (see `addition providers`)", provider))
 			}
 			rows := []toolListing{}
 			for _, tk := range c.Toolkits() {

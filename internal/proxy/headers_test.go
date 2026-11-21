@@ -26,7 +26,7 @@ func TestParseHeadersPassesOrdinaryHeaders(t *testing.T) {
 	}
 }
 
-func TestParseHeadersRefusesTheOnesAddnOwns(t *testing.T) {
+func TestParseHeadersRefusesTheOnesAdditionOwns(t *testing.T) {
 	for _, h := range []string{
 		"Authorization: Bearer stolen", "authorization: x", " AUTHORIZATION : x", "Host: evil.example", "Cookie: session=secret",
 		"Proxy-Authorization: x", "proxy-connection: keep-alive", "Proxy-Anything: x", "X-HTTP-Method-Override: DELETE",

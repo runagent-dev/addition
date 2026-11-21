@@ -8,8 +8,8 @@ import (
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
-// ownedHeaders are set by addn, or change what a request means to the server or a proxy, or what the connection does.
-// Accept-Encoding is addn's: it always asks for identity, so a coded response is never decoded and never released.
+// ownedHeaders are set by addition, or change what a request means to the server or a proxy, or what the connection does.
+// Accept-Encoding is addition's: it always asks for identity, so a coded response is never decoded and never released.
 var ownedHeaders = map[string]bool{
 	"Authorization": true, "Host": true, "Cookie": true, "Content-Length": true, "Transfer-Encoding": true,
 	"X-Http-Method-Override": true, "X-Method-Override": true, "X-Http-Method": true,
@@ -17,7 +17,7 @@ var ownedHeaders = map[string]bool{
 	"Accept-Encoding": true,
 }
 
-// ParseHeaders reads "Name: value" strings into a header set, refusing the headers addn owns.
+// ParseHeaders reads "Name: value" strings into a header set, refusing the headers addition owns.
 func ParseHeaders(raw []string) (http.Header, error) {
 	header := http.Header{}
 	for _, entry := range raw {
@@ -28,14 +28,14 @@ func ParseHeaders(raw []string) (http.Header, error) {
 		}
 		canonical := textproto.CanonicalMIMEHeaderKey(name)
 		if ownedHeaders[canonical] || strings.HasPrefix(canonical, "Proxy-") {
-			return nil, &RequestError{Code: "forbidden-header", Message: "header " + canonical + " is set by addn and cannot be overridden"}
+			return nil, &RequestError{Code: "forbidden-header", Message: "header " + canonical + " is set by addition and cannot be overridden"}
 		}
 		header.Add(canonical, value)
 	}
 	return header, nil
 }
 
-// ParseMethod upper-cases a method name and accepts only the ones addn can audit.
+// ParseMethod upper-cases a method name and accepts only the ones addition can audit.
 func ParseMethod(raw string) (string, error) {
 	method := strings.ToUpper(raw)
 	for _, known := range vault.CallMethods {

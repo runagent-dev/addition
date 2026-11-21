@@ -50,7 +50,7 @@ func withCode(msg, code string) string {
 	return msg
 }
 
-// knownErrorCodes are the RFC 6749 and RFC 6750 error identifiers addn repeats to the user.
+// knownErrorCodes are the RFC 6749 and RFC 6750 error identifiers addition repeats to the user.
 var knownErrorCodes = map[string]bool{
 	"invalid_request": true, "invalid_client": true, "invalid_grant": true, "unauthorized_client": true,
 	"unsupported_grant_type": true, "invalid_scope": true, "access_denied": true, "server_error": true,
@@ -211,7 +211,7 @@ func constantTimeEqual(a, b string) bool {
 }
 
 // ProviderError is a provider refusing a request or answering with something unusable.
-// Code is an allowlisted OAuth error identifier or empty; Problem is written by addn.
+// Code is an allowlisted OAuth error identifier or empty; Problem is written by addition.
 type ProviderError struct {
 	Op      string
 	Status  int
@@ -227,7 +227,7 @@ func (e *ProviderError) Error() string {
 	return msg
 }
 
-// NetworkError is a request that got no HTTP response. RequestSent is false only when addn
+// NetworkError is a request that got no HTTP response. RequestSent is false only when addition
 // never obtained a connection to the provider, so no part of the request was sent.
 type NetworkError struct {
 	Op          string

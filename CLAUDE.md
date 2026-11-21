@@ -6,14 +6,14 @@ This file is loaded automatically by Claude Code when working in this repo. It c
 
 ## 1. What Addition is
 
-**Addition** (`addn`) is a **local-first, single-binary CLI that gives any coding agent authenticated access to the user's accounts**: several Gmail inboxes, several Drives, calendars, and later GitHub, Slack, Discord. Every credential stays on the user's machine in one encrypted SQLite file.
+**Addition** (CLI: `addition`) is a **local-first, single-binary CLI that gives any coding agent authenticated access to the user's accounts**: several Gmail inboxes, several Drives, calendars, and later GitHub, Slack, Discord. Every credential stays on the user's machine in one encrypted SQLite file.
 
 ```bash
-addn connect gmail --as work
-addn connect google-drive --as work
-addn connect google-calendar --as work
-addn gmail search-messages -a work --query "has:attachment newer_than:7d"
-addn call google-calendar -a work GET /calendar/v3/calendars/primary/events
+addition connect gmail --as work
+addition connect google-drive --as work
+addition connect google-calendar --as work
+addition gmail search-messages -a work --query "has:attachment newer_than:7d"
+addition call google-calendar -a work GET /calendar/v3/calendars/primary/events
 ```
 
 It is a tool, not a platform: no server of ours, no account with us, no telemetry. Agents need only a shell. MCP and language wrappers are projections layered on top later.
@@ -26,9 +26,9 @@ It is a tool, not a platform: no server of ours, no account with us, no telemetr
 ## 2. Architecture principles (don't violate these)
 
 1. **Local only.** No hosted component, no phoning home, no telemetry.
-2. **One static binary, one data dir.** Go, pure-Go SQLite, no cgo, no runtime. All state under `$ADDN_HOME` (default XDG data dir) in one `addition.db`. The only exception is the master key: OS keychain, env, or an opted-in `master.key`.
+2. **One static binary, one data dir.** Go, pure-Go SQLite, no cgo, no runtime. All state under `$ADDITION_HOME` (default XDG data dir) in one `addition.db`. The only exception is the master key: OS keychain, env, or an opted-in `master.key`.
 3. **Agent-first output.** Tool commands print JSON on stdout. Errors print `{"error":{"code","message"}}` on stderr with a stable exit code. Never prompt unless stdin is a TTY.
-4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, files written by `-o`, or test snapshots, and not as a provider's echo of a token it was sent (the `addn call` echo guard). There is no command that prints a token; agents reach APIs through `addn call`.
+4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, files written by `-o`, or test snapshots, and not as a provider's echo of a token it was sent (the `addition call` echo guard). There is no command that prints a token; agents reach APIs through `addition call`.
 5. **Provider config is data (YAML), provider quirks are code (adapters).** Keep `if provider == "slack"` out of the core engine.
 6. **One connection = one app + alias.** Each app is its own provider with its own scopes and hosts; the OAuth client is shared per identity root.
 7. **Tools as curated data.** Toolkit YAML is the source for generated commands, JSON schemas and (later) MCP tools. Commands are generated at runtime, not code-generated.
@@ -43,7 +43,7 @@ addition/
 ├── README.md
 ├── docs/cli-plan.md        # direction + phases + milestones (authoritative)
 ├── go.mod                  # module github.com/runagent-dev/addition
-├── cmd/addn/               # main package; thin
+├── cmd/addition/               # main package; thin
 ├── internal/               # all implementation packages (cli, catalog, vault, oauth, proxy, …)
 └── shared/                 # language-agnostic data, embedded into the binary
     ├── providers/          # provider config YAML
@@ -118,11 +118,11 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 ## 6. Core invariants (must never silently break)
 
 1. **Encryption wire format:** `base64(iv[12] || tag[16] || ciphertext)`, AES-256-GCM, 32-byte key parsed from 64 hex chars. `crypto_interop.yaml` pins it.
-2. **Master key never silently downgrades.** A set `ADDN_MASTER_KEY` always wins (set-but-empty is an error); otherwise only the source recorded at `addn init` is used (`keychain`, indexed by the vault ID, or an opted-in `master.key`). No fallback chain. Fail loudly when it is unavailable. Vault secrets are AES-GCM with AAD binding vault ID, table, row and column.
+2. **Master key never silently downgrades.** A set `ADDITION_MASTER_KEY` always wins (set-but-empty is an error); otherwise only the source recorded at `addition init` is used (`keychain`, indexed by the vault ID, or an opted-in `master.key`). No fallback chain. Fail loudly when it is unavailable. Vault secrets are AES-GCM with AAD binding vault ID, table, row and column.
 3. **`extends` merge semantics:** scalars override, arrays **replace**, `id` and `name` come from the child.
 4. **Path interpolation:** params named in `{}` are **consumed** — stripped from body/query.
 5. **401 retry:** exactly once, and only when a refresh token exists. Never loop. The HTTP transport never replays a request either: each attempt is a fresh connection with a non-replayable body.
-6. **Refresh under lock:** concurrent `addn` processes whose refreshes commit hit the token endpoint once per rotation (SQLite `BEGIN IMMEDIATE`, re-read before refresh, "already refreshed" decided by the credential revision, not expiry or token text). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop. Cancellation never drops a rotation: once the exchange starts, it and its commit finish, and `interrupted` is reported after.
+6. **Refresh under lock:** concurrent `addition` processes whose refreshes commit hit the token endpoint once per rotation (SQLite `BEGIN IMMEDIATE`, re-read before refresh, "already refreshed" decided by the credential revision, not expiry or token text). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop. Cancellation never drops a rotation: once the exchange starts, it and its commit finish, and `interrupted` is reported after.
 7. **OAuth:** PKCE S256, `state` validated and discarded after use; loopback redirect on `127.0.0.1`, with a paste-back path for headless machines.
 8. **Slack non-standard errors:** HTTP 200 with `ok: false` is a failure, detected by the Slack adapter, not core.
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
@@ -139,8 +139,8 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 go test ./...                 # all tests (older local Go fetches the pinned toolchain)
 go vet ./...
 "$(go env GOROOT)/bin/gofmt" -l .   # must print nothing
-go run ./cmd/addn version
-go build -o addn ./cmd/addn
+go run ./cmd/addition version
+go build -o addition ./cmd/addition
 ```
 
 ---

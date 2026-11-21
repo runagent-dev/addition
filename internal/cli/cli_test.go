@@ -19,7 +19,7 @@ type result struct {
 
 // command names the invocation by its first words only, since later arguments may hold codes.
 func (r result) command() string {
-	return "addn " + strings.Join(r.args[:min(2, len(r.args))], " ")
+	return "addition " + strings.Join(r.args[:min(2, len(r.args))], " ")
 }
 
 func run(args ...string) result {
@@ -110,8 +110,8 @@ func TestNoArgsPrintsHelpAndSucceeds(t *testing.T) {
 	if r.code != ExitOK {
 		t.Fatalf("exit code = %d, want %d (stderr: %q)", r.code, ExitOK, r.stderr)
 	}
-	if !bytes.Contains([]byte(r.stdout), []byte("addn")) {
-		t.Errorf("help output does not mention addn: %q", r.stdout)
+	if !bytes.Contains([]byte(r.stdout), []byte("addition")) {
+		t.Errorf("help output does not mention addition: %q", r.stdout)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestStdoutWriteFailureIsAnOutputError(t *testing.T) {
 func TestNilArgsDoNotReadProcessArgs(t *testing.T) {
 	saved := os.Args
 	t.Cleanup(func() { os.Args = saved })
-	os.Args = []string{"addn.test", "bogus"}
+	os.Args = []string{"addition.test", "bogus"}
 
 	var stdout, stderr bytes.Buffer
 	if code := Run(context.Background(), nil, &stdout, &stderr); code != ExitOK {

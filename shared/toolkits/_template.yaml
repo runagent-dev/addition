@@ -8,7 +8,7 @@
 # `operation` because together they describe the call; `params` describe the inputs.
 
 provider: ""                        # Must match a provider ID from shared/providers/
-# command: ""                       # Optional CLI name (`addn <command> …`); defaults to the provider ID
+# command: ""                       # Optional CLI name (`addition <command> …`); defaults to the provider ID
 name: ""                            # Human-readable toolkit name
 description: ""                     # What this toolkit does (1-2 sentences)
 

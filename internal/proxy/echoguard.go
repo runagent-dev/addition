@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// ErrCredentialEcho is a response that repeated an access token addn sent.
+// ErrCredentialEcho is a response that repeated an access token addition sent.
 var ErrCredentialEcho = errors.New("the response repeated an access token")
 
 const guardChunk = 32 << 10

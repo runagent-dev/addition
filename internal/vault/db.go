@@ -135,7 +135,7 @@ func beginInterruptibleWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error
 	}
 }
 
-// writerLockError names a busy database with addn's own error, so the driver's text never reaches the user.
+// writerLockError names a busy database with addition's own error, so the driver's text never reaches the user.
 func writerLockError(err error) error {
 	var driverErr *sqlite.Error
 	if errors.As(err, &driverErr) && driverErr.Code()&0xff == sqlite3.SQLITE_BUSY {
@@ -172,7 +172,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if current > SchemaVersion {
-		return fmt.Errorf("%w: database is at version %d, this addn supports up to %d; upgrade addn", ErrSchemaTooNew, current, SchemaVersion)
+		return fmt.Errorf("%w: database is at version %d, this addition supports up to %d; upgrade addition", ErrSchemaTooNew, current, SchemaVersion)
 	}
 	if current == SchemaVersion {
 		return nil

@@ -15,7 +15,7 @@ import (
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
-const testUser = "addn-tester"
+const testUser = "addition-tester"
 
 // accountFixture describes the account databases a private-group check reads.
 type accountFixture struct {
@@ -76,7 +76,7 @@ func groupWritableHome(t *testing.T, f *fakeEnv, mode os.FileMode, fx accountFix
 
 	current := user.User{Uid: fmt.Sprint(uid), Gid: fmt.Sprint(userGID), Username: testUser, HomeDir: "/home/" + testUser}
 	t.Cleanup(vault.SetAccountSources(groupFile, passwdFile, current, fx.groupName))
-	f.set("ADDN_HOME", filepath.Join(ancestor, "home"))
+	f.set("ADDITION_HOME", filepath.Join(ancestor, "home"))
 	return ancestor
 }
 

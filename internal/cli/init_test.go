@@ -27,12 +27,12 @@ type initOutput struct {
 func isolatedHome(t *testing.T) string {
 	t.Helper()
 	keyring.MockInit()
-	home := filepath.Join(privateTempDir(t), "addn")
-	t.Setenv("ADDN_HOME", home)
+	home := filepath.Join(privateTempDir(t), "addition")
+	t.Setenv("ADDITION_HOME", home)
 	t.Setenv("HOME", privateTempDir(t))
 	t.Setenv("XDG_DATA_HOME", privateTempDir(t))
-	t.Setenv("ADDN_MASTER_KEY", "")
-	_ = os.Unsetenv("ADDN_MASTER_KEY")
+	t.Setenv("ADDITION_MASTER_KEY", "")
+	_ = os.Unsetenv("ADDITION_MASTER_KEY")
 	return home
 }
 
@@ -128,7 +128,7 @@ func TestInitReportsTheRecordedSourceWhenEnvUnlocks(t *testing.T) {
 	home := isolatedHome(t)
 	decodeInit(t, run("init"))
 	key := keychainKey(t, home)
-	t.Setenv("ADDN_MASTER_KEY", key)
+	t.Setenv("ADDITION_MASTER_KEY", key)
 
 	r := run("init")
 
@@ -140,7 +140,7 @@ func TestInitReportsTheRecordedSourceWhenEnvUnlocks(t *testing.T) {
 
 func TestInitRejectsASetButEmptyEnvKey(t *testing.T) {
 	isolatedHome(t)
-	t.Setenv("ADDN_MASTER_KEY", "")
+	t.Setenv("ADDITION_MASTER_KEY", "")
 
 	r := run("init", "--key-file")
 
@@ -185,7 +185,7 @@ func TestCorruptVaultIsInternal(t *testing.T) {
 func TestInitWithEnvKey(t *testing.T) {
 	isolatedHome(t)
 	key := strings.Repeat("d", 64)
-	t.Setenv("ADDN_MASTER_KEY", key)
+	t.Setenv("ADDITION_MASTER_KEY", key)
 
 	r := run("init")
 
@@ -195,10 +195,10 @@ func TestInitWithEnvKey(t *testing.T) {
 	assertNoLeak(t, r, key)
 
 	wrong := strings.Repeat("e", 64)
-	t.Setenv("ADDN_MASTER_KEY", wrong)
+	t.Setenv("ADDITION_MASTER_KEY", wrong)
 	r = run("init")
 	if r.code == ExitOK {
-		t.Fatal("init with the wrong ADDN_MASTER_KEY succeeded")
+		t.Fatal("init with the wrong ADDITION_MASTER_KEY succeeded")
 	}
 	if env := decodeError(t, r.stderr); env.Error.Code != "wrong-master-key" {
 		t.Errorf("error.code = %q, want wrong-master-key", env.Error.Code)
@@ -209,7 +209,7 @@ func TestInitWithEnvKey(t *testing.T) {
 func TestInitRejectsAMalformedEnvKeyWithoutEchoingIt(t *testing.T) {
 	isolatedHome(t)
 	bad := strings.Repeat("f", 64) + "\n"
-	t.Setenv("ADDN_MASTER_KEY", bad)
+	t.Setenv("ADDITION_MASTER_KEY", bad)
 
 	r := run("init")
 
@@ -238,7 +238,7 @@ func TestInitWithoutKeychainSuggestsAlternatives(t *testing.T) {
 	if env.Error.Code != "keychain-unavailable" {
 		t.Errorf("error.code = %q, want keychain-unavailable", env.Error.Code)
 	}
-	for _, hint := range []string{"--key-file", "ADDN_MASTER_KEY"} {
+	for _, hint := range []string{"--key-file", "ADDITION_MASTER_KEY"} {
 		if !strings.Contains(env.Error.Message, hint) {
 			t.Errorf("message %q does not suggest %s", env.Error.Message, hint)
 		}
@@ -265,8 +265,8 @@ func TestUnexpectedVaultFailureIsInternal(t *testing.T) {
 
 func TestInitRejectsARelativeHome(t *testing.T) {
 	isolatedHome(t)
-	t.Setenv("ADDN_HOME", "")
-	_ = os.Unsetenv("ADDN_HOME")
+	t.Setenv("ADDITION_HOME", "")
+	_ = os.Unsetenv("ADDITION_HOME")
 	_ = os.Unsetenv("XDG_DATA_HOME")
 	t.Setenv("HOME", "relative")
 	t.Chdir(privateTempDir(t))

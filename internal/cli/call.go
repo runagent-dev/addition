@@ -43,12 +43,12 @@ func newCallCmd(d deps) *cobra.Command {
 		Short: "Call an app's API with a connected account's token",
 		Long: "Send one authenticated request to an app's API and print the response body.\n\n" +
 			"<app> is a provider id or toolkit command, e.g. gmail, drive (google-drive) or google-chat:\n" +
-			"addn call google-chat -a work GET /v1/spaces\n\n" +
+			"addition call google-chat -a work GET /v1/spaces\n\n" +
 			"<path> is absolute from the app's API host (/calendar/v3/calendars/primary/events) or an https URL\n" +
 			"on one of the app's allowed hosts, and its path must start with one of the app's allowed prefixes\n" +
 			"(api.allowed_hosts and api.allowed_path_prefixes in its YAML; path-not-allowed otherwise). Nothing is\n" +
 			"sent to any other host or route, so an app's token never reaches another app's API.\n" +
-			"addn sets Authorization itself, refreshes an expiring token first, renews it\n" +
+			"addition sets Authorization itself, refreshes an expiring token first, renews it\n" +
 			"once on a 401, and waits out 429 responses. Redirects are never followed.\n\n" +
 			"A 2xx text or JSON body goes to stdout verbatim. A binary body needs -o <file>, which writes it\n" +
 			"privately and prints {status, content_type, bytes, path}; an existing file needs --force.\n" +
@@ -98,7 +98,7 @@ func prepareCall(ctx context.Context, stdin io.Reader, rawMethod string, f callF
 		return callRequest{}, callRequestError(err)
 	}
 	if header.Get("User-Agent") == "" {
-		header.Set("User-Agent", "addn/"+Version)
+		header.Set("User-Agent", "addition/"+Version)
 	}
 	body, err := readRequestBody(ctx, stdin, f)
 	if err != nil {
@@ -113,7 +113,7 @@ func prepareCall(ctx context.Context, stdin io.Reader, rawMethod string, f callF
 	return req, nil
 }
 
-const callForm = "call needs <app> <METHOD> <path>, e.g. `addn call gmail GET /gmail/v1/users/me/profile`"
+const callForm = "call needs <app> <METHOD> <path>, e.g. `addition call gmail GET /gmail/v1/users/me/profile`"
 
 func isMethod(arg string) bool {
 	_, err := proxy.ParseMethod(arg)
@@ -123,13 +123,13 @@ func isMethod(arg string) bool {
 // appMissing reports a call that starts with a method, so names no app. The message is fixed:
 // it never repeats an argument, which may hold a secret.
 func appMissing(cmd *cobra.Command, d deps) error {
-	return &Error{Code: "app-required", Exit: ExitUsage, Message: "call needs the app first: `addn call <app> <METHOD> <path>`; " +
+	return &Error{Code: "app-required", Exit: ExitUsage, Message: "call needs the app first: `addition call <app> <METHOD> <path>`; " +
 		connectedAppsHint(cmd.Context(), d)}
 }
 
 // connectedAppsHint names the apps with an account, or says none is connected, for a usage message.
 func connectedAppsHint(ctx context.Context, d deps) string {
-	none := "no app is connected yet; run `addn connect <app> --as <alias>`"
+	none := "no app is connected yet; run `addition connect <app> --as <alias>`"
 	a, err := openAccountSession(ctx, d)
 	if err != nil {
 		return none
@@ -194,7 +194,7 @@ func runCall(cmd *cobra.Command, d deps, appName, rawMethod, rawPath string, f c
 	return sealCallError(ctx, deliver(cmd, req.method, resp, req.out))
 }
 
-// sealCallError lets only addn's own errors out of a call whose request was sent, so no Go or upstream error text can reach the user.
+// sealCallError lets only addition's own errors out of a call whose request was sent, so no Go or upstream error text can reach the user.
 func sealCallError(ctx context.Context, err error) error {
 	if _, typed := errors.AsType[*Error](err); typed || err == nil {
 		return err
@@ -225,7 +225,7 @@ func callRequestError(err error) error {
 	return &Error{Code: "internal", Message: "the request could not be prepared", Exit: ExitInternal}
 }
 
-// callFailure maps token and transport failures to exit codes. Every message is addn's own.
+// callFailure maps token and transport failures to exit codes. Every message is addition's own.
 func callFailure(acct vault.Account, clientProvider string, err error) error {
 	var refused *oauth.ProviderError
 	var tokenNet *oauth.NetworkError
@@ -235,7 +235,7 @@ func callFailure(acct vault.Account, clientProvider string, err error) error {
 		return interrupted()
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-			"%s:%s must be reconnected; run `addn connect %s --as %s`", acct.Provider, acct.Alias, acct.Provider, acct.Alias)}
+			"%s:%s must be reconnected; run `addition connect %s --as %s`", acct.Provider, acct.Alias, acct.Provider, acct.Alias)}
 	case errors.Is(err, proxy.ErrAccountChanged):
 		return &Error{Code: "account-changed", Exit: ExitUsage, Message: fmt.Sprintf(
 			"%s:%s was removed and connected again while the call started; repeat the command", acct.Provider, acct.Alias)}
@@ -243,7 +243,7 @@ func callFailure(acct vault.Account, clientProvider string, err error) error {
 		return notConnected(accountRef{provider: acct.Provider, alias: acct.Alias})
 	case errors.Is(err, proxy.ErrNoOAuthClient):
 		return &Error{Code: "no-oauth-client", Exit: ExitUsage, Message: fmt.Sprintf(
-			"no OAuth client for %s; run `addn client add %s --file client_secret.json`", acct.Provider, clientProvider)}
+			"no OAuth client for %s; run `addition client add %s --file client_secret.json`", acct.Provider, clientProvider)}
 	case errors.As(err, &refused):
 		return &Error{Code: "refresh-rejected", Message: refused.Error(), Exit: upstreamExit(refused.Status)}
 	case errors.As(err, &tokenNet), errors.As(err, &apiNet):
@@ -299,7 +299,7 @@ func (a *accountSession) callAccount(ctx context.Context, app *catalog.Provider,
 	}
 	if len(candidates) == 0 {
 		return vault.Account{}, &Error{Code: "not-connected", Exit: ExitNeedsConnect,
-			Message: fmt.Sprintf("no %s account is connected; run `addn connect %s --as <alias>`", app.ID, app.ID)}
+			Message: fmt.Sprintf("no %s account is connected; run `addition connect %s --as <alias>`", app.ID, app.ID)}
 	}
 	if def, err := a.store.DefaultAccount(ctx, app.ID); err == nil {
 		for _, acct := range candidates {
@@ -318,7 +318,7 @@ func (a *accountSession) callAccount(ctx context.Context, app *catalog.Provider,
 		aliases[i] = acct.Alias
 	}
 	return vault.Account{}, &Error{Code: "account-required", Exit: ExitUsage, Message: fmt.Sprintf(
-		"several %s accounts are connected (%s); pass -a <alias> or set a default with `addn accounts default %s:<alias>`",
+		"several %s accounts are connected (%s); pass -a <alias> or set a default with `addition accounts default %s:<alias>`",
 		app.ID, strings.Join(aliases, ", "), app.ID)}
 }
 
@@ -376,7 +376,7 @@ func capBody(data []byte) ([]byte, error) {
 }
 
 // deliver writes the final response: a success body to stdout or the -o file, anything else as an upstream failure.
-// Everything derived from the response passes the echo guard, so an access token never leaves addn.
+// Everything derived from the response passes the echo guard, so an access token never leaves addition.
 func deliver(cmd *cobra.Command, method string, resp *proxy.Response, out *outputFile) error {
 	guard := proxy.NewEchoGuard(resp.Tokens)
 	if mayHaveBody(method, resp.Status) && hasContentCoding(resp.Header) {
@@ -436,7 +436,7 @@ func unsupportedEncoding(status int) *Error {
 		exit = upstreamExit(status)
 	}
 	return &Error{Code: "unsupported-encoding", Exit: exit,
-		Message: fmt.Sprintf("the HTTP %d response has a content coding addn cannot inspect for the access token; it was withheld", status)}
+		Message: fmt.Sprintf("the HTTP %d response has a content coding addition cannot inspect for the access token; it was withheld", status)}
 }
 
 func binaryResponse() *Error {

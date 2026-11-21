@@ -71,7 +71,7 @@ func (a accountSources) checkPrivateGroup(gid uint32) error {
 }
 
 func cannotVerify(err error) error {
-	return fmt.Errorf("addn cannot verify it has no other members (%v; accounts known only through NSS cannot be checked)", err)
+	return fmt.Errorf("addition cannot verify it has no other members (%v; accounts known only through NSS cannot be checked)", err)
 }
 
 // accountFormat is an account file's field count and the index of its numeric gid field.
@@ -107,7 +107,7 @@ func scanAccountFile(path string, format accountFormat, fn func(fields []string)
 		}
 		f := strings.Split(line, ":")
 		if len(f) != format.fields || !numeric(f[format.gid]) {
-			return cannotVerify(fmt.Errorf("%s has an entry addn cannot parse", path))
+			return cannotVerify(fmt.Errorf("%s has an entry addition cannot parse", path))
 		}
 		if err := fn(f); err != nil {
 			return err

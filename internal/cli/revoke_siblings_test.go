@@ -36,7 +36,7 @@ func TestRemovingWithoutRevokeLeavesSiblingsActiveAndStaysOffline(t *testing.T) 
 		t.Errorf("remove = %+v, want removed locally with nothing revoked", out)
 	}
 	if c.transport.total() != 0 || len(c.google.revoked) != 0 {
-		t.Errorf("%d requests left addn, %d revokes; a local removal makes no network call", c.transport.total(), len(c.google.revoked))
+		t.Errorf("%d requests left addition, %d revokes; a local removal makes no network call", c.transport.total(), len(c.google.revoked))
 	}
 	if got := statusOf(t, c, "google-drive:work"); got != "active" {
 		t.Errorf("drive status = %q, want active", got)

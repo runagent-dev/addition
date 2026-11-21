@@ -50,7 +50,7 @@ func TestCallInjectsTheTokenAndStreamsTheBodyVerbatim(t *testing.T) {
 	if got.Header.Get("Authorization") != "Bearer "+fakeAccessToken {
 		t.Errorf("Authorization = %q, want the stored access token", got.Header.Get("Authorization"))
 	}
-	if !strings.HasPrefix(got.Header.Get("User-Agent"), "addn/") {
+	if !strings.HasPrefix(got.Header.Get("User-Agent"), "addition/") {
 		t.Errorf("User-Agent = %q", got.Header.Get("User-Agent"))
 	}
 	if events := auditEvents(t, c.home); !slices.Equal(events, []string{"init", "connect", "call"}) {

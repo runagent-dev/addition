@@ -10,7 +10,7 @@ import (
 
 func (f *vaultFixture) rawDB() *sql.DB {
 	f.t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(os.Getenv("ADDN_HOME"), "addition.db"))
+	db, err := sql.Open("sqlite", filepath.Join(os.Getenv("ADDITION_HOME"), "addition.db"))
 	if err != nil {
 		f.t.Fatal(err)
 	}

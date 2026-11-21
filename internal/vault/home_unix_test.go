@@ -57,13 +57,13 @@ func TestAllowsAStickyRootOwnedAncestor(t *testing.T) {
 	if st.Uid != 0 || info.Mode()&os.ModeSticky == 0 || info.Mode().Perm()&0o002 == 0 {
 		t.Skipf("%s is not a root-owned, sticky, world-writable directory", tmp)
 	}
-	parent, err := os.MkdirTemp(tmp, "addn-sticky-")
+	parent, err := os.MkdirTemp(tmp, "addition-sticky-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(parent) })
 	f := newFakeEnv(t)
-	f.set("ADDN_HOME", filepath.Join(parent, "home"))
+	f.set("ADDITION_HOME", filepath.Join(parent, "home"))
 
 	mustInit(t, f, vault.InitOptions{KeyFile: true})
 	mustOpen(t, f)
@@ -80,7 +80,7 @@ func TestResolvesAHomeBehindASymlink(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	f.set("ADDN_HOME", link)
+	f.set("ADDITION_HOME", link)
 
 	res := mustInit(t, f, vault.InitOptions{KeyFile: true})
 	mustOpen(t, f)
@@ -107,7 +107,7 @@ func TestValidatesTheAncestorsOfASymlinkTarget(t *testing.T) {
 	if err := os.Symlink(filepath.Join(shared, "home"), link); err != nil {
 		t.Fatal(err)
 	}
-	f.set("ADDN_HOME", link)
+	f.set("ADDITION_HOME", link)
 
 	for op, err := range bothErrors(t, f) {
 		if !errors.Is(err, vault.ErrInsecureHome) || !strings.Contains(err.Error(), shared) {
