@@ -24,6 +24,7 @@ var (
 	ErrCorrupt             = errors.New("the vault database is corrupt")
 	ErrNotFound            = errors.New("not found")
 	ErrAliasTaken          = errors.New("alias already in use for this provider")
+	ErrBusy                = errors.New("another addn process is holding the vault; try again in a moment")
 )
 
 type InitOptions struct {

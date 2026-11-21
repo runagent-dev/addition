@@ -11,11 +11,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 const dbFile = "addition.db"
+
+// busyTimeout is how long a connection waits for another process's write lock.
+var busyTimeout = 10 * time.Second
 
 // dsn is a file: URI for the existing database; mode=rw stops SQLite creating it with its own permissions.
 // Every transaction is BEGIN IMMEDIATE, so a writer takes the lock before it reads.
@@ -26,7 +30,7 @@ func dsn(home string) string {
 	}
 	params := url.Values{
 		"mode":          {"rw"},
-		"_busy_timeout": {"10000"},
+		"_busy_timeout": {strconv.FormatInt(busyTimeout.Milliseconds(), 10)},
 		"_journal_mode": {"WAL"},
 		"_foreign_keys": {"1"},
 		"_synchronous":  {"NORMAL"},
