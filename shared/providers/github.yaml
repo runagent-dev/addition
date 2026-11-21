@@ -21,6 +21,8 @@ oauth2:
 
 api:
   base_url: "https://api.github.com"
+  allowed_hosts:
+    - "api.github.com"
   auth_header: "Authorization"
   auth_prefix: "Bearer"
   rate_limit:

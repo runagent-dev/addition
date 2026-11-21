@@ -26,7 +26,7 @@ It is a tool, not a platform: no server of ours, no account with us, no telemetr
 1. **Local only.** No hosted component, no phoning home, no telemetry.
 2. **One static binary, one data dir.** Go, pure-Go SQLite, no cgo, no runtime. All state under `$ADDN_HOME` (default XDG data dir) in one `addition.db`. The only exception is the master key: OS keychain, env, or an opted-in `master.key`.
 3. **Agent-first output.** Tool commands print JSON on stdout. Errors print `{"error":{"code","message"}}` on stderr with a stable exit code. Never prompt unless stdin is a TTY.
-4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, or test snapshots. There is no command that prints a token; agents reach APIs through `addn call`.
+4. **Tokens never leave the vault in plaintext.** Not in stdout, stderr, logs, errors, `--debug`, files written by `-o`, or test snapshots, and not as a provider's echo of a token it was sent (the `addn call` echo guard). There is no command that prints a token; agents reach APIs through `addn call`.
 5. **Provider config is data (YAML), provider quirks are code (adapters).** Keep `if provider == "slack"` out of the core engine.
 6. **One account = one identity.** A Google account connects once and serves Gmail, Drive and Calendar; more services means re-consent for the union of granted and requested scopes, not a new account.
 7. **Tools as curated data.** Toolkit YAML is the source for generated commands, JSON schemas and (later) MCP tools. Commands are generated at runtime, not code-generated.
@@ -119,14 +119,15 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 2. **Master key never silently downgrades.** A set `ADDN_MASTER_KEY` always wins (set-but-empty is an error); otherwise only the source recorded at `addn init` is used (`keychain`, indexed by the vault ID, or an opted-in `master.key`). No fallback chain. Fail loudly when it is unavailable. Vault secrets are AES-GCM with AAD binding vault ID, table, row and column.
 3. **`extends` merge semantics:** scalars override, arrays **replace**, `id` and `name` come from the child.
 4. **Path interpolation:** params named in `{}` are **consumed** — stripped from body/query.
-5. **401 retry:** exactly once, and only when a refresh token exists. Never loop.
-6. **Refresh under lock:** concurrent `addn` processes whose refreshes commit hit the token endpoint once per rotation (SQLite `BEGIN IMMEDIATE`, re-read before refresh). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop.
+5. **401 retry:** exactly once, and only when a refresh token exists. Never loop. The HTTP transport never replays a request either: each attempt is a fresh connection with a non-replayable body.
+6. **Refresh under lock:** concurrent `addn` processes whose refreshes commit hit the token endpoint once per rotation (SQLite `BEGIN IMMEDIATE`, re-read before refresh, "already refreshed" decided by the credential revision, not expiry or token text). A rotation lost to a crash before commit ends in `needs-reauth`, never a retry loop. Cancellation never drops a rotation: once the exchange starts, it and its commit finish, and `interrupted` is reported after.
 7. **OAuth:** PKCE S256, `state` validated and discarded after use; loopback redirect on `127.0.0.1`, with a paste-back path for headless machines.
 8. **Slack non-standard errors:** HTTP 200 with `ok: false` is a failure, detected by the Slack adapter, not core.
 9. **Scopes delimiter:** read from YAML (space for most, comma for Slack). Never hardcode.
 10. **Token extraction is data:** `oauth2.token_response_mapping` dot-paths, else the standard OAuth2 layout. Adapters may reject error shapes but never extract tokens.
-11. **Audit log:** connect / refresh / revoke / tool-call events write a row; never token values.
-12. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
+11. **Audit log:** connect / refresh / revoke / call events write a row; never token values, paths or queries.
+12. **Token destinations:** an access token is sent only over https to a host in the provider's `api.allowed_hosts` (default: the host of `api.base_url`). A target outside the list is refused before anything is sent, and redirects are never followed.
+13. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
 
 ---
 

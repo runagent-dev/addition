@@ -26,6 +26,8 @@ oauth2:
 
 api:
   base_url: "https://slack.com/api"
+  allowed_hosts:
+    - "slack.com"
   auth_header: "Authorization"
   auth_prefix: "Bearer"
   rate_limit:

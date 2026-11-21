@@ -2,10 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -74,10 +76,17 @@ type fakeGoogle struct {
 	verifiers      []string
 	revoked        []string
 	pkceOK         int
+
+	refreshes      []url.Values
+	refreshError   string
+	refreshStatus  int
+	rotateRefresh  bool
+	currentRefresh string
+	validAccess    map[string]bool
 }
 
 func newFakeGoogle(t *testing.T) *fakeGoogle {
-	f := &fakeGoogle{t: t, identity: workIdentity, subject: workSubject, codes: map[string]issuedCode{}}
+	f := &fakeGoogle{t: t, identity: workIdentity, subject: workSubject, codes: map[string]issuedCode{}, validAccess: map[string]bool{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/authorize", f.authorize)
 	mux.HandleFunc("/token", f.token)
@@ -134,6 +143,10 @@ func (f *fakeGoogle) token(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	_ = r.ParseForm()
 	form := r.PostForm
+	if form.Get("grant_type") == "refresh_token" {
+		f.refreshGrant(w, form)
+		return
+	}
 	f.exchanges = append(f.exchanges, form)
 	f.verifiers = append(f.verifiers, form.Get("code_verifier"))
 	issued, ok := f.codes[form.Get("code")]
@@ -187,7 +200,7 @@ func (f *fakeGoogle) userinfo(w http.ResponseWriter, r *http.Request) {
 		echoError(w, http.StatusUnauthorized, r.Header.Get("Authorization"))
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+fakeAccessToken {
+	if token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); token != fakeAccessToken && !f.validAccess[token] {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -244,6 +257,7 @@ func (f *fakeGoogle) catalogFS() fs.FS {
 			data = bytes.ReplaceAll(data, []byte("https://oauth2.googleapis.com/token"), []byte(f.srv.URL+"/token"))
 			data = bytes.ReplaceAll(data, []byte("https://oauth2.googleapis.com/revoke"), []byte(f.srv.URL+"/revoke"))
 			data = bytes.ReplaceAll(data, []byte("https://openidconnect.googleapis.com/v1/userinfo"), []byte(f.srv.URL+"/userinfo"))
+			data = mustReplace(f.t, data, `    - "www.googleapis.com"`, "    - \"www.googleapis.com\"\n    - \""+strings.TrimPrefix(f.srv.URL, "http://")+"\"")
 		}
 		out[path] = &fstest.MapFile{Data: data}
 		return nil
@@ -294,11 +308,12 @@ func newHarness(t *testing.T) *harness {
 	env.Now = clock.Now
 	h := &harness{t: t, home: home, google: g, clock: clock, challenges: map[string]bool{}}
 	h.deps = deps{
-		catalogFS:       g.catalogFS(),
-		env:             env,
-		httpClient:      &http.Client{Timeout: 5 * time.Second},
-		openBrowser:     h.browse,
-		loopbackTimeout: 5 * time.Second,
+		catalogFS:         g.catalogFS(),
+		env:               env,
+		httpClient:        &http.Client{Timeout: 5 * time.Second},
+		openBrowser:       h.browse,
+		loopbackTimeout:   5 * time.Second,
+		loopbackProviders: true,
 	}
 	t.Cleanup(h.assertNothingLeaked)
 	h.mustRun("init", "--key-file")
@@ -324,15 +339,22 @@ var challengeParam = regexp.MustCompile(`code_challenge=([A-Za-z0-9_-]{43})`)
 
 // run records every PKCE challenge addn hands the browser or prints, so the leak check can
 // recognise a verifier even when the provider never saw its authorization.
-func (h *harness) run(args ...string) result {
+func (h *harness) run(args ...string) result { return h.runWithStdin(nil, args...) }
+
+func (h *harness) runWithStdin(stdin io.Reader, args ...string) result {
+	return h.runContext(context.Background(), stdin, args...)
+}
+
+func (h *harness) runContext(ctx context.Context, stdin io.Reader, args ...string) result {
 	d := h.deps
+	d.stdin = stdin
 	open := d.openBrowser
 	d.openBrowser = func(authorizeURL string) <-chan error {
 		h.noteChallenges(authorizeURL)
 		return open(authorizeURL)
 	}
 	var stdout, stderr bytes.Buffer
-	code := execute(args, &stdout, &stderr, d)
+	code := executeContext(ctx, args, &stdout, &stderr, d)
 	r := result{args: args, code: code, stdout: stdout.String(), stderr: stderr.String()}
 	h.noteChallenges(r.stdout + r.stderr)
 	h.mu.Lock()
@@ -387,7 +409,7 @@ var base64URLRun = regexp.MustCompile(`[A-Za-z0-9_-]{43,}`)
 // that never reached the token endpoint: no 43-character run may hash to an issued challenge.
 func (h *harness) assertNothingLeaked() {
 	h.t.Helper()
-	secrets := []string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, echoMarker}
+	secrets := []string{fakeClientSecret, fakeAccessToken, fakeRefreshToken, echoMarker, refreshedAccessPrefix, rotatedRefreshPrefix}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	challenges := h.challenges

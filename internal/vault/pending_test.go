@@ -310,7 +310,7 @@ func TestOpenUpgradesASchemaOneVault(t *testing.T) {
 	s, f := newStore(t)
 	_ = s.Close()
 	db := rawDB(t, f.home)
-	if _, err := db.Exec(`DROP TABLE pending_auth; ALTER TABLE accounts DROP COLUMN subject;
+	if _, err := db.Exec(`DROP TABLE pending_auth; ALTER TABLE accounts DROP COLUMN subject; ALTER TABLE credentials DROP COLUMN revision;
 		UPDATE meta SET value = '1' WHERE key = 'schema_version'`); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestOpenUpgradesASchemaOneVault(t *testing.T) {
 	}
 	var version string
 	_ = db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version)
-	if version != "2" {
-		t.Errorf("schema_version = %s, want 2", version)
+	if version != "3" {
+		t.Errorf("schema_version = %s, want 3", version)
 	}
 }

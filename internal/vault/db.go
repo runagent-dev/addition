@@ -11,11 +11,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const dbFile = "addition.db"
+
+// busyTimeout is how long a connection waits for another process's write lock.
+var busyTimeout = 10 * time.Second
 
 // dsn is a file: URI for the existing database; mode=rw stops SQLite creating it with its own permissions.
 // Every transaction is BEGIN IMMEDIATE, so a writer takes the lock before it reads.
@@ -26,7 +31,7 @@ func dsn(home string) string {
 	}
 	params := url.Values{
 		"mode":          {"rw"},
-		"_busy_timeout": {"10000"},
+		"_busy_timeout": {strconv.FormatInt(busyTimeout.Milliseconds(), 10)},
 		"_journal_mode": {"WAL"},
 		"_foreign_keys": {"1"},
 		"_synchronous":  {"NORMAL"},
@@ -91,18 +96,57 @@ func openDB(ctx context.Context, home string) (*sql.DB, error) {
 var beforeWriterLock = func() {}
 
 // beginWriterTx takes the SQLite writer lock (BEGIN IMMEDIATE) that every write and key publication holds.
-// The lock ignores caller cancellation; database/sql would otherwise roll back and release it mid-work.
+// The wait ignores caller cancellation: database/sql would otherwise roll back and release the lock mid-work.
 func beginWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	beforeWriterLock()
-	return db.BeginTx(context.WithoutCancel(ctx), nil)
+	tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
+	return tx, writerLockError(err)
 }
 
-// withWriterLock runs fn while holding the writer lock, and commits nothing.
+// beginInterruptibleWriterTx is beginWriterTx for callers that would rather give up than wait: cancelling
+// ctx stops the wait, and a lock granted after that is released at once. A lock already held is never released.
+func beginInterruptibleWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	beforeWriterLock()
+	type acquisition struct {
+		tx  *sql.Tx
+		err error
+	}
+	acquired := make(chan acquisition, 1)
+	go func() {
+		tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
+		acquired <- acquisition{tx, err}
+	}()
+	select {
+	case got := <-acquired:
+		return got.tx, writerLockError(got.err)
+	case <-ctx.Done():
+		go func() {
+			if got := <-acquired; got.tx != nil {
+				_ = got.tx.Rollback()
+			}
+		}()
+		return nil, ctx.Err()
+	}
+}
+
+// writerLockError names a busy database with addn's own error, so the driver's text never reaches the user.
+func writerLockError(err error) error {
+	var driverErr *sqlite.Error
+	if errors.As(err, &driverErr) && driverErr.Code()&0xff == sqlite3.SQLITE_BUSY {
+		return ErrBusy
+	}
+	return err
+}
+
+// withWriterLock runs fn while holding the writer lock, and commits nothing. Cancelling ctx stops the wait for the lock, not fn.
 func withWriterLock(ctx context.Context, db *sql.DB, fn func() error) error {
-	tx, err := beginWriterTx(ctx, db)
+	tx, err := beginInterruptibleWriterTx(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -111,8 +155,9 @@ func withWriterLock(ctx context.Context, db *sql.DB, fn func() error) error {
 }
 
 // migrate applies pending migrations forward-only, inside one immediate transaction.
+// Cancelling ctx stops the wait for the lock; a migration that holds it runs to its commit.
 func migrate(ctx context.Context, db *sql.DB) error {
-	tx, err := beginWriterTx(ctx, db)
+	tx, err := beginInterruptibleWriterTx(ctx, db)
 	if err != nil {
 		return fmt.Errorf("open vault database: %w", err)
 	}
