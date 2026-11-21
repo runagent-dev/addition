@@ -5,6 +5,9 @@
 #   ADDITION_VERSION      release to install, v0.1.0 or 0.1.0 (default: latest)
 #   ADDITION_INSTALL_DIR  where to put the binary (default: $HOME/.local/bin)
 #   ADDITION_BASE_URL     releases URL, for mirrors and tests: https://, or http:// on 127.0.0.1 or localhost
+#   ADDITION_ALLOW_WGET   set to 1 to use wget when curl is missing; less safe, because wget may follow
+#                         an https to http redirect (curl is held to https)
+# Needs curl, tar, gzip, and sha256sum or shasum.
 # stdout gets one JSON line on success; everything else goes to stderr, ending with a JSON error
 # envelope on failure.
 # The install directory must be writable only by you: the installer checks the destination and then
@@ -29,6 +32,7 @@ caller_dir=$PWD
 workdir=""
 staged=""
 downloader=""
+wget_https_only=false
 checksum_tool=""
 os=""
 arch=""
@@ -118,12 +122,13 @@ detect_platform() {
 pick_tools() {
   if command -v curl >/dev/null 2>&1; then
     downloader=curl
-  elif command -v wget >/dev/null 2>&1; then
+  elif [ "${ADDITION_ALLOW_WGET:-}" = 1 ] && command -v wget >/dev/null 2>&1; then
     downloader=wget
+    if wget --help 2>&1 </dev/null | grep -q -- --https-only; then wget_https_only=true; fi
   else
-    fail no-downloader 1 "neither curl nor wget is installed"
+    fail no-downloader 2 "curl is not installed; install curl (or set ADDITION_ALLOW_WGET=1 to use wget, which may follow an https to http redirect)"
   fi
-  command -v gzip >/dev/null 2>&1 || fail no-gzip 1 "gzip is not installed"
+  command -v gzip >/dev/null 2>&1 || fail no-gzip 1 "gzip is not installed; install gzip (the installer needs curl, tar, gzip, and sha256sum or shasum)"
   if command -v sha256sum >/dev/null 2>&1; then
     checksum_tool=sha256sum
   elif command -v shasum >/dev/null 2>&1; then
@@ -194,7 +199,7 @@ run_downloader() {
   case "$downloader" in
     curl) curl -fsSL --proto "$protocols" --proto-redir "$protocols" -o "$2" -- "$1" </dev/null ;;
     wget)
-      if [ "$protocols" = =https ]; then
+      if [ "$protocols" = =https ] && [ "$wget_https_only" = true ]; then
         wget -q --https-only -O "$2" -- "$1" </dev/null
       else
         wget -q -O "$2" -- "$1" </dev/null
@@ -348,7 +353,7 @@ installed_on_path() {
   found=$(command -v "$BINARY" 2>/dev/null) || return 1
   case $found in
     */*) ;;
-    *) return 1 ;;
+    *) found=./$found ;;
   esac
   found_dir=${found%/*}
   resolve_dir "${found_dir:-/}" -P || return 1

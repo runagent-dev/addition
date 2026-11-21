@@ -20,6 +20,7 @@ edit your shell rc files; when the directory is not on your `PATH` it prints the
 | `ADDITION_VERSION` | latest release | `v0.1.0` or `0.1.0` pins a release |
 | `ADDITION_INSTALL_DIR` | `$HOME/.local/bin` | where the binary goes; created if missing |
 | `ADDITION_BASE_URL` | `https://github.com/runagent-dev/addition/releases` | releases URL, for mirrors and tests |
+| `ADDITION_ALLOW_WGET` | unset | `1` lets the installer use wget when curl is missing (less safe, see below) |
 
 Re-running the script upgrades in place. The installer verifies one thing: the sha256 of the
 archive against the `checksums.txt` published next to it. Both files come from the same release
@@ -35,10 +36,12 @@ gh attestation verify addition_linux_amd64.tar.gz \
   --signer-workflow runagent-dev/addition/.github/workflows/release.yml
 ```
 
+The installer needs curl, tar, gzip, and sha256sum or shasum. Downloads use curl only, which is
+held to HTTPS across redirects. Without curl it stops with `no-downloader`; set `ADDITION_ALLOW_WGET=1`
+to use wget instead. That is less safe: wget may follow an https to http redirect.
+
 Keep the install directory writable by you alone: the installer checks the destination and then
-replaces it, and does not defend against another user changing the directory in between. Redirects
-are limited to HTTPS with curl; with wget the first request must be HTTPS but redirects are not
-restricted, so prefer curl. How releases are cut and verified: [docs/RELEASING.md](docs/RELEASING.md).
+replaces it, and does not defend against another user changing the directory in between. How releases are cut and verified: [docs/RELEASING.md](docs/RELEASING.md).
 
 Other ways in:
 

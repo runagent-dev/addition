@@ -5,7 +5,13 @@ nothing else publishes.
 
 ## Procedure
 
-1. Merge everything for the release to `main` and wait for CI (`go` job) to pass on the latest `main` commit.
+1. Merge everything for the release to `main` through the maintainers' usual review. Then confirm the latest
+   `main` CI run is green:
+
+   ```bash
+   gh run list --repo runagent-dev/addition --branch main --limit 1
+   ```
+
 2. An admin tags that exact commit, annotated, and pushes the tag:
 
    ```bash
@@ -18,10 +24,19 @@ nothing else publishes.
 3. Watch the workflow, then run the verification below on the published files.
 
 Never tag an older commit. GitHub runs the workflow definition that exists at the tagged commit, so a tag
-on an old commit runs the old workflow with its old permissions and checks. The `v*` tag ruleset (creation,
-update and deletion restricted to repository admins) is what keeps that from happening, and it is the accepted
-control for this risk; the workflow's own check that the commit is on `main` only holds for workflows that
-contain it. The repo owner also keeps a ruleset on `main` (pull request and the `go` check required).
+on an old commit runs the old workflow with its old permissions and checks. The workflow's own check that the
+commit is on `main` only holds for workflows that contain it.
+
+## Rules enforced on GitHub today
+
+Two rulesets are active (`gh api repos/runagent-dev/addition/rulesets`):
+
+- **release tags:** `v*` tags can be created, updated and deleted only by repository admins.
+- **main history:** `main` cannot be deleted and cannot be force-pushed (deletion and non-fast-forward rules,
+  see `gh api repos/runagent-dev/addition/rules/branches/main`).
+
+Pull request review and passing checks before merging are the maintainers' process; GitHub does not enforce them
+yet. That is why step 1 checks the latest `main` run by hand.
 
 ## What the workflow does
 
