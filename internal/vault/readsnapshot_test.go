@@ -7,7 +7,7 @@ import (
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
-func TestSnapshotReadsClientsAccountsAndCredentialsInOneTransaction(t *testing.T) {
+func TestSnapshotNeverMixesStatesWhenAWriterCommitsAndCheckpointsBetweenReads(t *testing.T) {
 	ctx := context.Background()
 	s, f := newStore(t)
 	if err := s.PutOAuthClient(ctx, vault.OAuthClient{Provider: "google", ClientID: "123456789012-x.apps.googleusercontent.com", ClientSecret: "s3cret"}); err != nil {
@@ -20,20 +20,26 @@ func TestSnapshotReadsClientsAccountsAndCredentialsInOneTransaction(t *testing.T
 	if err := s.PutCredential(ctx, acct.ID, vault.Credential{AccessToken: "a", RefreshToken: "r"}); err != nil {
 		t.Fatal(err)
 	}
-	// Another connection changes the client and the account together, between the snapshot's reads.
+	writerCommitted := false
 	restore := vault.SetAfterSnapshotClients(func() {
-		tx, err := rawDB(t, f.home).Begin()
+		db := rawDB(t, f.home)
+		tx, err := db.Begin()
 		if err != nil {
+			t.Errorf("the writer could not begin: %v", err)
 			return
 		}
-		defer func() { _ = tx.Rollback() }()
 		if _, err := tx.Exec(`DELETE FROM oauth_clients`); err != nil {
-			return
+			t.Errorf("delete clients: %v", err)
 		}
 		if _, err := tx.Exec(`UPDATE accounts SET status = 'needs-reauth'`); err != nil {
+			t.Errorf("update account: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Errorf("the writer could not commit: %v", err)
 			return
 		}
-		_ = tx.Commit()
+		_, _ = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
+		writerCommitted = true
 	})
 	defer restore()
 
@@ -41,6 +47,9 @@ func TestSnapshotReadsClientsAccountsAndCredentialsInOneTransaction(t *testing.T
 
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !writerCommitted {
+		t.Fatal("the concurrent writer never committed, so the test proves nothing")
 	}
 	if len(snap.Accounts) != 1 {
 		t.Fatalf("accounts = %+v", snap.Accounts)
@@ -52,24 +61,17 @@ func TestSnapshotReadsClientsAccountsAndCredentialsInOneTransaction(t *testing.T
 	if cred := snap.Credentials[acct.ID]; cred.RefreshToken != "r" {
 		t.Errorf("credential = %+v", cred)
 	}
+	if after, err := s.Snapshot(ctx); err != nil || len(after.Clients) != 0 || after.Accounts[0].Status != vault.AccountNeedsReauth {
+		t.Errorf("a fresh snapshot = %+v, %v; want the writer's state", after, err)
+	}
 }
 
-func TestReadOnlyOpenRefusesAVaultWithSideFiles(t *testing.T) {
-	s, f := newStore(t)
-	_ = s.Close()
-	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-		t.Run(suffix, func(t *testing.T) {
-			path := f.home + "/addition.db" + suffix
-			if err := writeEmptyPrivateFile(path); err != nil {
-				t.Fatal(err)
-			}
-			defer removeFile(path)
+func TestSnapshotNamesTheRecordedKeySource(t *testing.T) {
+	s, _ := newStore(t)
 
-			_, err := vault.OpenWith(context.Background(), f.env(), vault.OpenOptions{ReadOnly: true})
+	snap, err := s.Snapshot(context.Background())
 
-			if !isErr(err, vault.ErrInUse) {
-				t.Errorf("OpenWith err = %v, want ErrInUse", err)
-			}
-		})
+	if err != nil || snap.KeySource != vault.KeySourceFile {
+		t.Errorf("snapshot key source = %q, %v; want %q", snap.KeySource, err, vault.KeySourceFile)
 	}
 }

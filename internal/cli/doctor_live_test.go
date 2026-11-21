@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -462,5 +463,31 @@ func TestDoctorLiveStalledRefreshEndsWithTheTokenEndpointsOwnTimeout(t *testing.
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("doctor --live outlived the token endpoint's timeout")
+	}
+}
+
+func TestDoctorLiveWithholdsTheRefreshTokenUsedBetweenTwoRotations(t *testing.T) {
+	c := newSeededLeakHarness(t)
+	c.google.configure(func(g *fakeGoogle) { g.currentRefresh, g.rotateRefresh = lookalikeRefresh, true })
+	c.clock.Advance(2 * time.Hour)
+	intermediate := fmt.Sprintf("%s%04d", rotatedRefreshPrefix, 1)
+	var probes atomic.Int32
+	c.api.respond(func(n int, w http.ResponseWriter, r *http.Request) {
+		if probes.Add(1) == 1 {
+			status(401, `{"error":{"code":401}}`, "Content-Type", "application/json")(n, w, r)
+			return
+		}
+		nested := `{"error":{"details":[{"reason":"SERVICE_DISABLED","metadata":{"note":{"deep":["` + escapeAll(intermediate) + `"]}}}]}}`
+		status(403, nested, "Content-Type", "application/json")(n, w, r)
+	})
+
+	r := c.run("doctor", "--live")
+
+	assertNoLeak(t, r, intermediate, lookalikeRefresh, fmt.Sprintf("%s%04d", rotatedRefreshPrefix, 2))
+	if probe := decodeDoctor(t, r).check(t, "live:gmail:work"); probe.Code != "forbidden" || probe.Hint != "" {
+		t.Errorf("live check = %+v, want the body withheld as forbidden with no hint", probe)
+	}
+	if n := c.google.refreshCount(); n != 2 {
+		t.Errorf("refreshes = %d, want the probe to have rotated the token twice", n)
 	}
 }
