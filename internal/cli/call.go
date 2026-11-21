@@ -58,10 +58,13 @@ func newCallCmd(d deps) *cobra.Command {
 			"(credential-echo, exit 5), and so is one with any content coding\n" +
 			"(unsupported-encoding).\n\n" +
 			"-a is optional when the app has one account connected or a default is set.",
-		Args: cobra.RangeArgs(2, 3),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 {
-				return appMissing(cmd, d, args)
+			if len(args) > 0 && isMethod(args[0]) {
+				return appMissing(cmd, d)
+			}
+			if len(args) != 3 {
+				return usageError(callForm)
 			}
 			f.dataSet = cmd.Flags().Changed("data")
 			return runCall(cmd, d, args[0], args[1], args[2], f)
@@ -110,12 +113,17 @@ func prepareCall(ctx context.Context, stdin io.Reader, rawMethod string, f callF
 	return req, nil
 }
 
-// appMissing reports a call given only a method and a path, or an app without a path, as a usage error.
-func appMissing(cmd *cobra.Command, d deps, args []string) error {
-	if _, err := proxy.ParseMethod(args[0]); err != nil {
-		return usageError("call needs <app> <METHOD> <path>, e.g. `addn call gmail GET /gmail/v1/users/me/profile`")
-	}
-	return &Error{Code: "app-required", Exit: ExitUsage, Message: "call needs the app first, e.g. `addn call gmail " + args[0] + " " + args[1] + "`; " +
+const callForm = "call needs <app> <METHOD> <path>, e.g. `addn call gmail GET /gmail/v1/users/me/profile`"
+
+func isMethod(arg string) bool {
+	_, err := proxy.ParseMethod(arg)
+	return err == nil
+}
+
+// appMissing reports a call that starts with a method, so names no app. The message is fixed:
+// it never repeats an argument, which may hold a secret.
+func appMissing(cmd *cobra.Command, d deps) error {
+	return &Error{Code: "app-required", Exit: ExitUsage, Message: "call needs the app first: `addn call <app> <METHOD> <path>`; " +
 		connectedAppsHint(cmd.Context(), d)}
 }
 
