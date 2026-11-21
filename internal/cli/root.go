@@ -14,9 +14,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Version is overridden at build time with -ldflags "-X …/internal/cli.Version=…".
-var Version = "dev"
-
 // Run executes addition with args and returns the process exit code. Cancelling ctx interrupts the command.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return executeContext(ctx, args, stdout, stderr, productionDeps())

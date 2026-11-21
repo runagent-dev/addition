@@ -98,7 +98,7 @@ func prepareCall(ctx context.Context, stdin io.Reader, rawMethod string, f callF
 		return callRequest{}, callRequestError(err)
 	}
 	if header.Get("User-Agent") == "" {
-		header.Set("User-Agent", "addition/"+Version)
+		header.Set("User-Agent", "addition/"+currentBuild().Version)
 	}
 	body, err := readRequestBody(ctx, stdin, f)
 	if err != nil {

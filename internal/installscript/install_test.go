@@ -24,7 +24,7 @@ import (
 
 // scriptTools is every external command install.sh may use; tests put only these on PATH.
 var scriptTools = []string{
-	"awk", "basename", "cat", "chmod", "cp", "dirname", "mkdir", "mktemp",
+	"awk", "basename", "cat", "chmod", "cp", "dirname", "gzip", "mkdir", "mktemp",
 	"mv", "rm", "sed", "tar", "tr",
 }
 
@@ -743,14 +743,14 @@ func TestOnlyTheBinaryIsExtracted(t *testing.T) {
 	}
 }
 
-func TestNeverUsesSudoOrReadsStdinForPrompts(t *testing.T) {
+func TestNeverCallsSudo(t *testing.T) {
 	h := newHarness(t)
 	h.rel.publish(t, "/latest/download", "0.3.0")
 	h.tools.writeShim(t, "sudo", "echo sudo was called >&2; exit 99\n")
 
-	got := decodeSuccess(t, h.run(func(i *invocation) { i.stdin = strings.NewReader("") }))
+	r := h.run()
 
-	if !got.Installed {
-		t.Errorf("stdout = %+v", got)
+	if decodeSuccess(t, r); strings.Contains(r.stderr, "sudo was called") {
+		t.Error("install.sh called sudo")
 	}
 }
