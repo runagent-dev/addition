@@ -143,7 +143,18 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, req.method, resp.Status)
-	return deliver(cmd, resp, req.out)
+	return sealCallError(ctx, deliver(cmd, resp, req.out))
+}
+
+// sealCallError lets only addn's own errors out of a call whose request was sent, so no Go or upstream error text can reach the user.
+func sealCallError(ctx context.Context, err error) error {
+	if _, typed := errors.AsType[*Error](err); typed || err == nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return interrupted()
+	}
+	return networkFailure()
 }
 
 // auditTimeout bounds a call audit write made after the command's own context may be cancelled.
