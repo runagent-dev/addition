@@ -353,12 +353,7 @@ func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 func deliverFailure(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoGuard) error {
 	if resp.Status < 300 || resp.Status > 399 {
 		inspected := io.LimitReader(resp.Body, maxErrorBody+int64(guard.Lookahead()))
-		watched := &failureReader{r: guard.Reader(inspected)}
-		_, err := io.Copy(cmd.OutOrStdout(), io.LimitReader(watched, maxErrorBody))
-		if errors.Is(watched.err, proxy.ErrCredentialEcho) {
-			return credentialEcho()
-		}
-		if err != nil {
+		if err := copyBody(cmd, cmd.OutOrStdout(), io.LimitReader(guard.Reader(inspected), maxErrorBody)); err != nil {
 			return err
 		}
 	}
