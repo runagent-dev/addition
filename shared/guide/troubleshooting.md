@@ -2,7 +2,7 @@ Google Cloud setup, expiring tokens, and the usual install, vault and key proble
 
 # Troubleshooting
 
-`addition doctor` reports the vault, key source, accounts and `PATH` once it is in your build. Then use this page.
+`addition doctor` reports the vault, key source, OAuth client and accounts, and names the next command to run (`--live` also probes each app once). Then use this page.
 
 ## Google Cloud setup (once per user)
 
