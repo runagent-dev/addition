@@ -29,7 +29,7 @@ func loadedGuide(t *testing.T) (*guide.Guide, *catalog.Catalog) {
 	return g, c
 }
 
-var fencedBlock = regexp.MustCompile("(?s)```[a-z]*\n(.*?)```")
+var fencedBlock = regexp.MustCompile("(?s)```bash\n(.*?)```")
 
 // guideCommands returns every `addition …` line of every fenced block, with line continuations joined.
 func guideCommands(body string) []string {
@@ -234,14 +234,19 @@ func emittedErrorCodes(t *testing.T) []string {
 	return codes
 }
 
-var errorsTableRow = regexp.MustCompile("(?m)^\\| `([a-z][a-z0-9-]*)` \\| ([0-9]) \\|")
+var (
+	errorsTableRow = regexp.MustCompile("(?m)^\\| ((?:`[a-z0-9-]+`(?:, )?)+) \\| [1-5]")
+	backticked     = regexp.MustCompile("`([a-z0-9-]+)`")
+)
 
 func TestErrorsTopicListsExactlyTheCodesTheCodeEmits(t *testing.T) {
 	g, _ := loadedGuide(t)
 	topic, _ := g.Topic("errors")
 	documented := map[string]bool{}
-	for _, m := range errorsTableRow.FindAllStringSubmatch(topic.Body, -1) {
-		documented[m[1]] = true
+	for _, row := range errorsTableRow.FindAllStringSubmatch(topic.Body, -1) {
+		for _, code := range backticked.FindAllStringSubmatch(row[1], -1) {
+			documented[code[1]] = true
+		}
 	}
 	emitted := emittedErrorCodes(t)
 	if len(emitted) < 40 {

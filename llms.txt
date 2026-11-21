@@ -1,0 +1,29 @@
+# Addition
+
+> A local-first CLI that gives coding agents authenticated access to the user's Gmail, Drive, Calendar, Chat and Docs.
+> Tokens stay in one encrypted vault on the user's machine; agents reach every API through `addition call`, with JSON on stdout.
+
+Install: `curl -fsSL https://raw.githubusercontent.com/runagent-dev/addition/main/install.sh | sh`
+
+After installing, run `addition guide`. The full manual is built into the binary, matches its version and works offline; the files below are the same pages.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/runagent-dev/addition/main/README.md): install options, quick start and what addition is
+
+## Guide
+
+- [overview](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/overview.md): What addition is, how to think about it, and the six steps of a first run.
+- [connect](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/connect.md): Connect an app's account on a headless machine: hand the consent link to the human and finish with the pasted URL.
+- [call](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/call.md): The contract of `addition call`: arguments, output, exit codes and what it refuses.
+- [accounts](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/accounts.md): List, inspect, check, default and remove connected accounts, and read their status and scope fields.
+- [errors](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/errors.md): Every stable error code addition emits, with its exit code and the fix.
+- [troubleshooting](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/troubleshooting.md): Google Cloud setup, expiring tokens, and the usual install, vault and key problems.
+
+## App recipes
+
+- [gmail](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/gmail.md): Gmail recipes for `addition call gmail`: profile, search, read, send, attachments, pagination and pitfalls.
+- [google-calendar](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/google-calendar.md): Google Calendar recipes for `addition call calendar`: calendars, events in a window, creating events and RFC3339 times.
+- [google-chat](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/google-chat.md): Google Chat recipes for `addition call google-chat`: spaces, messages and sending, with the Workspace-only caveats.
+- [google-docs](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/google-docs.md): Google Docs recipes for `addition call google-docs`: read a document, create one and edit it with batchUpdate.
+- [google-drive](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/google-drive.md): Google Drive recipes for `addition call drive`: list, search, metadata, create, download, pagination and the `fields` rule.

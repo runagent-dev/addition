@@ -97,7 +97,7 @@ func TestAppsTopicListsEveryConnectableApp(t *testing.T) {
 			t.Errorf("%s: connectable=%v but listed=%v", p.ID, c.Connectable(p.ID), listed)
 		}
 	}
-	for _, want := range []string{"drive", "www.googleapis.com", "gmail.readonly", "addition guide gmail"} {
+	for _, want := range []string{"drive", "www.googleapis.com", "gmail.readonly", "addition guide <id>"} {
 		if !strings.Contains(apps.Body, want) {
 			t.Errorf("apps topic lacks %q:\n%s", want, apps.Body)
 		}

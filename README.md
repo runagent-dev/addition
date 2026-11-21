@@ -35,6 +35,11 @@ Other ways in:
 - **Windows:** download the `.zip` for your CPU from the
   [releases page](https://github.com/runagent-dev/addition/releases) and put `addition.exe` on your `PATH`.
 
+## For agents
+
+Install it (above), then run `addition guide`: the manual for agents is built into the binary,
+matches its version and works offline. [`llms.txt`](llms.txt) indexes the same pages for crawlers.
+
 ## Quick start
 
 ```bash
