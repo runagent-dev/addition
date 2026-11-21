@@ -95,7 +95,7 @@ func prepareCall(stdin io.Reader, rawMethod string, f callFlags) (callRequest, e
 	}
 	req := callRequest{method: method, header: header, body: body}
 	if f.output != "" {
-		if req.out, err = checkOutputFile(f.output, f.force); err != nil {
+		if req.out, err = openOutputFile(f.output, f.force); err != nil {
 			return callRequest{}, err
 		}
 	}
@@ -108,6 +108,7 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	if err != nil {
 		return err
 	}
+	defer req.out.discard()
 	a, err := openAccountSession(ctx, d)
 	if err != nil {
 		return err
@@ -171,7 +172,7 @@ func callFailure(acct vault.Account, err error) error {
 	var apiNet *proxy.NetworkError
 	switch {
 	case errors.Is(err, context.Canceled):
-		return &Error{Code: "interrupted", Exit: ExitInternal, Message: "interrupted before the call finished"}
+		return interrupted()
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
 			"%s:%s must be reconnected; run `addn connect %s --as %s`", acct.Provider, acct.Alias, acct.Provider, acct.Alias)}
@@ -338,16 +339,13 @@ func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 	}
 	body := bufio.NewReaderSize(guard.Reader(resp.Body), sniffLength)
 	head, err := body.Peek(sniffLength)
-	if errors.Is(err, proxy.ErrCredentialEcho) {
-		return credentialEcho()
-	}
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
-		return networkFailure()
+		return readFailure(cmd, err)
 	}
 	if len(head) > 0 && !isTextual(resp.Header.Get("Content-Type"), head) {
 		return binaryResponse()
 	}
-	return copyBody(cmd.OutOrStdout(), body)
+	return copyBody(cmd, cmd.OutOrStdout(), body)
 }
 
 // deliverFailure prints the upstream body, capped, and reports only the status. A redirect's body is never read.
@@ -375,20 +373,32 @@ func networkFailure() *Error {
 	return &Error{Code: "network", Message: (&proxy.NetworkError{}).Error(), Exit: ExitUpstreamServer}
 }
 
+// readFailure says why a response body stopped: it repeated a token, the user interrupted the command, or the connection broke.
+func readFailure(cmd *cobra.Command, err error) *Error {
+	switch {
+	case errors.Is(err, proxy.ErrCredentialEcho):
+		return credentialEcho()
+	case cmd.Context().Err() != nil || errors.Is(err, context.Canceled):
+		return interrupted()
+	}
+	return networkFailure()
+}
+
+func interrupted() *Error {
+	return &Error{Code: "interrupted", Exit: ExitInternal, Message: "interrupted before the call finished"}
+}
+
 func credentialEcho() *Error {
 	return &Error{Code: "credential-echo", Exit: ExitUpstreamServer,
 		Message: "the API response repeated the access token and was withheld"}
 }
 
-// copyBody streams src to dst, telling an echoed token and a broken upstream from a broken stdout.
-func copyBody(dst io.Writer, src io.Reader) error {
+// copyBody streams src to dst, telling a broken upstream from a broken stdout.
+func copyBody(cmd *cobra.Command, dst io.Writer, src io.Reader) error {
 	watched := &failureReader{r: src}
 	_, err := io.Copy(dst, watched)
-	switch {
-	case errors.Is(watched.err, proxy.ErrCredentialEcho):
-		return credentialEcho()
-	case watched.err != nil:
-		return networkFailure()
+	if watched.err != nil {
+		return readFailure(cmd, watched.err)
 	}
 	return err
 }
