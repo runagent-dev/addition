@@ -50,7 +50,8 @@ func newCallCmd(d deps) *cobra.Command {
 			"For any other status the upstream body goes to stdout and a JSON envelope on stderr carries\n" +
 			"code upstream-error and the status. Exit codes: 4 for a 4xx or 3xx, 5 for a 5xx or the network,\n" +
 			"3 when the account must be reconnected. A response that repeats the access token is withheld\n" +
-			"(credential-echo, exit 5).\n\n" +
+			"(credential-echo, exit 5), and so is one with a content coding addn cannot inspect\n" +
+			"(unsupported-encoding).\n\n" +
 			"-a is optional when one account is connected or a default is set; --provider names the provider\n" +
 			"when an alias exists under several.",
 		Args: cobra.ExactArgs(2),
