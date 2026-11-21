@@ -13,6 +13,7 @@ oauth2:
   authorize_url: ""
   token_url: ""
   revoke_url: null                  # Optional
+  revoke_scope: "token"             # "token" (revokes that token) or "grant" (also every sibling app's, as at Google)
   refresh_supported: true
   pkce_supported: true
   pkce_required: false

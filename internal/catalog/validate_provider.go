@@ -151,6 +151,9 @@ func validateOAuth2(o fieldChecker) {
 	o.nonEmptyString("authorize_url")
 	o.nonEmptyString("token_url")
 	o.optionalString("revoke_url")
+	if _, present := o.fields["revoke_scope"]; present {
+		o.oneOf("revoke_scope", revokeScopeToken, revokeScopeGrant)
+	}
 	o.boolean("refresh_supported")
 	o.boolean("pkce_supported")
 	o.boolean("pkce_required")

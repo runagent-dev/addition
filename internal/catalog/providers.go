@@ -29,6 +29,7 @@ type OAuth2 struct {
 	AuthorizeURL         string                `yaml:"authorize_url"`
 	TokenURL             string                `yaml:"token_url"`
 	RevokeURL            string                `yaml:"revoke_url"`
+	RevokeScope          string                `yaml:"revoke_scope"`
 	RefreshSupported     bool                  `yaml:"refresh_supported"`
 	PKCESupported        bool                  `yaml:"pkce_supported"`
 	PKCERequired         bool                  `yaml:"pkce_required"`
@@ -41,6 +42,15 @@ type OAuth2 struct {
 	TokenResponseMapping *TokenResponseMapping `yaml:"token_response_mapping"`
 	Identity             *Identity             `yaml:"identity"`
 }
+
+// RevokesGrant reports whether revoking a token also invalidates every token the same user got through
+// the same OAuth client, as at Google, rather than only that token.
+func (o *OAuth2) RevokesGrant() bool { return o.RevokeScope == revokeScopeGrant }
+
+const (
+	revokeScopeToken = "token"
+	revokeScopeGrant = "grant"
+)
 
 // Identity names the endpoint that tells who an access token belongs to. SubjectField is the
 // stable account id that aliases match on; Field is a display name, such as an email.
@@ -236,6 +246,9 @@ func decodeProvider(fields map[string]any) (*Provider, error) {
 	var p Provider
 	if err := yaml.Unmarshal(data, &p); err != nil {
 		return nil, err
+	}
+	if p.OAuth2 != nil && p.OAuth2.RevokeScope == "" {
+		p.OAuth2.RevokeScope = revokeScopeToken
 	}
 	return &p, nil
 }

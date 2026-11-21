@@ -6,6 +6,7 @@ oauth2:
   authorize_url: "https://accounts.google.com/o/oauth2/v2/auth"
   token_url: "https://oauth2.googleapis.com/token"
   revoke_url: "https://oauth2.googleapis.com/revoke"
+  revoke_scope: "grant"
   refresh_supported: true
   pkce_supported: true
   pkce_required: false

@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/runagent-dev/addition/internal/catalog"
-	"github.com/runagent-dev/addition/internal/oauth"
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
@@ -231,76 +230,4 @@ func setDefaultAccount(cmd *cobra.Command, d deps, ref string) error {
 		return vaultError(err)
 	}
 	return writeJSON(cmd.OutOrStdout(), map[string]string{"provider": acct.Provider, "default": acct.Alias})
-}
-
-type revokeOutcome struct {
-	Attempted bool   `json:"attempted"`
-	OK        bool   `json:"ok"`
-	Error     string `json:"error,omitempty"`
-}
-
-func newAccountsRemoveCmd(d deps) *cobra.Command {
-	var revoke bool
-	cmd := &cobra.Command{
-		Use:   "remove <app>:<alias> [--revoke]",
-		Short: "Delete an account and its tokens from the vault",
-		Long: "Delete the account and its tokens. With --revoke, first ask the provider to revoke the\n" +
-			"grant; that is best effort, and the account is removed locally either way.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			a, err := openAccountSession(ctx, d)
-			if err != nil {
-				return err
-			}
-			defer a.store.Close()
-			acct, err := a.storedAccount(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			outcome := revokeOutcome{}
-			if revoke {
-				outcome = a.revoke(ctx, d, acct)
-			}
-			err = a.store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
-				if err := tx.Audit(ctx, vault.RevokeEvent{AccountID: acct.ID}); err != nil {
-					return err
-				}
-				return tx.RemoveAccount(ctx, acct.Provider, acct.Alias)
-			})
-			if err != nil {
-				return vaultError(err)
-			}
-			return writeJSON(cmd.OutOrStdout(), map[string]any{
-				"provider": acct.Provider, "alias": acct.Alias, "removed": true, "revoke": outcome,
-			})
-		},
-	}
-	cmd.Flags().BoolVar(&revoke, "revoke", false, "revoke the grant at the provider before deleting it locally")
-	return cmd
-}
-
-// revoke asks the provider to drop the grant, preferring the refresh token, which revokes the whole grant at Google.
-func (a *accountSession) revoke(ctx context.Context, d deps, acct vault.Account) revokeOutcome {
-	out := revokeOutcome{Attempted: true}
-	provider, ok := a.catalog.Provider(acct.Provider)
-	if !ok || provider.OAuth2 == nil {
-		out.Error = "the provider is no longer in the catalog"
-		return out
-	}
-	cred, found, err := a.credential(ctx, acct)
-	if err != nil || !found {
-		out.Error = "the account has no stored token to revoke"
-		return out
-	}
-	token := cred.RefreshToken
-	if token == "" {
-		token = cred.AccessToken
-	}
-	if err := oauth.Revoke(ctx, d.httpClient, provider, token); err != nil {
-		out.Error = err.Error()
-		return out
-	}
-	out.OK = true
-	return out
 }
