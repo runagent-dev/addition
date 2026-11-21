@@ -102,7 +102,7 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 	}
 	store, err := vault.Open(ctx, d.env)
 	if err != nil {
-		failed, ok := openFailureChecks(err)
+		failed, ok := openFailureChecks(rep.Home, err)
 		if !ok {
 			return vaultError(err)
 		}
@@ -185,7 +185,10 @@ func finishDoctor(cmd *cobra.Command, rep doctorReport) error {
 }
 
 // openFailureChecks explains why the vault could not be opened; ok is false for a failure of addition itself.
-func openFailureChecks(err error) (checks []doctorCheck, ok bool) {
+func openFailureChecks(home string, err error) (checks []doctorCheck, ok bool) {
+	if file, named := errors.AsType[*vault.InsecureFileError](err); named && errors.Is(err, vault.ErrInsecureHome) {
+		return []doctorCheck{insecureFileCheck(home, file), {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}, true
+	}
 	for _, f := range openFailures {
 		if !errors.Is(err, f.err) {
 			continue
@@ -197,6 +200,24 @@ func openFailureChecks(err error) (checks []doctorCheck, ok bool) {
 		return []doctorCheck{failed, {ID: "master-key", Status: checkSkip, Summary: "there is no usable vault to unlock"}}, true
 	}
 	return nil, false
+}
+
+// insecureFileCheck names the file the vault refused and the command that fixes it, not the data dir.
+func insecureFileCheck(home string, file *vault.InsecureFileError) doctorCheck {
+	path := shellQuote(filepath.Join(home, file.Name))
+	if file.TooPermissive {
+		return doctorCheck{ID: "vault", Status: checkFail, Summary: file.Name + " is readable by other users", Fix: "chmod 600 " + path}
+	}
+	return doctorCheck{ID: "vault", Status: checkFail, Summary: file.Name + " is not a regular file owned by this user", Fix: "move " + path + " aside"}
+}
+
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+func shellQuote(path string) string {
+	if shellSafe.MatchString(path) {
+		return path
+	}
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }
 
 var openFailures = []struct {

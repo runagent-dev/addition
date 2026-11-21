@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -179,29 +180,67 @@ func serviceDisabled(resp *proxy.Response, secrets []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var generic any
 	var body errorDetails
-	if json.Unmarshal(data, &generic) != nil || json.Unmarshal(data, &body) != nil || decodedLeaks(generic, guard) {
+	if !trustedJSON(data, guard) || json.Unmarshal(data, &body) != nil {
 		return false, nil
 	}
 	return slices.ContainsFunc(body.Error.Details, func(detail errorDetail) bool { return detail.Reason == reasonServiceDisabled }), nil
 }
 
-// decodedLeaks reports whether any decoded key or string of a JSON value repeats a guarded secret.
-func decodedLeaks(v any, guard *proxy.EchoGuard) bool {
-	switch v := v.(type) {
-	case string:
-		return guard.Leaks(v)
-	case []any:
-		return slices.ContainsFunc(v, func(item any) bool { return decodedLeaks(item, guard) })
-	case map[string]any:
-		for key, item := range v {
-			if guard.Leaks(key) || decodedLeaks(item, guard) {
-				return true
-			}
+// trustedJSON reports whether data is exactly one well-formed JSON value in which no key or string, at
+// any depth and including repeated members, repeats a guarded secret, and no object repeats a key
+// (a decoder keeps only the last repeat, which would hide the first from every later check).
+func trustedJSON(data []byte, guard *proxy.EchoGuard) bool {
+	type frame struct {
+		object  bool
+		keyNext bool
+		keys    map[string]bool
+	}
+	var stack []frame
+	finished := false
+	valueDone := func() {
+		if len(stack) == 0 {
+			finished = true
+		} else if top := &stack[len(stack)-1]; top.object {
+			top.keyNext = true
 		}
 	}
-	return false
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return finished && len(stack) == 0
+		}
+		if err != nil || finished {
+			return false
+		}
+		switch t := token.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, frame{object: true, keyNext: true, keys: map[string]bool{}})
+			case '[':
+				stack = append(stack, frame{})
+			default:
+				stack = stack[:len(stack)-1]
+				valueDone()
+			}
+		case string:
+			if guard.Leaks(t) {
+				return false
+			}
+			if top := len(stack) - 1; top >= 0 && stack[top].object && stack[top].keyNext {
+				if stack[top].keys[t] {
+					return false
+				}
+				stack[top].keys[t], stack[top].keyNext = true, false
+				continue
+			}
+			valueDone()
+		default:
+			valueDone()
+		}
+	}
 }
 
 // probeFailure classifies a failure before or while sending the probe; only addition's own errors and codes leave.
