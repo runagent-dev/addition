@@ -74,7 +74,7 @@ func newRoot(d deps) *cobra.Command {
 	root.SetHelpCommand(newHelpCmd(root))
 	root.AddCommand(
 		newVersionCmd(), newProvidersCmd(d), newToolsCmd(d), newInitCmd(d),
-		newClientCmd(d), newConnectCmd(d), newAccountsCmd(d), newAuthCmd(d), newCallCmd(d),
+		newClientCmd(d), newConnectCmd(d), newAccountsCmd(d), newAuthCmd(d), newCallCmd(d), newDoctorCmd(d),
 	)
 	root.AddCommand(newGuideCmd(d))
 	return root

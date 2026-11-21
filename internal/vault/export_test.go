@@ -22,3 +22,10 @@ func SetBusyTimeout(d time.Duration) (restore func()) {
 	busyTimeout = d
 	return func() { busyTimeout = prev }
 }
+
+// SetAfterSnapshotClients installs hook, run between the client and account reads of Snapshot, and returns a func restoring the previous one.
+func SetAfterSnapshotClients(hook func()) (restore func()) {
+	prev := afterSnapshotClients
+	afterSnapshotClients = hook
+	return func() { afterSnapshotClients = prev }
+}

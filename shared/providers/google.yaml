@@ -37,6 +37,11 @@ api:
     requests_per_second: 10
     retry_after_header: "Retry-After"
 
+doctor:
+  client_hint: "In the Google Cloud console, open APIs & Services > Credentials, create an OAuth client ID of type \"Desktop app\" and download its JSON file."
+  token_age_warn_days: 6
+  token_age_hint: "If the Google OAuth consent screen is in Testing mode, refresh tokens expire after 7 days; publish the app or reconnect."
+
 quirks:
   - "Requires access_type=offline for refresh tokens"
   - "Requires prompt=consent to guarantee refresh token on first auth"
