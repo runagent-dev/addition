@@ -20,11 +20,11 @@ var (
 	ErrInsecureKeyFile     = errors.New("the key file is not a private regular file")
 	ErrInsecureHome        = errors.New("the data dir is not private to this user")
 	ErrKeyFileUnsupported  = errors.New("key files are not supported on Windows yet; use the Windows Credential Manager (the default keychain source) or set ADDITION_MASTER_KEY")
-	ErrSchemaTooNew        = errors.New("the vault was written by a newer addition")
+	ErrSchemaTooNew        = errors.New("the vault was written by a newer version of Addition")
 	ErrCorrupt             = errors.New("the vault database is corrupt")
 	ErrNotFound            = errors.New("not found")
 	ErrAliasTaken          = errors.New("alias already in use for this provider")
-	ErrBusy                = errors.New("another addition process is holding the vault; try again in a moment")
+	ErrBusy                = errors.New("another Addition process is holding the vault; try again in a moment")
 )
 
 type InitOptions struct {

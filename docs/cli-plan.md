@@ -67,7 +67,7 @@ From the market research (Nov 2026):
 ## 2. Architecture
 
 ```
-            ┌──────────────── addition (Go binary) ────────────────┐
+            ┌────────────── addition (Go binary) ──────────────┐
  agent ──▶  │ CLI layer (cobra)  ── commands generated from    │
  shell      │                       embedded toolkit YAML      │
             │        │                                          │

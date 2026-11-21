@@ -172,7 +172,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if current > SchemaVersion {
-		return fmt.Errorf("%w: database is at version %d, this addition supports up to %d; upgrade addition", ErrSchemaTooNew, current, SchemaVersion)
+		return fmt.Errorf("%w: database is at version %d, this version supports up to %d; upgrade Addition", ErrSchemaTooNew, current, SchemaVersion)
 	}
 	if current == SchemaVersion {
 		return nil
