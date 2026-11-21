@@ -15,6 +15,9 @@ import (
 // AccessTokenSkew is how long before its expiry an access token is refreshed.
 const AccessTokenSkew = 60 * time.Second
 
+// refreshTimeout bounds a token exchange that cancellation no longer interrupts.
+const refreshTimeout = 30 * time.Second
+
 // TokenManager hands out a usable access token for one account and refreshes it under the
 // vault's writer lock, so concurrent addn processes refresh each rotation once.
 type TokenManager struct {
@@ -25,6 +28,8 @@ type TokenManager struct {
 	Now      func() time.Time
 	// BeforeWriterLock, if set, runs once the credential has been read and the writer lock is about to be requested.
 	BeforeWriterLock func()
+	// BeforeExchange, if set, runs once the writer lock is held and the token endpoint is about to be called.
+	BeforeExchange func()
 
 	mu        sync.Mutex
 	handedOut *seen
@@ -108,9 +113,12 @@ func (m *TokenManager) expiring(c vault.Credential) bool {
 
 // refresh re-reads the credential inside the writer transaction and, only if stale still holds,
 // trades its refresh token for new tokens. A refusal is committed as audit and account state.
+// Once the exchange starts the provider may have rotated the grant, so it and its commit finish
+// whatever ctx says, and a cancellation is reported only afterwards.
 func (m *TokenManager) refresh(ctx context.Context, caller seen) (string, error) {
 	var latest vault.Credential
 	var failure error
+	exchanged := false
 	if m.BeforeWriterLock != nil {
 		m.BeforeWriterLock()
 	}
@@ -155,22 +163,35 @@ func (m *TokenManager) refresh(ctx context.Context, caller seen) (string, error)
 		if err != nil {
 			return err
 		}
-		fresh, err := oauth.Refresh(ctx, m.Client, m.Provider, oauth.Client{ID: client.ClientID, Secret: client.ClientSecret}, cred.RefreshToken)
+		if m.BeforeExchange != nil {
+			m.BeforeExchange()
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		exchanged = true
+		settle := tx.Settle(ctx)
+		exchangeCtx, stop := context.WithTimeout(settle, refreshTimeout)
+		defer stop()
+		fresh, err := oauth.Refresh(exchangeCtx, m.Client, m.Provider, oauth.Client{ID: client.ClientID, Secret: client.ClientSecret}, cred.RefreshToken)
 		if err != nil {
 			failure = err
 			if isDeadGrant(err) {
 				failure = ErrNeedsReauth
 			}
-			return recordRefreshFailure(ctx, tx, acct, isDeadGrant(err))
+			return recordRefreshFailure(settle, tx, acct, isDeadGrant(err))
 		}
-		if err := storeRefreshed(ctx, tx, acct, cred, fresh, m.now()); err != nil {
+		if err := storeRefreshed(settle, tx, acct, cred, fresh, m.now()); err != nil {
 			return err
 		}
-		latest, err = tx.GetCredential(ctx, acct.ID)
+		latest, err = tx.GetCredential(settle, acct.ID)
 		return err
 	})
 	if err != nil {
 		return "", err
+	}
+	if cancelled := ctx.Err(); exchanged && cancelled != nil {
+		return "", cancelled
 	}
 	if failure != nil {
 		return "", failure
