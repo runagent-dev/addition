@@ -118,6 +118,30 @@ func newRelease(t *testing.T) *release {
 	return r
 }
 
+func (r *release) set(path string, body []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.files[path] = body
+}
+
+func (r *release) get(path string) []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.files[path]
+}
+
+func (r *release) remove(path string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.files, path)
+}
+
+func (r *release) clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.files = map[string][]byte{}
+}
+
 // publish serves a release whose binaries report version, under prefix such as /latest/download.
 func (r *release) publish(t *testing.T, prefix, version string) {
 	t.Helper()
@@ -130,22 +154,22 @@ func (r *release) publish(t *testing.T, prefix, version string) {
 			"NOTICE":    []byte("notice"),
 			"README.md": []byte("readme"),
 		})
-		r.files[prefix+"/"+name] = archive
+		r.set(prefix+"/"+name, archive)
 		fmt.Fprintf(&sums, "%s  %s\n", sha256Hex(archive), name)
 	}
-	r.files[prefix+"/checksums.txt"] = []byte(sums.String())
+	r.set(prefix+"/checksums.txt", []byte(sums.String()))
 }
 
 // tamper swaps every archive under prefix for one holding content, leaving checksums.txt as published.
 func (r *release) tamper(prefix, content string) {
 	for _, p := range platforms {
-		r.files[fmt.Sprintf("%s/addition_%s_%s.tar.gz", prefix, p.os, p.arch)] = tarGzBytes(content)
+		r.set(fmt.Sprintf("%s/addition_%s_%s.tar.gz", prefix, p.os, p.arch), tarGzBytes(content))
 	}
 }
 
 func (r *release) dropArchives(prefix string) {
 	for _, p := range platforms {
-		delete(r.files, fmt.Sprintf("%s/addition_%s_%s.tar.gz", prefix, p.os, p.arch))
+		r.remove(fmt.Sprintf("%s/addition_%s_%s.tar.gz", prefix, p.os, p.arch))
 	}
 }
 
@@ -154,9 +178,9 @@ func (r *release) reseal(prefix string) {
 	var sums strings.Builder
 	for _, p := range platforms {
 		name := fmt.Sprintf("addition_%s_%s.tar.gz", p.os, p.arch)
-		fmt.Fprintf(&sums, "%s  %s\n", sha256Hex(r.files[prefix+"/"+name]), name)
+		fmt.Fprintf(&sums, "%s  %s\n", sha256Hex(r.get(prefix+"/"+name)), name)
 	}
-	r.files[prefix+"/checksums.txt"] = []byte(sums.String())
+	r.set(prefix+"/checksums.txt", []byte(sums.String()))
 }
 
 func (r *release) requested() []string {
@@ -530,7 +554,7 @@ func TestChecksumMismatchKeepsAnExistingBinary(t *testing.T) {
 func TestMissingChecksumEntryRefuses(t *testing.T) {
 	h := newHarness(t)
 	h.rel.publish(t, "/latest/download", "0.3.0")
-	h.rel.files["/latest/download/checksums.txt"] = []byte(sha256Hex([]byte("x")) + "  addition_plan9_mips.tar.gz\n")
+	h.rel.set("/latest/download/checksums.txt", []byte(sha256Hex([]byte("x"))+"  addition_plan9_mips.tar.gz\n"))
 
 	r := h.run()
 
@@ -544,8 +568,8 @@ func TestMissingChecksumEntryRefuses(t *testing.T) {
 func TestHTTPErrorsAreDownloadFailures(t *testing.T) {
 	cases := map[string]func(h *harness){
 		"archive 404":       func(h *harness) { h.rel.dropArchives("/latest/download") },
-		"checksums 404":     func(h *harness) { delete(h.rel.files, "/latest/download/checksums.txt") },
-		"nothing published": func(h *harness) { h.rel.files = map[string][]byte{} },
+		"checksums 404":     func(h *harness) { h.rel.remove("/latest/download/checksums.txt") },
+		"nothing published": func(h *harness) { h.rel.clear() },
 	}
 	for name, breakIt := range cases {
 		t.Run(name, func(t *testing.T) {
