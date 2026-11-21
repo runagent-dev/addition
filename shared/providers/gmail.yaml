@@ -19,6 +19,8 @@ api:
   allowed_path_prefixes:
     - "/gmail/"
     - "/upload/gmail/"
+  service: "gmail.googleapis.com"
+  probe_path: "/gmail/v1/users/me/profile"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

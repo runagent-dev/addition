@@ -19,6 +19,8 @@ api:
     - "/drive/"
     - "/upload/drive/"
     - "/download/drive/"
+  service: "drive.googleapis.com"
+  probe_path: "/drive/v3/about?fields=user(emailAddress)"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

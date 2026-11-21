@@ -20,7 +20,7 @@ const (
 	activateRoot = "https://console.developers.google.com/apis/api/"
 )
 
-type doctorCheck struct {
+type gotCheck struct {
 	ID      string `json:"id"`
 	Status  string `json:"status"`
 	Code    string `json:"code"`
@@ -29,15 +29,15 @@ type doctorCheck struct {
 	Hint    string `json:"hint"`
 }
 
-type doctorReport struct {
-	OK      bool          `json:"ok"`
-	Version string        `json:"version"`
-	Home    string        `json:"home"`
-	Checks  []doctorCheck `json:"checks"`
-	Next    *string       `json:"next"`
+type gotReport struct {
+	OK      bool       `json:"ok"`
+	Version string     `json:"version"`
+	Home    string     `json:"home"`
+	Checks  []gotCheck `json:"checks"`
+	Next    *string    `json:"next"`
 }
 
-func decodeDoctor(t *testing.T, r result) doctorReport {
+func decodeDoctor(t *testing.T, r result) gotReport {
 	t.Helper()
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(r.stdout), &raw); err != nil {
@@ -51,10 +51,10 @@ func decodeDoctor(t *testing.T, r result) doctorReport {
 	if len(raw) != 5 {
 		t.Errorf("the report has keys %v, want exactly ok, version, home, checks, next", raw)
 	}
-	return decodeJSON[doctorReport](t, r)
+	return decodeJSON[gotReport](t, r)
 }
 
-func (rep doctorReport) check(t *testing.T, id string) doctorCheck {
+func (rep gotReport) check(t *testing.T, id string) gotCheck {
 	t.Helper()
 	for _, c := range rep.Checks {
 		if c.ID == id {
@@ -62,15 +62,15 @@ func (rep doctorReport) check(t *testing.T, id string) doctorCheck {
 		}
 	}
 	t.Fatalf("no check %q in %+v", id, rep.Checks)
-	return doctorCheck{}
+	return gotCheck{}
 }
 
-func (rep doctorReport) has(id string) bool {
-	return slices.ContainsFunc(rep.Checks, func(c doctorCheck) bool { return c.ID == id })
+func (rep gotReport) has(id string) bool {
+	return slices.ContainsFunc(rep.Checks, func(c gotCheck) bool { return c.ID == id })
 }
 
 // wantNeedsAction checks the exit-3 contract: the report is on stdout and the envelope ends stderr.
-func wantNeedsAction(t *testing.T, r result, next string) doctorReport {
+func wantNeedsAction(t *testing.T, r result, next string) gotReport {
 	t.Helper()
 	if r.code != ExitNeedsConnect {
 		t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", r.code, ExitNeedsConnect, r.stdout, r.stderr)
@@ -88,7 +88,7 @@ func wantNeedsAction(t *testing.T, r result, next string) doctorReport {
 	return rep
 }
 
-func wantHealthy(t *testing.T, r result) doctorReport {
+func wantHealthy(t *testing.T, r result) gotReport {
 	t.Helper()
 	if r.code != ExitOK || r.stderr != "" {
 		t.Fatalf("exit = %d, stderr %q; want 0 and silence\nstdout: %s", r.code, r.stderr, r.stdout)

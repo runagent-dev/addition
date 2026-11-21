@@ -38,8 +38,11 @@ func TestCallNeverLeaksCredentialsOnAnyPath(t *testing.T) {
 	c.mustRun("accounts", "check", "--live")
 	c.mustRun("accounts", "list")
 	c.mustRun("accounts", "show", "gmail:work")
+	c.run("doctor")
+	c.run("doctor", "--live")
 	c.api.srv.Close()
 	run("GET", "/x")
+	c.run("doctor", "--live")
 
 	assertAuditHoldsNoSecrets(t, c.harness)
 	for _, row := range auditDetails(t, c.home, "call") {

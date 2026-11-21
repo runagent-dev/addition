@@ -16,6 +16,7 @@ api:
     - "openidconnect.googleapis.com"
   allowed_path_prefixes:
     - "/v1/documents"
+  service: "docs.googleapis.com"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

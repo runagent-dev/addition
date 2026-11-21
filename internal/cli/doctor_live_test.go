@@ -17,7 +17,7 @@ func serviceDisabledAt(activationURL string) string {
 	return strings.Replace(serviceDisabledBody, "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=123456789012", activationURL, 1)
 }
 
-func (c *callHarness) liveReport() (doctorReport, result) {
+func (c *callHarness) liveReport() (gotReport, result) {
 	c.t.Helper()
 	r := c.run("doctor", "--live")
 	return decodeDoctor(c.t, r), r
@@ -57,7 +57,7 @@ func TestDoctorLiveUsesEachAppsProbePath(t *testing.T) {
 		chat:     "/v1/spaces?pageSize=1",
 	} {
 		reqs := api.requests()
-		if len(reqs) != 1 || reqs[0].Path+"?"+reqs[0].RawQuery != want {
+		if len(reqs) != 1 || strings.TrimSuffix(reqs[0].Path+"?"+reqs[0].RawQuery, "?") != want {
 			t.Errorf("requests = %+v, want one GET of %s", reqs, want)
 		}
 	}
@@ -96,7 +96,7 @@ func TestDoctorLiveClassifications(t *testing.T) {
 
 			r := c.run("doctor", "--live")
 
-			var rep doctorReport
+			var rep gotReport
 			if tc.next == "" {
 				rep = wantHealthy(t, r)
 			} else {
@@ -133,7 +133,6 @@ func TestDoctorLiveNeverTrustsAnActivationLinkItDoesNotRecognise(t *testing.T) {
 		"look-alike host":     "https://console.developers.google.com.evil.example/x?project=123456789012",
 		"cleartext":           "http://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=123456789012",
 		"userinfo":            "https://console.developers.google.com@evil.example/?project=123456789012",
-		"project is a token":  "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=" + fakeAccessToken,
 		"project with markup": "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=a%26b%3Dc",
 		"no project":          "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview",
 	}

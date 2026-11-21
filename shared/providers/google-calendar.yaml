@@ -17,6 +17,8 @@ api:
     - "openidconnect.googleapis.com"
   allowed_path_prefixes:
     - "/calendar/"
+  service: "calendar-json.googleapis.com"
+  probe_path: "/calendar/v3/users/me/calendarList?maxResults=1"
 
 quirks:
   - "Inherits Google OAuth and its client; see google.yaml"

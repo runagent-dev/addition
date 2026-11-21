@@ -147,8 +147,12 @@ func checkSideFiles(home *homeDir) error {
 // Store is an open vault. All methods take and return plaintext; secrets are sealed at this boundary.
 type Store struct {
 	ops
-	db *sql.DB
+	db     *sql.DB
+	source KeySource
 }
+
+// KeySource is where the vault's master key was recorded to live at init.
+func (s *Store) KeySource() KeySource { return s.source }
 
 func notInitializedAt(home string) error {
 	return fmt.Errorf("%w (looked in %s)", ErrNotInitialized, home)
@@ -188,7 +192,7 @@ func Open(ctx context.Context, env Env) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &Store{ops: ops{q: db, key: key, vaultID: rec.vaultID, now: env.Now}, db: db}, nil
+	return &Store{ops: ops{q: db, key: key, vaultID: rec.vaultID, now: env.Now}, db: db, source: rec.source}, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

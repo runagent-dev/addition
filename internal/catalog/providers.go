@@ -18,6 +18,7 @@ type Provider struct {
 	AuthType string   `yaml:"auth_type"`
 	OAuth2   *OAuth2  `yaml:"oauth2"`
 	API      API      `yaml:"api"`
+	Doctor   Doctor   `yaml:"doctor"`
 	Quirks   []string `yaml:"quirks"`
 	// Extends is the direct parent's id, empty for a root provider.
 	Extends string `yaml:"-"`
@@ -77,6 +78,19 @@ type API struct {
 	AuthHeader          string     `yaml:"auth_header"`
 	AuthPrefix          string     `yaml:"auth_prefix"`
 	RateLimit           *RateLimit `yaml:"rate_limit"`
+	// Service names the cloud API that must be enabled for this app, such as gmail.googleapis.com.
+	Service string `yaml:"service"`
+	// ProbePath is a cheap authenticated GET that `addition doctor --live` sends to check the app works.
+	ProbePath string `yaml:"probe_path"`
+}
+
+// Doctor holds the hints `addition doctor` gives for a provider; all are optional.
+type Doctor struct {
+	// ClientHint says how to create the OAuth client the provider's apps share.
+	ClientHint string `yaml:"client_hint"`
+	// TokenAgeWarnDays is the credential age after which TokenAgeHint is shown; 0 disables it.
+	TokenAgeWarnDays int    `yaml:"token_age_warn_days"`
+	TokenAgeHint     string `yaml:"token_age_hint"`
 }
 
 // Hosts lists the hosts, as HostKey spells them, that requests with this API's credentials may reach.
