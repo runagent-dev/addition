@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -133,31 +134,24 @@ func runCall(cmd *cobra.Command, d deps, rawMethod, rawPath string, f callFlags)
 	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, Renewer: tokens, Now: d.now, Sleep: d.sleep}
 	resp, err := engine.Do(ctx, proxy.Request{Method: req.method, URL: target, Header: req.header, Body: req.body}, token)
 	if err != nil {
-		if status, sent := sentStatus(err); sent {
-			recordCall(ctx, cmd, a.store, acct, req.method, status)
+		if attempted, sent := errors.AsType[*proxy.Attempted](err); sent {
+			recordCall(cmd, a.store, acct, req.method, attempted.Status)
 		}
 		return callFailure(acct, err)
 	}
 	defer resp.Body.Close()
-	recordCall(ctx, cmd, a.store, acct, req.method, resp.Status)
+	recordCall(cmd, a.store, acct, req.method, resp.Status)
 	return deliver(cmd, resp, req.out)
 }
 
-// sentStatus is the status to audit for a request that failed after being sent: 0 for no response.
-func sentStatus(err error) (status int, sent bool) {
-	var auth *proxy.AuthFailure
-	var network *proxy.NetworkError
-	switch {
-	case errors.As(err, &auth):
-		return auth.Status, true
-	case errors.As(err, &network):
-		return 0, true
-	}
-	return 0, false
-}
+// auditTimeout bounds a call audit write made after the command's own context may be cancelled.
+const auditTimeout = 5 * time.Second
 
-// recordCall audits a finished request. The call already happened, so a failed write is a stderr notice, not an error.
-func recordCall(ctx context.Context, cmd *cobra.Command, s *vault.Store, acct vault.Account, method string, status int) {
+// recordCall audits a request that was sent. The call already happened, so it ignores cancellation
+// of the command, and a failed write is a stderr notice, not an error.
+func recordCall(cmd *cobra.Command, s *vault.Store, acct vault.Account, method string, status int) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(cmd.Context()), auditTimeout)
+	defer cancel()
 	if err := s.Audit(ctx, vault.CallEvent{AccountID: acct.ID, Method: method, Status: status}); err != nil {
 		_ = writeJSON(cmd.ErrOrStderr(), map[string]string{"notice": "audit-failed"})
 	}
@@ -176,6 +170,8 @@ func callFailure(acct vault.Account, err error) error {
 	var tokenNet *oauth.NetworkError
 	var apiNet *proxy.NetworkError
 	switch {
+	case errors.Is(err, context.Canceled):
+		return &Error{Code: "interrupted", Exit: ExitInternal, Message: "interrupted before the call finished"}
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
 			"%s:%s must be reconnected; run `addn connect %s --as %s`", acct.Provider, acct.Alias, acct.Provider, acct.Alias)}
@@ -334,6 +330,9 @@ func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 	if out != nil {
 		return out.save(cmd, resp, guard)
 	}
+	if resp.Header.Get("Content-Encoding") != "" {
+		return binaryResponse()
+	}
 	body := bufio.NewReaderSize(guard.Reader(resp.Body), sniffLength)
 	head, err := body.Peek(sniffLength)
 	if errors.Is(err, proxy.ErrCredentialEcho) {
@@ -343,8 +342,7 @@ func deliver(cmd *cobra.Command, resp *proxy.Response, out *outputFile) error {
 		return networkFailure()
 	}
 	if len(head) > 0 && !isTextual(resp.Header.Get("Content-Type"), head) {
-		return &Error{Code: "binary-response", Exit: ExitUsage,
-			Message: "the response is not text or JSON; repeat the call with -o <file> to save it"}
+		return binaryResponse()
 	}
 	return copyBody(cmd.OutOrStdout(), body)
 }
@@ -363,6 +361,11 @@ func deliverFailure(cmd *cobra.Command, resp *proxy.Response, guard *proxy.EchoG
 		}
 	}
 	return &Error{Code: "upstream-error", Message: fmt.Sprintf("HTTP %d", resp.Status), Exit: upstreamExit(resp.Status)}
+}
+
+func binaryResponse() *Error {
+	return &Error{Code: "binary-response", Exit: ExitUsage,
+		Message: "the response is not text or JSON; repeat the call with -o <file> to save it"}
 }
 
 func networkFailure() *Error {
