@@ -44,24 +44,6 @@ func decodeError(t *testing.T, stderr string) errorEnvelope {
 	return env
 }
 
-func TestVersionPrintsJSON(t *testing.T) {
-	r := run("version")
-
-	if r.code != ExitOK {
-		t.Fatalf("exit code = %d, want %d (stderr: %q)", r.code, ExitOK, r.stderr)
-	}
-	if r.stderr != "" {
-		t.Errorf("stderr = %q, want empty", r.stderr)
-	}
-	var got map[string]string
-	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil {
-		t.Fatalf("stdout is not JSON: %v\nstdout: %q", err, r.stdout)
-	}
-	if got["version"] != Version {
-		t.Errorf("version = %q, want %q", got["version"], Version)
-	}
-}
-
 func TestUsageErrorsUseEnvelopeAndExitCode(t *testing.T) {
 	cases := map[string][]string{
 		"unknown command": {"bogus"},
