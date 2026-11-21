@@ -54,3 +54,31 @@ func TestParseHeadersRefusesMalformedHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestParseHeadersChecksRawControlCharactersBeforeTrimming(t *testing.T) {
+	for _, h := range []string{"X-Test: value\r\n", "X-Test: value\n", "X-Test: value\r", "X-Test:\r\n value", "X-Test: v\x0b", "X-Test: v\x1b[0m\n"} {
+		t.Run(strings.NewReplacer("\r", `\r`, "\n", `\n`, "\x0b", `\v`, "\x1b", `\e`).Replace(h), func(t *testing.T) {
+			if _, err := proxy.ParseHeaders([]string{h}); requestErrorCode(err) != "bad-header" {
+				t.Errorf("err = %v, want code bad-header", err)
+			}
+		})
+	}
+}
+
+func TestParseHeadersAllowsTabPadding(t *testing.T) {
+	got, err := proxy.ParseHeaders([]string{"X-Test:\tvalue\t", "X-Inner: a\tb"})
+
+	if err != nil || got.Get("X-Test") != "value" || got.Get("X-Inner") != "a\tb" {
+		t.Errorf("got %v, %v; tabs are ordinary header whitespace", got, err)
+	}
+}
+
+func TestParseHeadersRefusesHopByHopAndUpgradeHeaders(t *testing.T) {
+	for _, h := range []string{"Upgrade: websocket", "upgrade: h2c", "Connection: upgrade", "connection: close", "TE: trailers", "te: gzip", "Trailer: X-Foo", "Keep-Alive: timeout=5", "keep-alive: 1"} {
+		t.Run(h, func(t *testing.T) {
+			if _, err := proxy.ParseHeaders([]string{h}); requestErrorCode(err) != "forbidden-header" {
+				t.Errorf("err = %v, want code forbidden-header", err)
+			}
+		})
+	}
+}
