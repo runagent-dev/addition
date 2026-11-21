@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -438,5 +439,20 @@ func TestEngineGivesUpOnAServerThatNeverAnswers(t *testing.T) {
 	var nerr *proxy.NetworkError
 	if !errors.As(err, &nerr) {
 		t.Errorf("err = %#v, want a NetworkError once the client's timeout passes", err)
+	}
+}
+
+func TestEngineReportsEveryAccessTokenItSent(t *testing.T) {
+	up := newUpstream(t, func(n int, w http.ResponseWriter, r *http.Request) {
+		if n == 1 {
+			w.WriteHeader(401)
+		}
+	})
+	renewer := &fakeRenewer{token: newAccess}
+
+	resp, _, err := do(t, newEngine(renewer, &sleeps{}), proxy.Request{Method: "GET", URL: up.url("/")}, oldAccess)
+
+	if err != nil || !slices.Equal(resp.Tokens, []string{oldAccess, newAccess}) {
+		t.Errorf("Tokens = %v, %v; want the rejected and the renewed token", resp.Tokens, err)
 	}
 }
