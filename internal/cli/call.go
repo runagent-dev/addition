@@ -175,6 +175,9 @@ func callFailure(acct vault.Account, err error) error {
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
 			"%s:%s must be reconnected; run `addn connect %s --as %s`", acct.Provider, acct.Alias, acct.Provider, acct.Alias)}
+	case errors.Is(err, proxy.ErrAccountChanged):
+		return &Error{Code: "account-changed", Exit: ExitUsage, Message: fmt.Sprintf(
+			"%s:%s was removed and connected again while the call started; repeat the command", acct.Provider, acct.Alias)}
 	case errors.Is(err, proxy.ErrNoCredential):
 		return notConnected(accountRef{provider: acct.Provider, alias: acct.Alias})
 	case errors.Is(err, proxy.ErrNoOAuthClient):

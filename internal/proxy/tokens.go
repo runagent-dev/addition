@@ -33,6 +33,9 @@ func (m *TokenManager) Access(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if acct.ID != m.Account.ID {
+		return "", ErrAccountChanged
+	}
 	if acct.Status != vault.AccountActive {
 		return "", ErrNeedsReauth
 	}
@@ -73,12 +76,16 @@ func (m *TokenManager) refresh(ctx context.Context, stale func(vault.Credential)
 	var failure error
 	err := m.Store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
 		acct, err := tx.GetAccount(ctx, m.Account.Provider, m.Account.Alias)
-		if errors.Is(err, vault.ErrNotFound) || err == nil && acct.ID != m.Account.ID {
+		if errors.Is(err, vault.ErrNotFound) {
 			failure = ErrNoCredential
 			return nil
 		}
 		if err != nil {
 			return err
+		}
+		if acct.ID != m.Account.ID {
+			failure = ErrAccountChanged
+			return nil
 		}
 		if acct.Status != vault.AccountActive {
 			failure = ErrNeedsReauth
