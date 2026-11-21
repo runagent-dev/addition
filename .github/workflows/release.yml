@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: [self-hosted, Linux, X64, runagent-ci]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Same pinned image and git-archive feed as ci.yml: the Docker daemon may not see the workspace path.
+      - name: verify
+        run: |
+          git archive HEAD | docker run -i --rm golang:1.27.4 sh -euc '
+            mkdir /src && cd /src && tar -x
+            unformatted="$(gofmt -l .)"
+            if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
+            go vet ./...
+            go test ./...
+          '
+      # GoReleaser needs the tag and history, so the whole checkout goes in; dist/ comes back as a tar on stdout.
+      - name: goreleaser
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tar -c . | docker run -i --rm -e GITHUB_TOKEN --entrypoint sh \
+            goreleaser/goreleaser:v2.20.3@sha256:3019e0e61c99808e42ce60c9cf77f7882685ffd2bd09d18ef6da8f9c9810e71c -euc '
+            mkdir /src && cd /src && tar -x
+            git config --global --add safe.directory /src
+            goreleaser release --clean >&2
+            tar -c dist
+          ' | tar -x
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt

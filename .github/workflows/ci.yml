@@ -11,7 +11,7 @@ permissions:
 jobs:
   go:
     runs-on: [self-hosted, Linux, X64, runagent-ci]
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,3 +29,16 @@ jobs:
             go test -race ./...
             CGO_ENABLED=0 go build ./cmd/addition
           '
+      # A broken release config or installer must fail here, not on the first tag.
+      - name: release config and installer
+        run: |
+          tar -c . | docker run -i --rm --entrypoint sh \
+            goreleaser/goreleaser:v2.20.3@sha256:3019e0e61c99808e42ce60c9cf77f7882685ffd2bd09d18ef6da8f9c9810e71c -euc '
+            mkdir /src && cd /src && tar -x
+            git config --global --add safe.directory /src
+            goreleaser check
+            goreleaser release --snapshot --clean --skip=publish
+            mkdir /smoke && tar -xzf dist/addition_linux_amd64.tar.gz -C /smoke
+            /smoke/addition version | grep -q "\"commit\":\"[0-9a-f]\{40\}\""
+          '
+          docker run -i --rm koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb -s sh - < install.sh
