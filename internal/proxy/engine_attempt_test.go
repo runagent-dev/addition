@@ -179,3 +179,25 @@ func TestEngineReportsStatusZeroWhenNothingAnswered(t *testing.T) {
 		t.Errorf("err = %#v, want Attempted{Status: 0} wrapping a NetworkError", err)
 	}
 }
+
+func TestEngineTreatsAnOverflowingValueWithASuffixAsMalformed(t *testing.T) {
+	for _, header := range []string{"999999999999999999999999X", "99999999999999999999999 9", "-99999999999999999999999", "99999999999999999999999.5"} {
+		up := newUpstream(t, func(n int, w http.ResponseWriter, _ *http.Request) {
+			if n == 1 {
+				w.Header().Set("Retry-After", header)
+				w.WriteHeader(429)
+			}
+		})
+		s := &sleeps{}
+		e := newEngine(&fakeRenewer{}, s)
+		e.Jitter = func(time.Duration) time.Duration { return 0 }
+
+		if _, _, err := do(t, e, proxy.Request{Method: "GET", URL: up.url("/")}, "t"); err != nil {
+			t.Fatal(err)
+		}
+
+		if got := s.all(); len(got) != 1 || got[0] != 500*time.Millisecond {
+			t.Errorf("Retry-After %q: sleeps = %v, want the jittered fallback [500ms], not the 30s cap", header, got)
+		}
+	}
+}
