@@ -8,10 +8,11 @@ import (
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
-// ownedHeaders are set by addn, or change what a request means to the server or a proxy.
+// ownedHeaders are set by addn, or change what a request means to the server or a proxy, or what the connection does.
 var ownedHeaders = map[string]bool{
 	"Authorization": true, "Host": true, "Cookie": true, "Content-Length": true, "Transfer-Encoding": true,
 	"X-Http-Method-Override": true, "X-Method-Override": true, "X-Http-Method": true,
+	"Upgrade": true, "Connection": true, "Te": true, "Trailer": true, "Keep-Alive": true,
 }
 
 // ParseHeaders reads "Name: value" strings into a header set, refusing the headers addn owns.
@@ -20,7 +21,7 @@ func ParseHeaders(raw []string) (http.Header, error) {
 	for _, entry := range raw {
 		name, value, ok := strings.Cut(entry, ":")
 		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
-		if !ok || !isToken(name) || strings.ContainsFunc(value, isBadHeaderValueRune) {
+		if !ok || strings.ContainsFunc(entry, isBadHeaderValueRune) || !isToken(name) {
 			return nil, &RequestError{Code: "bad-header", Message: "-H takes 'Name: value' with a valid name and no control characters"}
 		}
 		canonical := textproto.CanonicalMIMEHeaderKey(name)
