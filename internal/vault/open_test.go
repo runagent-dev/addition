@@ -31,7 +31,7 @@ func TestOpenBeforeInit(t *testing.T) {
 	if !errors.Is(err, vault.ErrNotInitialized) {
 		t.Fatalf("err = %v, want ErrNotInitialized", err)
 	}
-	if !strings.Contains(err.Error(), "addn init") {
+	if !strings.Contains(err.Error(), "addition init") {
 		t.Errorf("error %q does not say what to run", err)
 	}
 	if _, err := os.Stat(f.home); !errors.Is(err, os.ErrNotExist) {
@@ -53,7 +53,7 @@ func TestOpenResolvesEachKeySource(t *testing.T) {
 	})
 	t.Run("env", func(t *testing.T) {
 		f := newFakeEnv(t)
-		f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
+		f.set("ADDITION_MASTER_KEY", strings.Repeat("d", 64))
 		mustInit(t, f, vault.InitOptions{})
 		mustOpen(t, f)
 	})
@@ -62,7 +62,7 @@ func TestOpenResolvesEachKeySource(t *testing.T) {
 		mustInit(t, f, vault.InitOptions{})
 		stored := keychainKey(t, f.home)
 		keyring.MockInit()
-		f.set("ADDN_MASTER_KEY", stored)
+		f.set("ADDITION_MASTER_KEY", stored)
 		mustOpen(t, f)
 	})
 }
@@ -70,7 +70,7 @@ func TestOpenResolvesEachKeySource(t *testing.T) {
 func TestOpenWithWrongKeyFailsClearly(t *testing.T) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{})
-	f.set("ADDN_MASTER_KEY", strings.Repeat("e", 64))
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("e", 64))
 
 	err := openErr(t, f)
 
@@ -82,7 +82,7 @@ func TestOpenWithWrongKeyFailsClearly(t *testing.T) {
 func TestOpenRejectsAnInvalidEnvKey(t *testing.T) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{})
-	f.set("ADDN_MASTER_KEY", strings.Repeat("a", 64)+"\n")
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("a", 64)+"\n")
 
 	if err := openErr(t, f); !errors.Is(err, crypto.ErrInvalidKey) {
 		t.Fatalf("err = %v, want ErrInvalidKey", err)
@@ -116,9 +116,9 @@ func TestOpenFailsLoudlyWhenNoKeySourceIsAvailable(t *testing.T) {
 			keyring.MockInitWithError(errNoKeychain)
 		},
 		"env vault, env unset": func(t *testing.T, f *fakeEnv) {
-			f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
+			f.set("ADDITION_MASTER_KEY", strings.Repeat("d", 64))
 			mustInit(t, f, vault.InitOptions{})
-			f.unset("ADDN_MASTER_KEY")
+			f.unset("ADDITION_MASTER_KEY")
 		},
 		"key file vault, file deleted": func(t *testing.T, f *fakeEnv) {
 			mustInit(t, f, vault.InitOptions{KeyFile: true})
@@ -135,7 +135,7 @@ func TestOpenFailsLoudlyWhenNoKeySourceIsAvailable(t *testing.T) {
 			if !errors.Is(err, vault.ErrNoMasterKey) {
 				t.Fatalf("err = %v, want ErrNoMasterKey", err)
 			}
-			if !strings.Contains(err.Error(), "ADDN_MASTER_KEY") {
+			if !strings.Contains(err.Error(), "ADDITION_MASTER_KEY") {
 				t.Errorf("error %q does not say what to do", err)
 			}
 		})
@@ -200,10 +200,10 @@ func TestRefusesADatabaseFromANewerBinary(t *testing.T) {
 func TestOpenTreatsASetButEmptyEnvKeyAsAnError(t *testing.T) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{KeyFile: true})
-	f.set("ADDN_MASTER_KEY", "")
+	f.set("ADDITION_MASTER_KEY", "")
 
 	if err := openErr(t, f); !errors.Is(err, crypto.ErrInvalidKey) {
-		t.Fatalf("err = %v, want ErrInvalidKey for a set-but-empty ADDN_MASTER_KEY", err)
+		t.Fatalf("err = %v, want ErrInvalidKey for a set-but-empty ADDITION_MASTER_KEY", err)
 	}
 }
 
@@ -226,7 +226,7 @@ func TestAKeychainVaultSurvivesRelocation(t *testing.T) {
 	if err := os.Rename(f.home, moved); err != nil {
 		t.Fatal(err)
 	}
-	f.set("ADDN_HOME", moved)
+	f.set("ADDITION_HOME", moved)
 
 	mustOpen(t, f)
 }
@@ -235,7 +235,7 @@ func TestHomePathPunctuationIsNotParsedAsDSN(t *testing.T) {
 	f := newFakeEnv(t)
 	parent := privateTempDir(t)
 	f.home = filepath.Join(parent, "we?ird#na%me")
-	f.set("ADDN_HOME", f.home)
+	f.set("ADDITION_HOME", f.home)
 
 	mustInit(t, f, vault.InitOptions{KeyFile: true})
 	mustOpen(t, f)

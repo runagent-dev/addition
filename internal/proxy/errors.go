@@ -13,7 +13,7 @@ var (
 	ErrAccountChanged = errors.New("the account was replaced after it was selected")
 )
 
-// RequestError is a request addn refuses to send. Code is a stable machine-readable identifier
+// RequestError is a request addition refuses to send. Code is a stable machine-readable identifier
 // and Message never repeats the caller's path, query, header values or URL userinfo.
 type RequestError struct {
 	Code    string

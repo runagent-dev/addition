@@ -1,4 +1,4 @@
-// Package cli wires the addn command tree and its output contract.
+// Package cli wires the addition command tree and its output contract.
 package cli
 
 import (
@@ -17,7 +17,7 @@ import (
 // Version is overridden at build time with -ldflags "-X …/internal/cli.Version=…".
 var Version = "dev"
 
-// Run executes addn with args and returns the process exit code. Cancelling ctx interrupts the command.
+// Run executes addition with args and returns the process exit code. Cancelling ctx interrupts the command.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return executeContext(ctx, args, stdout, stderr, productionDeps())
 }
@@ -63,7 +63,7 @@ func executeContext(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func newRoot(d deps) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "addn",
+		Use:           "addition",
 		Short:         "Give coding agents authenticated access to your accounts",
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
@@ -102,7 +102,7 @@ func newHelpCmd(root *cobra.Command) *cobra.Command {
 // rejectHiddenCompletion blocks cobra's __complete command, which bypasses DisableDefaultCmd.
 func rejectHiddenCompletion(cmd *cobra.Command, _ []string) error {
 	if cmd.Name() == cobra.ShellCompRequestCmd {
-		return usageError(fmt.Sprintf("unknown command %q for \"addn\"", cmd.CalledAs()))
+		return usageError(fmt.Sprintf("unknown command %q for \"addition\"", cmd.CalledAs()))
 	}
 	return nil
 }

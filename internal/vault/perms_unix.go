@@ -96,13 +96,13 @@ func checkAncestor(dir string) error {
 		return nil
 	}
 	if st.Mode&0o002 != 0 {
-		return fmt.Errorf("%w: %s is writable by other users, who could replace the data dir; move ADDN_HOME or run chmod go-w %s", ErrInsecureHome, dir, dir)
+		return fmt.Errorf("%w: %s is writable by other users, who could replace the data dir; move ADDITION_HOME or run chmod go-w %s", ErrInsecureHome, dir, dir)
 	}
 	if int(st.Uid) != os.Geteuid() {
-		return fmt.Errorf("%w: %s is writable by its group, whose members could replace the data dir; move ADDN_HOME or run chmod g-w %s", ErrInsecureHome, dir, dir)
+		return fmt.Errorf("%w: %s is writable by its group, whose members could replace the data dir; move ADDITION_HOME or run chmod g-w %s", ErrInsecureHome, dir, dir)
 	}
 	if err := accounts.checkPrivateGroup(st.Gid); err != nil {
-		return fmt.Errorf("%w: %s is writable by its group (gid %d), which is allowed only for your user private group, and %v; move ADDN_HOME or run chmod g-w %s", ErrInsecureHome, dir, st.Gid, err, dir)
+		return fmt.Errorf("%w: %s is writable by its group (gid %d), which is allowed only for your user private group, and %v; move ADDITION_HOME or run chmod g-w %s", ErrInsecureHome, dir, st.Gid, err, dir)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (h *homeDir) checkPrivate() error {
 		return &fs.PathError{Op: "fstat", Path: h.path, Err: err}
 	}
 	if int(st.Uid) != os.Geteuid() {
-		return fmt.Errorf("%w: %s is owned by another user; point ADDN_HOME at a directory you own", ErrInsecureHome, h.path)
+		return fmt.Errorf("%w: %s is owned by another user; point ADDITION_HOME at a directory you own", ErrInsecureHome, h.path)
 	}
 	if perm := st.Mode & 0o777; perm&0o077 != 0 {
 		return fmt.Errorf("%w: %s has mode %o; run chmod 700 %s", ErrInsecureHome, h.path, perm, h.path)

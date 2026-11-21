@@ -62,7 +62,7 @@ func TestInitWithKeyFile(t *testing.T) {
 
 func TestInitWithEnvKey(t *testing.T) {
 	f := newFakeEnv(t)
-	f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("d", 64))
 
 	res := mustInit(t, f, vault.InitOptions{KeyFile: true})
 
@@ -70,10 +70,10 @@ func TestInitWithEnvKey(t *testing.T) {
 		t.Errorf("Init = %+v, want key_source=env created=true", res)
 	}
 	if _, err := os.Stat(filepath.Join(f.home, "master.key")); !errors.Is(err, os.ErrNotExist) {
-		t.Error("master.key written although ADDN_MASTER_KEY is set")
+		t.Error("master.key written although ADDITION_MASTER_KEY is set")
 	}
 	if keychainKey(t, f.home) != "" {
-		t.Error("keychain written although ADDN_MASTER_KEY is set")
+		t.Error("keychain written although ADDITION_MASTER_KEY is set")
 	}
 }
 
@@ -113,7 +113,7 @@ func TestInitFailsLoudlyWhenKeychainUnavailable(t *testing.T) {
 	if !errors.Is(err, vault.ErrKeychainUnavailable) {
 		t.Fatalf("err = %v, want ErrKeychainUnavailable", err)
 	}
-	for _, hint := range []string{"--key-file", "ADDN_MASTER_KEY"} {
+	for _, hint := range []string{"--key-file", "ADDITION_MASTER_KEY"} {
 		if !strings.Contains(err.Error(), hint) {
 			t.Errorf("error %q does not suggest %s", err, hint)
 		}
@@ -130,7 +130,7 @@ func TestInitFailsLoudlyWhenKeychainUnavailable(t *testing.T) {
 
 func TestInitRefusesAnInvalidEnvKey(t *testing.T) {
 	f := newFakeEnv(t)
-	f.set("ADDN_MASTER_KEY", strings.Repeat("a", 64)+"\n")
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("a", 64)+"\n")
 
 	_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{})
 
@@ -141,10 +141,10 @@ func TestInitRefusesAnInvalidEnvKey(t *testing.T) {
 
 func TestInitRerunWithWrongEnvKeyFails(t *testing.T) {
 	f := newFakeEnv(t)
-	f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("d", 64))
 	mustInit(t, f, vault.InitOptions{})
 
-	f.set("ADDN_MASTER_KEY", strings.Repeat("e", 64))
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("e", 64))
 	_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{})
 
 	if !errors.Is(err, vault.ErrWrongMasterKey) {
@@ -177,7 +177,7 @@ func currentKeyMaterial(t *testing.T, f *fakeEnv) string {
 
 func TestInitTreatsASetButEmptyEnvKeyAsAnError(t *testing.T) {
 	f := newFakeEnv(t)
-	f.set("ADDN_MASTER_KEY", "")
+	f.set("ADDITION_MASTER_KEY", "")
 
 	_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{KeyFile: true})
 
@@ -185,7 +185,7 @@ func TestInitTreatsASetButEmptyEnvKeyAsAnError(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalidKey saying the variable is empty", err)
 	}
 	if _, err := os.Stat(filepath.Join(f.home, "master.key")); !errors.Is(err, os.ErrNotExist) {
-		t.Error("an empty ADDN_MASTER_KEY fell through to a key file")
+		t.Error("an empty ADDITION_MASTER_KEY fell through to a key file")
 	}
 }
 
@@ -223,7 +223,7 @@ func TestInitWithoutKeyFileAlwaysMeansKeychain(t *testing.T) {
 func TestInitReportsTheRecordedSourceWhenEnvUnlocks(t *testing.T) {
 	f := newFakeEnv(t)
 	mustInit(t, f, vault.InitOptions{})
-	f.set("ADDN_MASTER_KEY", keychainKey(t, f.home))
+	f.set("ADDITION_MASTER_KEY", keychainKey(t, f.home))
 	keyring.MockInitWithError(errNoKeychain)
 
 	res := mustInit(t, f, vault.InitOptions{})
@@ -243,7 +243,7 @@ func TestInitRefusesAPartiallyInitializedVault(t *testing.T) {
 	for name, damage := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newFakeEnv(t)
-			f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
+			f.set("ADDITION_MASTER_KEY", strings.Repeat("d", 64))
 			mustInit(t, f, vault.InitOptions{})
 			db := rawDB(t, f.home)
 			if _, err := db.Exec(damage); err != nil {
@@ -251,7 +251,7 @@ func TestInitRefusesAPartiallyInitializedVault(t *testing.T) {
 			}
 			var canaryBefore string
 			_ = db.QueryRow(`SELECT COALESCE((SELECT value FROM meta WHERE key = 'key_canary'), '')`).Scan(&canaryBefore)
-			f.set("ADDN_MASTER_KEY", strings.Repeat("e", 64))
+			f.set("ADDITION_MASTER_KEY", strings.Repeat("e", 64))
 
 			_, initErr := vault.Init(context.Background(), f.env(), vault.InitOptions{})
 			openErr := openErr(t, f)
@@ -282,7 +282,7 @@ func TestInitReusesAKeyFileLeftByAnInterruptedInit(t *testing.T) {
 
 	mustInit(t, f, vault.InitOptions{KeyFile: true})
 
-	f.set("ADDN_MASTER_KEY", key)
+	f.set("ADDITION_MASTER_KEY", key)
 	mustOpen(t, f)
 }
 

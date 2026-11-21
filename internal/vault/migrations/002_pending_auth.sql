@@ -1,4 +1,4 @@
--- An authorization started by `addn connect --no-browser` and finished once by `--complete`.
+-- An authorization started by `addition connect --no-browser` and finished once by `--complete`.
 -- account_scopes is what the alias held at the start; claimed_at marks a completion in flight.
 -- Timestamps here are fixed-width RFC 3339 UTC, so expired rows can be pruned by text comparison.
 CREATE TABLE pending_auth (

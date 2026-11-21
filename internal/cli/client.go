@@ -29,7 +29,7 @@ func newClientAddCmd(d deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <provider> --file client_secret.json",
 		Short: "Store an OAuth client downloaded from the provider's console",
-		Long: "Store the OAuth client addn uses to connect accounts of <provider>.\n" +
+		Long: "Store the OAuth client addition uses to connect accounts of <provider>.\n" +
 			"For Google, create an OAuth client of type \"Desktop app\" in the Google Cloud console\n" +
 			"and pass the JSON file it downloads. The secret is sealed in the vault; re-adding replaces it.",
 		Args: cobra.ExactArgs(1),
@@ -95,7 +95,7 @@ func readDesktopClient(path string) (vault.OAuthClient, error) {
 	}
 	if _, isWeb := doc["web"]; isWeb {
 		return vault.OAuthClient{}, &Error{Code: "web-client", Exit: ExitUsage, Message: "this is a \"Web application\" client; " +
-			"create an OAuth client of type \"Desktop app\" instead, which allows the loopback redirect addn uses"}
+			"create an OAuth client of type \"Desktop app\" instead, which allows the loopback redirect addition uses"}
 	}
 	raw, ok := doc["installed"]
 	if !ok {
@@ -143,7 +143,7 @@ func newClientListCmd(d deps) *cobra.Command {
 func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, error) {
 	p, ok := c.Provider(id)
 	if !ok {
-		return nil, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addn providers`)", id), Exit: ExitUsage}
+		return nil, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", id), Exit: ExitUsage}
 	}
 	root, err := c.IdentityRoot(id)
 	if err != nil {
@@ -151,7 +151,7 @@ func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, err
 	}
 	if root != id {
 		return nil, &Error{Code: "not-identity-root", Exit: ExitUsage,
-			Message: fmt.Sprintf("%s apps share the OAuth client of %s; run `addn client add %s`", id, root, root)}
+			Message: fmt.Sprintf("%s apps share the OAuth client of %s; run `addition client add %s`", id, root, root)}
 	}
 	if p.AuthType != "oauth2" || p.OAuth2 == nil {
 		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", id), Exit: ExitUsage}

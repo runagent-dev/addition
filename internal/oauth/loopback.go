@@ -12,8 +12,8 @@ import (
 
 const callbackPath = "/callback"
 
-const donePage = `<!doctype html><meta charset="utf-8"><title>addn</title>
-<p>addn received the authorization response. You can close this tab.</p>`
+const donePage = `<!doctype html><meta charset="utf-8"><title>addition</title>
+<p>addition received the authorization response. You can close this tab.</p>`
 
 // Loopback is an RFC 8252 redirect listener on 127.0.0.1. It answers 400 to any callback that
 // is not for its state, and delivers the first verified one: a code or a provider refusal.
@@ -53,11 +53,11 @@ func (l *Loopback) handle(w http.ResponseWriter, r *http.Request) {
 	defer l.mu.Unlock()
 	if err := cb.check(l.state); err != nil {
 		l.lastRejection = err
-		http.Error(w, "not the OAuth redirect addn is waiting for", http.StatusBadRequest)
+		http.Error(w, "not the OAuth redirect addition is waiting for", http.StatusBadRequest)
 		return
 	}
 	if l.accepted {
-		http.Error(w, "addn already received the authorization response", http.StatusConflict)
+		http.Error(w, "addition already received the authorization response", http.StatusConflict)
 		return
 	}
 	l.accepted = true

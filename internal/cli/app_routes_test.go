@@ -28,7 +28,7 @@ func TestAnAppTokenNeverReachesAnotherAppsRoutesOnASharedHost(t *testing.T) {
 		t.Errorf("the shared host received %d requests, want none", n)
 	}
 	if c.transport.total() != 0 {
-		t.Errorf("%d requests left addn; a refused target must not even refresh a token", c.transport.total())
+		t.Errorf("%d requests left addition; a refused target must not even refresh a token", c.transport.total())
 	}
 }
 
@@ -74,6 +74,6 @@ func TestRouteTricksNeverReachTheSharedHost(t *testing.T) {
 		}
 	}
 	if n := len(shared.requests()); n != 0 || c.transport.total() != 0 {
-		t.Errorf("%d requests reached the host and %d left addn; want none", n, c.transport.total())
+		t.Errorf("%d requests reached the host and %d left addition; want none", n, c.transport.total())
 	}
 }

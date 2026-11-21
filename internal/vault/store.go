@@ -82,6 +82,7 @@ func refreshTokenSlot(accountID int64) slot {
 	return slot{"credentials", strconv.FormatInt(accountID, 10), "refresh_token_encrypted"}
 }
 
+// Domain-separation string bound into every sealed value; changing it makes existing vaults unreadable.
 const sealContextVersion = "addn-vault-aad/v1"
 
 // sealContext is the AAD for a slot: length-prefixed parts, so no two slots share an encoding.

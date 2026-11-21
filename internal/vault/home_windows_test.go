@@ -18,9 +18,9 @@ func realWindowsEnv(home string) vault.Env {
 	lookup := env.LookupEnv
 	env.LookupEnv = func(k string) (string, bool) {
 		switch k {
-		case "ADDN_HOME":
+		case "ADDITION_HOME":
 			return home, true
-		case "ADDN_MASTER_KEY":
+		case "ADDITION_MASTER_KEY":
 			return testMasterKey, true
 		}
 		return lookup(k)
@@ -29,14 +29,14 @@ func realWindowsEnv(home string) vault.Env {
 }
 
 func TestWindowsHostAcceptsATempHomeInsideTheProfile(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "addn")
+	home := filepath.Join(t.TempDir(), "addition")
 	if _, err := vault.Init(context.Background(), realWindowsEnv(home), vault.InitOptions{}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 }
 
 func TestWindowsHostRejectsAHomeOutsideTheProfile(t *testing.T) {
-	home := filepath.Join(os.Getenv("SystemDrive")+`\`, "addn-outside-profile-test")
+	home := filepath.Join(os.Getenv("SystemDrive")+`\`, "addition-outside-profile-test")
 	_, err := vault.Init(context.Background(), realWindowsEnv(home), vault.InitOptions{})
 	if !errors.Is(err, vault.ErrInsecureHome) {
 		t.Fatalf("err = %v, want ErrInsecureHome", err)
@@ -48,7 +48,7 @@ func TestWindowsHostRejectsAHomeOutsideTheProfile(t *testing.T) {
 }
 
 func TestWindowsHostRefusesAKeyFile(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "addn")
+	home := filepath.Join(t.TempDir(), "addition")
 	_, err := vault.Init(context.Background(), realWindowsEnv(home), vault.InitOptions{KeyFile: true})
 	if !errors.Is(err, vault.ErrKeyFileUnsupported) {
 		t.Fatalf("err = %v, want ErrKeyFileUnsupported", err)

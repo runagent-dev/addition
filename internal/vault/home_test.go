@@ -18,11 +18,11 @@ func TestResolveHome(t *testing.T) {
 		vars map[string]string
 		want string
 	}{
-		"ADDN_HOME wins": {
-			"linux", map[string]string{"ADDN_HOME": "/srv/addn", "XDG_DATA_HOME": "/xdg", "HOME": "/home/u"}, "/srv/addn",
+		"ADDITION_HOME wins": {
+			"linux", map[string]string{"ADDITION_HOME": "/srv/addition", "XDG_DATA_HOME": "/xdg", "HOME": "/home/u"}, "/srv/addition",
 		},
-		"ADDN_HOME wins on windows": {
-			"windows", map[string]string{"ADDN_HOME": "/srv/addn", "LOCALAPPDATA": "/appdata"}, "/srv/addn",
+		"ADDITION_HOME wins on windows": {
+			"windows", map[string]string{"ADDITION_HOME": "/srv/addition", "LOCALAPPDATA": "/appdata"}, "/srv/addition",
 		},
 		"linux XDG_DATA_HOME": {
 			"linux", map[string]string{"XDG_DATA_HOME": "/xdg", "HOME": "/home/u"}, "/xdg/addition",
@@ -68,7 +68,7 @@ func TestResolveHomeRejectsRelativeBases(t *testing.T) {
 		goos string
 		vars map[string]string
 	}{
-		"ADDN_HOME":     {"linux", map[string]string{"ADDN_HOME": "relative/home", "HOME": "/home/u"}},
+		"ADDITION_HOME": {"linux", map[string]string{"ADDITION_HOME": "relative/home", "HOME": "/home/u"}},
 		"XDG_DATA_HOME": {"linux", map[string]string{"XDG_DATA_HOME": "rel/xdg", "HOME": "/home/u"}},
 		"linux HOME":    {"linux", map[string]string{"HOME": "relative"}},
 		"darwin HOME":   {"darwin", map[string]string{"HOME": "relative"}},

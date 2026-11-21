@@ -1,4 +1,4 @@
-// Package vault is addn's local store: one SQLite file whose secrets are
+// Package vault is addition's local store: one SQLite file whose secrets are
 // sealed with a master key that never touches the database.
 package vault
 
@@ -13,26 +13,26 @@ import (
 )
 
 var (
-	ErrNotInitialized      = errors.New("no vault here yet; run `addn init`")
+	ErrNotInitialized      = errors.New("no vault here yet; run `addition init`")
 	ErrKeychainUnavailable = errors.New("the OS keychain is unavailable")
 	ErrNoMasterKey         = errors.New("no master key available")
 	ErrWrongMasterKey      = errors.New("the master key does not match this vault")
 	ErrInsecureKeyFile     = errors.New("the key file is not a private regular file")
 	ErrInsecureHome        = errors.New("the data dir is not private to this user")
-	ErrKeyFileUnsupported  = errors.New("key files are not supported on Windows yet; use the Windows Credential Manager (the default keychain source) or set ADDN_MASTER_KEY")
-	ErrSchemaTooNew        = errors.New("the vault was written by a newer addn")
+	ErrKeyFileUnsupported  = errors.New("key files are not supported on Windows yet; use the Windows Credential Manager (the default keychain source) or set ADDITION_MASTER_KEY")
+	ErrSchemaTooNew        = errors.New("the vault was written by a newer addition")
 	ErrCorrupt             = errors.New("the vault database is corrupt")
 	ErrNotFound            = errors.New("not found")
 	ErrAliasTaken          = errors.New("alias already in use for this provider")
-	ErrBusy                = errors.New("another addn process is holding the vault; try again in a moment")
+	ErrBusy                = errors.New("another addition process is holding the vault; try again in a moment")
 )
 
 type InitOptions struct {
-	// KeyFile keeps the master key in $ADDN_HOME/master.key (0600) instead of the OS keychain.
+	// KeyFile keeps the master key in $ADDITION_HOME/master.key (0600) instead of the OS keychain.
 	KeyFile bool
 }
 
-// InitResult reports the vault; KeySource is the source recorded at init, even when ADDN_MASTER_KEY unlocked it.
+// InitResult reports the vault; KeySource is the source recorded at init, even when ADDITION_MASTER_KEY unlocked it.
 type InitResult struct {
 	Home          string    `json:"home"`
 	KeySource     KeySource `json:"key_source"`
@@ -242,7 +242,7 @@ func loadInitRecords(ctx context.Context, q querier) (initRecords, bool, error) 
 			return initRecords{}, false, err
 		}
 	}
-	return initRecords{}, false, fmt.Errorf("%w: it is only partly initialised; restore it from a backup, or move it aside and run `addn init`", ErrCorrupt)
+	return initRecords{}, false, fmt.Errorf("%w: it is only partly initialised; restore it from a backup, or move it aside and run `addition init`", ErrCorrupt)
 }
 
 func holdsNoVaultData(ctx context.Context, q querier) (bool, error) {

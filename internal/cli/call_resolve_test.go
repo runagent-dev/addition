@@ -46,7 +46,7 @@ func TestCallResolvesTheAccount(t *testing.T) {
 		r := c.call("-a", "ghost", "GET", "/x")
 
 		env := c.wantError(r, ExitNeedsConnect, "not-connected")
-		if !strings.Contains(env.Error.Message, "addn connect gmail --as ghost") {
+		if !strings.Contains(env.Error.Message, "addition connect gmail --as ghost") {
 			t.Errorf("message %q does not say how to connect", env.Error.Message)
 		}
 	})
@@ -124,7 +124,7 @@ func TestCallRefusesHostsOutsideTheAllowListBeforeSendingAnything(t *testing.T) 
 		t.Errorf("the API received %d requests", n)
 	}
 	if n := c.transport.total(); n != 0 {
-		t.Errorf("%d requests left addn; a refused target must not even refresh the token", n)
+		t.Errorf("%d requests left addition; a refused target must not even refresh the token", n)
 	}
 	if n := c.google.refreshCount(); n != 0 {
 		t.Errorf("the token endpoint was hit %d times", n)
@@ -142,7 +142,7 @@ func TestCallAllowsAnAbsoluteURLOnAnAllowedHost(t *testing.T) {
 	}
 }
 
-func TestCallRefusesHeadersAddnOwns(t *testing.T) {
+func TestCallRefusesHeadersAdditionOwns(t *testing.T) {
 	for _, h := range []string{
 		"Authorization: Bearer stolen", "authorization:x", "Host: evil.example", "Cookie: session=COOKIESECRET",
 		"Proxy-Authorization: x", "X-HTTP-Method-Override: DELETE", "Content-Length: 1",
@@ -173,8 +173,8 @@ func TestCallRefusesAnAccountThatNeedsReauthWithoutSendingAnything(t *testing.T)
 	r := c.call("-a", "work", "GET", "/x")
 
 	env := c.wantError(r, ExitNeedsConnect, "needs-reauth")
-	if c.transport.total() != 0 || !strings.Contains(env.Error.Message, "addn connect gmail --as work") {
-		t.Errorf("%d requests, message %q; want a local refusal that names `addn connect`", c.transport.total(), env.Error.Message)
+	if c.transport.total() != 0 || !strings.Contains(env.Error.Message, "addition connect gmail --as work") {
+		t.Errorf("%d requests, message %q; want a local refusal that names `addition connect`", c.transport.total(), env.Error.Message)
 	}
 }
 
@@ -196,7 +196,7 @@ func TestTheMissingAppDiagnosticNeverRepeatsAnArgument(t *testing.T) {
 			r := c.run(args...)
 
 			env := c.wantError(r, ExitUsage, "app-required")
-			if !strings.Contains(env.Error.Message, "addn call <app> <METHOD> <path>") || !strings.Contains(env.Error.Message, "gmail") {
+			if !strings.Contains(env.Error.Message, "addition call <app> <METHOD> <path>") || !strings.Contains(env.Error.Message, "gmail") {
 				t.Errorf("message %q must show the correct form and the connected apps", env.Error.Message)
 			}
 			if strings.Contains(r.stdout+r.stderr, secret) || len(c.api.requests()) != 0 {

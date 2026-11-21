@@ -19,7 +19,7 @@ const AccessTokenSkew = 60 * time.Second
 const refreshTimeout = 30 * time.Second
 
 // TokenManager hands out a usable access token for one account and refreshes it under the
-// vault's writer lock, so concurrent addn processes refresh each rotation once.
+// vault's writer lock, so concurrent addition processes refresh each rotation once.
 type TokenManager struct {
 	Store    *vault.Store
 	Client   *http.Client

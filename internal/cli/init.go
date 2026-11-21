@@ -16,10 +16,10 @@ func newInitCmd(d deps) *cobra.Command {
 		Use:   "init",
 		Short: "Create the local vault and its master key",
 		Long: "Create the data dir, the vault database and a master key stored in the OS keychain.\n" +
-			"With --key-file the key goes to $ADDN_HOME/master.key (mode 0600) instead; with\n" +
-			"ADDN_MASTER_KEY set, that key is used. The vault records its source and later unlocks\n" +
-			"only from it, unless ADDN_MASTER_KEY is set. Re-running never replaces a key and\n" +
-			"reports the recorded key_source, even when ADDN_MASTER_KEY unlocked the vault.",
+			"With --key-file the key goes to $ADDITION_HOME/master.key (mode 0600) instead; with\n" +
+			"ADDITION_MASTER_KEY set, that key is used. The vault records its source and later unlocks\n" +
+			"only from it, unless ADDITION_MASTER_KEY is set. Re-running never replaces a key and\n" +
+			"reports the recorded key_source, even when ADDITION_MASTER_KEY unlocked the vault.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			res, err := vault.Init(cmd.Context(), d.env, opts)
@@ -50,7 +50,7 @@ var vaultErrorCodes = []struct {
 	{vault.ErrInvalidAccount, "invalid-account"},
 }
 
-// vaultError maps known setup problems to exit 2; anything else is a failure of addn itself.
+// vaultError maps known setup problems to exit 2; anything else is a failure of addition itself.
 func vaultError(err error) *Error {
 	if errors.Is(err, context.Canceled) {
 		return interrupted()

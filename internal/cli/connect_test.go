@@ -224,7 +224,7 @@ func TestTwoStepFlow(t *testing.T) {
 	if !strings.HasPrefix(p.AuthorizeURL, h.google.srv.URL+"/authorize?") {
 		t.Errorf("authorize_url = %q", p.AuthorizeURL)
 	}
-	if !strings.HasPrefix(p.Next, "addn connect --complete ") {
+	if !strings.HasPrefix(p.Next, "addition connect --complete ") {
 		t.Errorf("next = %q", p.Next)
 	}
 	if exp, err := time.Parse(time.RFC3339, p.ExpiresAt); err != nil || !exp.Equal(h.clock.Now().Add(10*time.Minute)) {
@@ -547,8 +547,8 @@ func TestConnectDoesNotTakeServices(t *testing.T) {
 func TestConnectUsageErrors(t *testing.T) {
 	h := newHarness(t)
 	env := h.wantError(h.run("connect", "gmail", "--as", "work"), ExitUsage, "no-oauth-client")
-	if !strings.Contains(env.Error.Message, "addn client add google") {
-		t.Errorf("message %q does not point to `addn client add google`", env.Error.Message)
+	if !strings.Contains(env.Error.Message, "addition client add google") {
+		t.Errorf("message %q does not point to `addition client add google`", env.Error.Message)
 	}
 	h.addClient()
 	h.wantError(h.run("connect", "nope", "--as", "work"), ExitUsage, "unknown-provider")

@@ -48,7 +48,7 @@ func TestCallCreatesTheTempFileBeforeSendingAndRemovesItAfterAnUpstreamError(t *
 	r := c.call("-a", "work", "GET", "/x", "-o", filepath.Join(dir, "out"))
 
 	c.wantUpstream(r, ExitUpstreamClient, 404, `{"error":"missing"}`)
-	if len(during) != 1 || !strings.HasPrefix(during[0], ".addn-") || !strings.HasSuffix(during[0], ".part") {
+	if len(during) != 1 || !strings.HasPrefix(during[0], ".addition-") || !strings.HasSuffix(during[0], ".part") {
 		t.Errorf("directory while the request was in flight = %v, want one private temp file", during)
 	}
 	if names := dirNames(t, dir); len(names) != 0 {

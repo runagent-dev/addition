@@ -45,7 +45,7 @@ func missingScopes(want, have []string) []string {
 func appProvider(c *catalog.Catalog, name string) (*catalog.Provider, error) {
 	p, ok := lookupProvider(c, name)
 	if !ok {
-		return nil, &Error{Code: "unknown-provider", Exit: ExitUsage, Message: fmt.Sprintf("unknown provider %q (see `addn providers`)", name)}
+		return nil, &Error{Code: "unknown-provider", Exit: ExitUsage, Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", name)}
 	}
 	if !c.Connectable(p.ID) {
 		return nil, notAnApp(c, p)
@@ -64,7 +64,7 @@ func appIDs(c *catalog.Catalog, rootID string) []string {
 func notAnApp(c *catalog.Catalog, p *catalog.Provider) *Error {
 	apps := appIDs(c, p.IdentityRoot)
 	return &Error{Code: "not-an-app", Exit: ExitUsage, Message: fmt.Sprintf(
-		"%s is shared by several apps and is not one itself; use one of: %s (for example `addn connect %s --as <alias>`)",
+		"%s is shared by several apps and is not one itself; use one of: %s (for example `addition connect %s --as <alias>`)",
 		p.ID, strings.Join(apps, ", "), apps[0])}
 }
 
@@ -76,7 +76,7 @@ func legacyAccountError(c *catalog.Catalog, acct vault.Account) *Error {
 		}
 	}
 	return &Error{Code: "legacy-account", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-		"%s:%s was connected before every app became its own connection; remove it with `addn accounts remove %s:%s` and connect each app you use, for example `addn connect %s --as %s`",
+		"%s:%s was connected before every app became its own connection; remove it with `addition accounts remove %s:%s` and connect each app you use, for example `addition connect %s --as %s`",
 		acct.Provider, acct.Alias, acct.Provider, acct.Alias, example, acct.Alias)}
 }
 

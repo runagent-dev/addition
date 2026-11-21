@@ -43,12 +43,12 @@ func TestWithImmediateTxCommitsOrRollsBack(t *testing.T) {
 	}
 }
 
-// Each writer is its own Store, as separate addn processes would be.
+// Each writer is its own Store, as separate addition processes would be.
 func TestConcurrentImmediateTxsSerialize(t *testing.T) {
 	const writers, rounds = 4, 15
 	ctx := context.Background()
 	f := newFakeEnv(t)
-	f.set("ADDN_MASTER_KEY", strings.Repeat("d", 64))
+	f.set("ADDITION_MASTER_KEY", strings.Repeat("d", 64))
 	mustInit(t, f, vault.InitOptions{})
 	setup := mustOpen(t, f)
 	acct, _ := setup.CreateAccount(ctx, vault.Account{Provider: "google", Alias: "work"})

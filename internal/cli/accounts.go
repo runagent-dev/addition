@@ -49,14 +49,14 @@ func parseAccountRef(c *catalog.Catalog, ref string) (accountRef, error) {
 	}
 	p, found := lookupProvider(c, name)
 	if !found {
-		return accountRef{}, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addn providers`)", name), Exit: ExitUsage}
+		return accountRef{}, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", name), Exit: ExitUsage}
 	}
 	return accountRef{provider: p.ID, alias: alias}, nil
 }
 
 func notConnected(ref accountRef) *Error {
 	return &Error{Code: "not-connected", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-		"no account %s:%s; connect it with `addn connect %s --as %s`", ref.provider, ref.alias, ref.provider, ref.alias)}
+		"no account %s:%s; connect it with `addition connect %s --as %s`", ref.provider, ref.alias, ref.provider, ref.alias)}
 }
 
 // accountSession is a loaded catalog and open vault for the account commands.

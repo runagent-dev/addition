@@ -78,7 +78,7 @@ func (o *outputFile) checkTarget() error {
 	case err != nil:
 		return badOutput("bad-output", "cannot inspect %s: %v", o.path, err)
 	case info.Mode()&os.ModeSymlink != 0:
-		return badOutput("target-is-symlink", "%s is a symbolic link; addn does not write through links", o.path)
+		return badOutput("target-is-symlink", "%s is a symbolic link; addition does not write through links", o.path)
 	case !o.force:
 		return badOutput("file-exists", "%s already exists; pass --force to replace it", o.path)
 	case !info.Mode().IsRegular():
@@ -89,7 +89,7 @@ func (o *outputFile) checkTarget() error {
 
 func (o *outputFile) createTemp() error {
 	for range 10 {
-		name := ".addn-" + randomSuffix() + ".part"
+		name := ".addition-" + randomSuffix() + ".part"
 		file, err := o.dir.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, fs.ErrExist) {
 			continue

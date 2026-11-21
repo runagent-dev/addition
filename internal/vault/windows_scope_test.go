@@ -23,14 +23,14 @@ func windowsEnv(t *testing.T, f *fakeEnv) {
 func TestWindowsRefusesInitWithAKeyFile(t *testing.T) {
 	f := newFakeEnv(t)
 	windowsEnv(t, f)
-	f.set("ADDN_MASTER_KEY", testMasterKey)
+	f.set("ADDITION_MASTER_KEY", testMasterKey)
 
 	_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{KeyFile: true})
 
 	if !errors.Is(err, vault.ErrKeyFileUnsupported) {
 		t.Fatalf("err = %v, want ErrKeyFileUnsupported", err)
 	}
-	for _, hint := range []string{"Credential Manager", "ADDN_MASTER_KEY"} {
+	for _, hint := range []string{"Credential Manager", "ADDITION_MASTER_KEY"} {
 		if !strings.Contains(err.Error(), hint) {
 			t.Errorf("message %q does not mention %s", err, hint)
 		}
@@ -89,7 +89,7 @@ func TestWindowsRejectsAProfileLinkThatLeavesIt(t *testing.T) {
 
 	for _, child := range []string{"", "new-vault"} {
 		t.Run("child "+child, func(t *testing.T) {
-			f.set("ADDN_HOME", filepath.Join(f.home, child))
+			f.set("ADDITION_HOME", filepath.Join(f.home, child))
 
 			_, err := vault.Init(context.Background(), f.env(), vault.InitOptions{})
 			if !errors.Is(err, vault.ErrInsecureHome) {

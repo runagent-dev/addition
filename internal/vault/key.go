@@ -27,7 +27,7 @@ func (s KeySource) valid() bool {
 }
 
 const (
-	envMasterKey = "ADDN_MASTER_KEY"
+	envMasterKey = "ADDITION_MASTER_KEY"
 	keyFileName  = "master.key"
 
 	// KeychainService is the OS keychain service; the account is the vault's random ID.
@@ -38,7 +38,7 @@ const (
 
 const canaryPlaintext = "addition master key canary"
 
-// resolveKey uses a set ADDN_MASTER_KEY, else only the source the vault recorded at init.
+// resolveKey uses a set ADDITION_MASTER_KEY, else only the source the vault recorded at init.
 func resolveKey(env Env, home *homeDir, rec initRecords) (crypto.Key, error) {
 	if hex, ok := env.LookupEnv(envMasterKey); ok {
 		return parseEnvKey(hex)
@@ -101,7 +101,7 @@ func readKeyFile(home *homeDir) (crypto.Key, error) {
 	return key, nil
 }
 
-// provisionKey finds or creates the key for a new vault; a set ADDN_MASTER_KEY wins over opts.
+// provisionKey finds or creates the key for a new vault; a set ADDITION_MASTER_KEY wins over opts.
 func provisionKey(env Env, home *homeDir, vaultID string, useKeyFile bool) (crypto.Key, KeySource, error) {
 	if hex, ok := env.LookupEnv(envMasterKey); ok {
 		key, err := parseEnvKey(hex)
@@ -146,7 +146,7 @@ func provisionKeychain(vaultID string) (crypto.Key, error) {
 }
 
 func keychainUnavailable(detail string) error {
-	return fmt.Errorf("%w%s: run `addn init --key-file` to keep the key in a 0600 file, or set %s", ErrKeychainUnavailable, detail, envMasterKey)
+	return fmt.Errorf("%w%s: run `addition init --key-file` to keep the key in a 0600 file, or set %s", ErrKeychainUnavailable, detail, envMasterKey)
 }
 
 func newVaultID() (string, error) {

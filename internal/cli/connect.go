@@ -27,18 +27,18 @@ func newConnectCmd(d deps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "connect <app> --as <alias> [--no-browser]",
 		Short: "Connect one app's account through its OAuth consent screen",
-		Long: "Connect an account of one app, such as gmail, google-drive or google-chat (see `addn providers`).\n" +
+		Long: "Connect an account of one app, such as gmail, google-drive or google-chat (see `addition providers`).\n" +
 			"Each app is its own connection: it asks only for its own scopes and can be removed on its own.\n" +
 			"The same alias may be used in several apps. The app is a provider id or toolkit command\n" +
 			"(drive or google-drive).\n\n" +
-			"By default addn opens the consent screen in your browser and waits up to 5 minutes for\n" +
+			"By default addition opens the consent screen in your browser and waits up to 5 minutes for\n" +
 			"the redirect to a listener on 127.0.0.1.\n\n" +
 			"Headless or over SSH, use two steps:\n" +
-			"  addn connect gmail --as work --no-browser\n" +
+			"  addition connect gmail --as work --no-browser\n" +
 			"      prints JSON with authorize_url; open it on any device and approve. The browser then\n" +
 			"      lands on http://127.0.0.1:<port>/callback?code=…&state=…, a page that fails to load;\n" +
 			"      copy the full URL from the address bar.\n" +
-			"  addn connect --complete '<that URL>'\n" +
+			"  addition connect --complete '<that URL>'\n" +
 			"      finishes the connection. Each authorization works once, for 10 minutes.\n\n" +
 			"Reconnecting an alias asks for the union of the scopes already granted and the app's own,\n" +
 			"and stores what the provider actually granted.",
@@ -51,7 +51,7 @@ func newConnectCmd(d deps) *cobra.Command {
 				return completeTwoStep(cmd, d, f.complete)
 			}
 			if len(args) != 1 {
-				return usageError("connect needs an app, e.g. `addn connect gmail --as work`")
+				return usageError("connect needs an app, e.g. `addition connect gmail --as work`")
 			}
 			if f.alias == "" {
 				return usageError("connect needs --as <alias>")
@@ -130,7 +130,7 @@ func loadTarget(ctx context.Context, s *vault.Store, provider *catalog.Provider,
 	client, err := s.GetOAuthClient(ctx, provider.IdentityRoot)
 	if errors.Is(err, vault.ErrNotFound) {
 		return connectTarget{}, &Error{Code: "no-oauth-client", Exit: ExitUsage, Message: fmt.Sprintf(
-			"no OAuth client for %s; create a \"Desktop app\" client and run `addn client add %s --file client_secret.json`",
+			"no OAuth client for %s; create a \"Desktop app\" client and run `addition client add %s --file client_secret.json`",
 			provider.ID, provider.IdentityRoot)}
 	}
 	if err != nil {
@@ -226,7 +226,7 @@ func startTwoStep(cmd *cobra.Command, d deps, s *vault.Store, t connectTarget) e
 	return writeJSON(cmd.OutOrStdout(), map[string]string{
 		"authorize_url": auth.URL(t.provider.OAuth2, t.client),
 		"expires_at":    expires.Format(time.RFC3339),
-		"next":          "addn connect --complete '<redirect-url>'",
+		"next":          "addition connect --complete '<redirect-url>'",
 	})
 }
 
@@ -279,7 +279,7 @@ func completeTwoStep(cmd *cobra.Command, d deps, pasted string) error {
 	}
 
 	auth := oauth.Authorization{State: pending.State, Verifier: pending.Verifier, RedirectURI: pending.RedirectURI, Scopes: pending.Scopes}
-	again := fmt.Sprintf("; this authorization can no longer be used, so run `addn connect %s --as %s --no-browser` again",
+	again := fmt.Sprintf("; this authorization can no longer be used, so run `addition connect %s --as %s --no-browser` again",
 		pending.Provider, pending.Alias)
 	g, err := redeem(ctx, d, t, auth, code)
 	if err != nil {
@@ -308,13 +308,13 @@ func pendingError(err error) error {
 	switch {
 	case errors.Is(err, vault.ErrNotFound):
 		return &Error{Code: "unknown-state", Exit: ExitUsage,
-			Message: "no pending authorization matches this URL's state; it was already used or never issued. Run `addn connect <provider> --as <alias> --no-browser` again"}
+			Message: "no pending authorization matches this URL's state; it was already used or never issued. Run `addition connect <provider> --as <alias> --no-browser` again"}
 	case errors.Is(err, vault.ErrPendingExpired):
 		return &Error{Code: "authorization-expired", Exit: ExitUsage,
-			Message: "this authorization expired; run `addn connect <provider> --as <alias> --no-browser` again"}
+			Message: "this authorization expired; run `addition connect <provider> --as <alias> --no-browser` again"}
 	case errors.Is(err, vault.ErrPendingClaimed):
 		return &Error{Code: "authorization-in-progress", Exit: ExitUsage,
-			Message: "another `addn connect --complete` is finishing this authorization; if it was interrupted, run `addn connect <provider> --as <alias> --no-browser` again"}
+			Message: "another `addition connect --complete` is finishing this authorization; if it was interrupted, run `addition connect <provider> --as <alias> --no-browser` again"}
 	}
 	return vaultError(err)
 }
@@ -434,7 +434,7 @@ func saveAccount(ctx context.Context, tx *vault.Tx, t connectTarget, auth oauth.
 	}
 	if added := missingScopes(existing.Scopes, t.accountScopes); len(missingScopes(added, auth.Scopes)) > 0 {
 		return savedAccount{}, &Error{Code: "stale-authorization", Exit: ExitUsage, Message: fmt.Sprintf(
-			"%s:%s gained %s after this authorization started, and it did not ask for them; nothing was changed. Run `addn connect %s --as %s` again to authorize every scope",
+			"%s:%s gained %s after this authorization started, and it did not ask for them; nothing was changed. Run `addition connect %s --as %s` again to authorize every scope",
 			r.Provider, r.Alias, strings.Join(missingScopes(added, auth.Scopes), " "), r.Provider, r.Alias)}
 	}
 	sameSubject := existing.Subject != "" && existing.Subject == subject
@@ -453,7 +453,7 @@ func matchesAccount(existing vault.Account, subject, display string) bool {
 }
 
 // oauthError maps engine failures to the exit codes: 2 for a bad paste or state, 4 for a provider
-// refusal or an unusable 2xx, 5 for the network or a provider 5xx. Every message is addn's own.
+// refusal or an unusable 2xx, 5 for the network or a provider 5xx. Every message is addition's own.
 func oauthError(err error) *Error {
 	var authErr *oauth.AuthorizationError
 	var provErr *oauth.ProviderError
@@ -478,7 +478,7 @@ func oauthError(err error) *Error {
 	case errors.As(err, &netErr):
 		return &Error{Code: "network", Message: err.Error(), Exit: ExitUpstreamServer}
 	}
-	return &Error{Code: "internal", Message: "the OAuth flow failed inside addn", Exit: ExitInternal}
+	return &Error{Code: "internal", Message: "the OAuth flow failed inside addition", Exit: ExitInternal}
 }
 
 var providerErrorCodes = map[string]string{
