@@ -591,7 +591,7 @@ func TestInstallsWithTheRealWget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decodeSuccess(t, h.run())
+	decodeSuccess(t, h.run(withEnv("ADDITION_ALLOW_WGET", "1")))
 }
 
 func TestTrailingNewlineInTheInstallDirIsKept(t *testing.T) {
@@ -677,64 +677,113 @@ func newTLSRelease(t *testing.T, rel *release, redirect map[string]string) *tlsR
 }
 
 func TestRedirectsMayNotLeaveHTTPS(t *testing.T) {
-	downloaders := map[string]func(t *testing.T, h *harness, tr *tlsRelease) []func(*invocation){
-		"curl": func(t *testing.T, h *harness, tr *tlsRelease) []func(*invocation) {
-			return []func(*invocation){withEnv("CURL_CA_BUNDLE", tr.caFile), withEnv("SSL_CERT_FILE", tr.caFile)}
-		},
-		"wget": func(t *testing.T, h *harness, tr *tlsRelease) []func(*invocation) {
-			wget, err := exec.LookPath("wget")
-			if err != nil {
-				t.Skip("wget not installed")
-			}
-			_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
-			if err := os.Symlink(wget, filepath.Join(h.tools.dir, "wget")); err != nil {
-				t.Fatal(err)
-			}
-			rc := filepath.Join(t.TempDir(), "wgetrc")
-			if err := os.WriteFile(rc, []byte("ca_certificate = "+tr.caFile+"\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			return []func(*invocation){withEnv("WGETRC", rc)}
-		},
+	cases := []struct {
+		label, target string
+		ok            bool
+	}{
+		{"https to https", "/blob/archive", true},
+		{"https to http", "PLAIN" + linuxArchive, false},
+		{"https to ftp", "ftp://127.0.0.1:9/addition.tar.gz", false},
 	}
-	for name, setup := range downloaders {
-		t.Run(name, func(t *testing.T) {
-			cases := []struct {
-				label, target string
-				ok            bool
-			}{
-				{"https to https", "/blob/archive", true},
-				{"https to http", "PLAIN" + linuxArchive, false},
-				{"https to ftp", "ftp://127.0.0.1:9/addition.tar.gz", false},
-			}
-			for _, c := range cases {
-				if name == "wget" && !c.ok {
-					continue // GNU wget's --https-only does not constrain redirects; accepted, see README
-				}
-				t.Run(c.label, func(t *testing.T) {
-					h := newHarness(t)
-					h.rel.publish(t, latest, "0.3.0")
-					h.rel.set("/blob/archive", h.rel.get(linuxArchive))
-					target := strings.Replace(c.target, "PLAIN", h.rel.srv.URL, 1)
-					tr := newTLSRelease(t, h.rel, map[string]string{linuxArchive: target})
-					h.rel.mu.Lock()
-					h.rel.requests = nil
-					h.rel.mu.Unlock()
-					mods := append(setup(t, h, tr), withEnv("ADDITION_BASE_URL", tr.srv.URL))
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			h := newHarness(t)
+			h.rel.publish(t, latest, "0.3.0")
+			h.rel.set("/blob/archive", h.rel.get(linuxArchive))
+			target := strings.Replace(c.target, "PLAIN", h.rel.srv.URL, 1)
+			tr := newTLSRelease(t, h.rel, map[string]string{linuxArchive: target})
 
-					r := h.run(mods...)
+			r := h.run(withEnv("CURL_CA_BUNDLE", tr.caFile), withEnv("SSL_CERT_FILE", tr.caFile), withEnv("ADDITION_BASE_URL", tr.srv.URL))
 
-					if c.ok {
-						decodeSuccess(t, r)
-						return
-					}
-					assertFailure(t, r, "download-failed", 5)
-					if reqs := h.rel.requested(); len(reqs) != 0 {
-						t.Errorf("the redirect was followed: %v", reqs)
-					}
-					h.assertNothingInstalled()
-				})
+			if c.ok {
+				decodeSuccess(t, r)
+				return
 			}
+			assertFailure(t, r, "download-failed", 5)
+			if reqs := h.rel.requested(); len(reqs) != 0 {
+				t.Errorf("the redirect was followed: %v", reqs)
+			}
+			h.assertNothingInstalled()
 		})
+	}
+}
+
+func TestOptInGNUWgetInstallsFromHTTPS(t *testing.T) {
+	wget, err := exec.LookPath("wget")
+	if err != nil {
+		t.Skip("wget not installed")
+	}
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	h.rel.set("/blob/archive", h.rel.get(linuxArchive))
+	tr := newTLSRelease(t, h.rel, map[string]string{linuxArchive: "/blob/archive"})
+	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+	if err := os.Symlink(wget, filepath.Join(h.tools.dir, "wget")); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(t.TempDir(), "wgetrc")
+	if err := os.WriteFile(rc, []byte("ca_certificate = "+tr.caFile+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	decodeSuccess(t, h.run(withEnv("WGETRC", rc), withEnv("ADDITION_ALLOW_WGET", "1"), withEnv("ADDITION_BASE_URL", tr.srv.URL)))
+}
+
+func TestOptInWgetWithoutHTTPSOnlyStillInstallsFromHTTPS(t *testing.T) {
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	tr := newTLSRelease(t, h.rel, nil)
+	curl := hostTool(t, "curl")
+	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+	h.tools.writeShim(t, "wget", fmt.Sprintf(`if [ "$1" = --help ]; then echo "BusyBox v1.36 multi-call binary. Usage: wget [-qc] [-O FILE] URL" >&2; exit 1; fi
+case "$*" in *--https-only*) echo "wget: unrecognized option: https-only" >&2; exit 1 ;; esac
+[ "$1" = -q ] && [ "$2" = -O ] && [ "$4" = -- ] || { echo "unexpected wget args: $*" >&2; exit 3; }
+exec %s -fsSL -o "$3" -- "$5"
+`, curl))
+
+	decodeSuccess(t, h.run(withEnv("CURL_CA_BUNDLE", tr.caFile), withEnv("ADDITION_ALLOW_WGET", "1"), withEnv("ADDITION_BASE_URL", tr.srv.URL)))
+}
+
+func TestOptInWgetGetsHTTPSOnlyWhenItSupportsIt(t *testing.T) {
+	h := newHarness(t)
+	h.rel.publish(t, latest, "0.3.0")
+	tr := newTLSRelease(t, h.rel, nil)
+	curl := hostTool(t, "curl")
+	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+	h.tools.writeShim(t, "wget", fmt.Sprintf(`if [ "$1" = --help ]; then echo "      --https-only   only follow secure HTTPS links"; exit 0; fi
+[ "$1" = -q ] && [ "$2" = --https-only ] && [ "$3" = -O ] && [ "$5" = -- ] || { echo "unexpected wget args: $*" >&2; exit 3; }
+exec %s -fsSL -o "$4" -- "$6"
+`, curl))
+
+	decodeSuccess(t, h.run(withEnv("CURL_CA_BUNDLE", tr.caFile), withEnv("ADDITION_ALLOW_WGET", "1"), withEnv("ADDITION_BASE_URL", tr.srv.URL)))
+}
+
+func TestEmptyPATHEntriesMeanTheCurrentDirectory(t *testing.T) {
+	entries := map[string]func(tools string) []string{
+		"leading":  func(tools string) []string { return []string{"", tools} },
+		"middle":   func(tools string) []string { return []string{tools, "", "/nonexistent"} },
+		"trailing": func(tools string) []string { return []string{tools, ""} },
+	}
+	for _, shell := range distinctShells(t) {
+		for name, entry := range entries {
+			t.Run(strings.Join(shell, " ")+"/"+name, func(t *testing.T) {
+				h := newHarness(t)
+				h.rel.publish(t, latest, "0.3.0")
+				if err := os.MkdirAll(h.install, 0o755); err != nil {
+					t.Fatal(err)
+				}
+
+				r := h.run(
+					withShell(shell...),
+					withEnv("ADDITION_INSTALL_DIR", "."),
+					withPath(entry(h.tools.dir)...),
+					func(i *invocation) { i.dir = h.install },
+				)
+
+				if got := decodeSuccess(t, r); !got.OnPath {
+					t.Errorf("on_path = false although an empty PATH entry resolves addition from the current directory:\n%s", r.stderr)
+				}
+			})
+		}
 	}
 }

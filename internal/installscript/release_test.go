@@ -184,6 +184,26 @@ func TestDistCheckAcceptsTheExpectedAssets(t *testing.T) {
 	}
 }
 
+func TestDistCheckAcceptsTheFilesGoReleaserLeavesBehind(t *testing.T) {
+	dir := distDir(t, "v0.1.0", "0.1.0")
+	for _, name := range []string{"CHANGELOG.md", "artifacts.json", "config.yaml", "metadata.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{
+		"addition_darwin_amd64_v1", "addition_darwin_arm64_v8.0", "addition_linux_amd64_v1",
+		"addition_linux_arm64_v8.0", "addition_windows_amd64_v1", "addition_windows_arm64_v8.0",
+	} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := runDistCheck(t, dir, "v0.1.0"); err != nil {
+		t.Errorf("%v\n%s", err, out)
+	}
+}
+
 func TestDistCheckRefusesAWrongBuild(t *testing.T) {
 	cases := map[string]func(t *testing.T, dir string){
 		"binary built for another tag": nil,
@@ -200,6 +220,19 @@ func TestDistCheckRefusesAWrongBuild(t *testing.T) {
 			data, _ := os.ReadFile(filepath.Join(dir, "checksums.txt"))
 			lines := strings.SplitAfter(string(data), "\n")
 			_ = os.WriteFile(filepath.Join(dir, "checksums.txt"), []byte(strings.Join(lines[1:], "")), 0o644)
+		},
+		"extra empty zip": func(t *testing.T, dir string) {
+			_ = os.WriteFile(filepath.Join(dir, "extra.zip"), nil, 0o644)
+		},
+		"extra tar.gz": func(t *testing.T, dir string) {
+			_ = os.WriteFile(filepath.Join(dir, "extra.tar.gz"), []byte("x"), 0o644)
+		},
+		"unknown file": func(t *testing.T, dir string) {
+			_ = os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644)
+		},
+		"unknown directory": func(t *testing.T, dir string) { _ = os.Mkdir(filepath.Join(dir, "extra"), 0o755) },
+		"hidden file": func(t *testing.T, dir string) {
+			_ = os.WriteFile(filepath.Join(dir, ".hidden"), []byte("x"), 0o644)
 		},
 		"archive changed after checksumming": func(t *testing.T, dir string) {
 			_ = os.WriteFile(filepath.Join(dir, "addition_darwin_arm64.tar.gz"), []byte("tampered"), 0o644)

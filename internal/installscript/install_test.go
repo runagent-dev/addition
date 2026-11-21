@@ -25,7 +25,7 @@ import (
 // scriptTools is every external command install.sh may use; tests put only these on PATH.
 var scriptTools = []string{
 	"awk", "basename", "cat", "chmod", "cp", "dirname", "gzip", "mkdir", "mktemp",
-	"mv", "rm", "sed", "tar", "tr", "wc",
+	"mv", "rm", "sed", "tar", "tr", "wc", "grep",
 }
 
 var platforms = []struct{ os, arch string }{
@@ -661,19 +661,39 @@ func TestUnsupportedPlatformsAreRefusedBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-func TestWgetIsUsedWhenThereIsNoCurl(t *testing.T) {
+func TestWgetIsUsedWhenThereIsNoCurlAndTheUserOptsIn(t *testing.T) {
 	h := newHarness(t)
 	h.rel.publish(t, "/latest/download", "0.3.0")
 	curl := hostTool(t, "curl")
 	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
-	h.tools.writeShim(t, "wget", fmt.Sprintf(`[ "$1" = -q ] && [ "$2" = -O ] && [ "$4" = -- ] || { echo "unexpected wget args: $*" >&2; exit 3; }
+	h.tools.writeShim(t, "wget", fmt.Sprintf(`[ "$1" = --help ] && exit 0
+[ "$1" = -q ] && [ "$2" = -O ] && [ "$4" = -- ] || { echo "unexpected wget args: $*" >&2; exit 3; }
 exec %s -fsSL -o "$3" -- "$5"
 `, curl))
 
-	got := decodeSuccess(t, h.run())
+	got := decodeSuccess(t, h.run(withEnv("ADDITION_ALLOW_WGET", "1")))
 
 	if got.Version != "0.3.0" {
 		t.Errorf("version = %q", got.Version)
+	}
+}
+
+func TestNoCurlIsAnErrorEvenWhenWgetIsInstalled(t *testing.T) {
+	for _, optIn := range []string{"", "0", "yes"} {
+		t.Run("ADDITION_ALLOW_WGET="+optIn, func(t *testing.T) {
+			h := newHarness(t)
+			_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
+			h.tools.writeShim(t, "wget", "exit 0\n")
+
+			got := assertFailure(t, h.run(withEnv("ADDITION_ALLOW_WGET", optIn)), "no-downloader", 2)
+
+			if !strings.Contains(got.Error.Message, "install curl") {
+				t.Errorf("message %q should say to install curl", got.Error.Message)
+			}
+			if reqs := h.rel.requested(); len(reqs) != 0 {
+				t.Errorf("requests = %v, want none", reqs)
+			}
+		})
 	}
 }
 
@@ -681,10 +701,7 @@ func TestNoCurlAndNoWgetIsAnError(t *testing.T) {
 	h := newHarness(t)
 	_ = os.Remove(filepath.Join(h.tools.dir, "curl"))
 
-	assertFailure(t, h.run(), "no-downloader", 1)
-	if reqs := h.rel.requested(); len(reqs) != 0 {
-		t.Errorf("requests = %v, want none", reqs)
-	}
+	assertFailure(t, h.run(withEnv("ADDITION_ALLOW_WGET", "1")), "no-downloader", 2)
 }
 
 func TestShasumIsUsedWhenThereIsNoSha256sum(t *testing.T) {
