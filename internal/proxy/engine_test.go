@@ -432,13 +432,22 @@ func TestEngineStopsWaitingWhenCancelled(t *testing.T) {
 func TestEngineGivesUpOnAServerThatNeverAnswers(t *testing.T) {
 	up := newUpstream(t, func(_ int, _ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
 	e := newEngine(&fakeRenewer{}, &sleeps{})
-	e.Client = &http.Client{Timeout: 50 * time.Millisecond}
+	e.Client = &http.Client{Timeout: time.Minute}
+	var waited time.Duration
+	e.AfterFunc = func(d time.Duration, expire func()) (stop func() bool) {
+		waited = d
+		go expire()
+		return func() bool { return true }
+	}
 
 	_, err := e.Do(context.Background(), proxy.Request{Method: "GET", URL: up.url("/")}, "t")
 
 	var nerr *proxy.NetworkError
 	if !errors.As(err, &nerr) {
-		t.Errorf("err = %#v, want a NetworkError once the client's timeout passes", err)
+		t.Errorf("err = %#v, want a NetworkError once the header timeout expires", err)
+	}
+	if waited != time.Minute {
+		t.Errorf("header timeout = %s, want the client's 1m", waited)
 	}
 }
 

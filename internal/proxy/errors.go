@@ -39,3 +39,14 @@ func (e *AuthFailure) Error() string {
 }
 
 func (e *AuthFailure) Unwrap() error { return e.Err }
+
+// Attempted wraps a failure that came after a request was sent. Status is the last status
+// the API answered with, 0 if it never answered.
+type Attempted struct {
+	Status int
+	Err    error
+}
+
+func (e *Attempted) Error() string { return e.Err.Error() }
+
+func (e *Attempted) Unwrap() error { return e.Err }
