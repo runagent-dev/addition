@@ -326,6 +326,7 @@ addition call <app> [-a <alias>] <METHOD> <path> [--query k=v] [--data @file.jso
 addition connect <app> --as <alias> [--no-browser]
 addition accounts [list|show|remove <app>:<alias> [--revoke [--and-siblings]]|default|check [--live]]
 addition tools [--provider p] [--json]            addition skill install [--harness …]
+addition guide [<topic>|all] [--json]
 ```
 
 - Tool commands are **generated at runtime** from embedded toolkit YAML;
@@ -334,7 +335,8 @@ addition tools [--provider p] [--json]            addition skill install [--harn
 - Exit codes: `0` ok · `1` internal (addition itself failed or was interrupted: stdout not writable, broken embedded data, vault busy) · `2` usage/validation ·
   `3` not connected / needs reauth · `4` upstream 4xx · `5` upstream 5xx/network ·
   `6` policy denied (Phase 2).
-- Help text is human-readable; JSON is the contract for tool and data commands.
+- Help text is human-readable; JSON is the contract for tool and data commands. `addition guide` is the one
+  exception: it prints Markdown, from the binary's embedded `shared/guide/`, with no network and no vault.
 - Stderr is JSON lines: a progress notice is one object per line, such as
   `{"notice":"open-browser-failed","authorize_url":"…"}`, and an error envelope, if
   any, is always the last line.
@@ -372,7 +374,7 @@ can use the same day.
 | M7a | Release pipeline + installer | `addition version` build metadata, GoReleaser binaries (linux/mac/windows, amd64/arm64) with version-less archive names and `checksums.txt`, GitHub artifact attestation, `release.yml` on `v*` tags, a snapshot build in CI, `install.sh`, README install section. Built ahead of M5–M6 so every later milestone can be tried from a release | ✅ installable binaries |
 | M7b | Self-update | `addition update` (explicit only, checksum-verified, atomic replace, same release assets as the installer) | ✅ |
 | M7c | Package-manager shims | npm `@addition/cli`, PyPI `addition`, Homebrew `addition`; each ships or fetches the released binary and verifies its checksum | ✅ |
-| M7d | Agent surface | `addition guide`, `addition skill install` (SKILL.md for Claude Code / Codex / generic), `llms.txt`, per-app recipes, `addition tools --json` schemas | ✅ **v0.1.0** |
+| M7d | Agent surface | `addition guide` (embedded Markdown manual, per-app recipes, doc-truth tests) and `llms.txt` ✅ done; `addition skill install` (SKILL.md for Claude Code / Codex / generic) and `addition tools --json` schemas still pending | ✅ **v0.1.0** |
 
 **M1–M4 test focus (port, don't reinvent):**
 - `crypto_interop.yaml`, `token_refresh.yaml`, `proxy_requests.yaml` and
