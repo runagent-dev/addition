@@ -45,4 +45,4 @@ The earlier TypeScript/Python SDK lives on the `archive/sdk-v0.1` branch.
 
 ## License
 
-MIT
+Apache License 2.0. Copyright 2026 RunAgent Technology Limited. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

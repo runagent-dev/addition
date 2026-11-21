@@ -44,7 +44,7 @@ From the market research (Nov 2026):
 
 | Gap in existing tools | Our answer |
 |---|---|
-| Core engine closed or paywalled (Composio, Arcade, Nango's actions/syncs/MCP) | Whole engine MIT. No hosted tier holding features hostage. |
+| Core engine closed or paywalled (Composio, Arcade, Nango's actions/syncs/MCP) | Whole engine Apache-2.0. No hosted tier holding features hostage. |
 | MCP-first; files and pipes are second-class (Executor) | CLI-first. Files in, files out, `--json` everywhere. MCP is a projection on top (Phase 2). |
 | OAuth / token handling is the #1 bug source everywhere (Executor: ~50 of 400 recent issues) | We already have a TDD'd OAuth/refresh/retry engine + fixtures; port it, keep the fixtures as the contract. |
 | Heavy stacks, fragile native deps (Bun + napi keyring + workerd) | One static Go binary. Pure-Go SQLite. No runtime. |
