@@ -25,6 +25,7 @@ Branch on `code` (stable), not `message`. Exit: 1 internal, 2 usage, 3 needs (re
 | `host-not-allowed`, `path-not-allowed` | 2 | Only the app's own https hosts and paths |
 | `bad-output`, `file-exists`, `target-is-symlink`, `binary-response` | 2 | Fix the `-o` target; `--force` replaces; binary needs `-o` |
 | `not-connected`, `needs-reauth`, `legacy-account`, `scopes-not-granted` | 3 | `addition connect <app> --as <alias>`, ticking every permission |
+| `needs-action` | 3 | `addition doctor` found something for you to do; run its `next` command |
 | `access-denied`, `authorization-error` | 4 | Cancelled or refused; ask, then retry `connect` |
 | `token-exchange-rejected`, `identity-rejected`, `revoke-rejected`, `refresh-rejected` | 4 or 5 | Provider refused; check the OAuth client, reconnect |
 | `upstream-error`, `unsupported-encoding` | 4 or 5 | Read the body on stdout; a compressed response is withheld |

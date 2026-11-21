@@ -133,9 +133,9 @@ func TestGuideHelpSaysItIsNotJSON(t *testing.T) {
 	}
 }
 
-type failingTransport struct{ t *testing.T }
+type noNetworkTransport struct{ t *testing.T }
 
-func (f failingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+func (f noNetworkTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	f.t.Errorf("guide made a network request to %s", r.URL)
 	return nil, http.ErrNotSupported
 }
@@ -145,7 +145,7 @@ func TestGuideIsOfflineAndTouchesNoVault(t *testing.T) {
 	d := deps{
 		catalogFS:  shared.FS,
 		guideFS:    shared.Guide,
-		httpClient: &http.Client{Transport: failingTransport{t}},
+		httpClient: &http.Client{Transport: noNetworkTransport{t}},
 		env: vault.Env{LookupEnv: func(key string) (string, bool) {
 			t.Errorf("guide read the environment variable %s", key)
 			return "", false
