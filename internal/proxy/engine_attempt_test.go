@@ -65,7 +65,6 @@ func TestEngineDoesNotWaitForTheBodyOfARejectedResponse(t *testing.T) {
 	for _, rejected := range []int{401, 429} {
 		t.Run(strconv.Itoa(rejected), func(t *testing.T) {
 			release := make(chan struct{})
-			t.Cleanup(func() { close(release) })
 			up := newUpstream(t, func(n int, w http.ResponseWriter, _ *http.Request) {
 				if n > 1 {
 					_, _ = w.Write([]byte("done"))
@@ -77,6 +76,7 @@ func TestEngineDoesNotWaitForTheBodyOfARejectedResponse(t *testing.T) {
 				w.(http.Flusher).Flush()
 				<-release
 			})
+			t.Cleanup(func() { close(release) })
 			e := newEngine(&fakeRenewer{token: newAccess}, &sleeps{})
 			e.Client = &http.Client{Timeout: time.Minute}
 			finished := make(chan *proxy.Response, 1)

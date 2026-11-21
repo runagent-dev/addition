@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,12 +17,16 @@ import (
 // Version is overridden at build time with -ldflags "-X …/internal/cli.Version=…".
 var Version = "dev"
 
-// Run executes addn with args and returns the process exit code.
-func Run(args []string, stdout, stderr io.Writer) int {
-	return execute(args, stdout, stderr, productionDeps())
+// Run executes addn with args and returns the process exit code. Cancelling ctx interrupts the command.
+func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return executeContext(ctx, args, stdout, stderr, productionDeps())
 }
 
 func execute(args []string, stdout, stderr io.Writer, d deps) int {
+	return executeContext(context.Background(), args, stdout, stderr, d)
+}
+
+func executeContext(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	if d.env.Now == nil {
 		d.env.Now = time.Now
 	}
@@ -44,7 +49,7 @@ func execute(args []string, stdout, stderr io.Writer, d deps) int {
 		root.SetIn(d.stdin)
 	}
 
-	err := root.Execute()
+	err := root.ExecuteContext(ctx)
 	if out.err != nil {
 		err = &Error{Code: "output", Message: "writing output: " + out.err.Error(), Exit: ExitInternal}
 	}

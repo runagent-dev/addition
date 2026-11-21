@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"math/rand/v2"
 	"net/http"
@@ -19,7 +20,6 @@ const (
 	maxThrottleRetries = 3
 	maxRetryWait       = 30 * time.Second
 	baseBackoff        = time.Second
-	drainLimit         = 64 << 10
 )
 
 // Request is one API request. Body is held in memory so it can be sent again after a retry.
@@ -60,9 +60,9 @@ type Engine struct {
 
 // Do sends req with accessToken. A 401 is renewed and retried once; a 429 is retried up to
 // three times, waiting for Retry-After or backing off. Any other response, including a second
-// 401 or an exhausted 429, is returned as is.
+// 401 or an exhausted 429, is returned as is. Once a request has been sent, a failure is an *Attempted.
 func (e *Engine) Do(ctx context.Context, req Request, accessToken string) (*Response, error) {
-	renewed, throttled := false, 0
+	renewed, throttled, lastStatus := false, 0, 0
 	var sent []string
 	for {
 		if !slices.Contains(sent, accessToken) {
@@ -70,27 +70,35 @@ func (e *Engine) Do(ctx context.Context, req Request, accessToken string) (*Resp
 		}
 		resp, err := e.send(ctx, req, accessToken)
 		if err != nil {
-			return nil, err
+			return nil, afterSending(lastStatus, err)
 		}
-		resp.Tokens = sent
+		lastStatus, resp.Tokens = resp.Status, sent
 		switch {
 		case resp.Status == http.StatusUnauthorized && !renewed:
 			renewed = true
-			discard(resp)
+			_ = resp.Body.Close()
 			if accessToken, err = e.renew(ctx, accessToken); err != nil {
-				return nil, &AuthFailure{Status: http.StatusUnauthorized, Err: err}
+				return nil, &Attempted{Status: lastStatus, Err: &AuthFailure{Status: lastStatus, Err: err}}
 			}
 		case resp.Status == http.StatusTooManyRequests && throttled < maxThrottleRetries:
 			wait := e.retryDelay(resp.Header, throttled)
-			discard(resp)
+			_ = resp.Body.Close()
 			throttled++
 			if err := e.sleep(ctx, wait); err != nil {
-				return nil, err
+				return nil, &Attempted{Status: lastStatus, Err: err}
 			}
 		default:
 			return resp, nil
 		}
 	}
+}
+
+// afterSending marks err as a failure of a request that was sent, unless it was never built.
+func afterSending(lastStatus int, err error) error {
+	if _, unsendable := errors.AsType[*RequestError](err); unsendable {
+		return err
+	}
+	return &Attempted{Status: lastStatus, Err: err}
 }
 
 func (e *Engine) renew(ctx context.Context, rejected string) (string, error) {
@@ -100,22 +108,17 @@ func (e *Engine) renew(ctx context.Context, rejected string) (string, error) {
 	return e.Renewer.Renew(ctx, rejected)
 }
 
+// send makes one attempt on the transport itself, so no Location is parsed and no redirect considered.
 func (e *Engine) send(ctx context.Context, req Request, accessToken string) (*Response, error) {
 	attempt, cancel := context.WithCancel(ctx)
-	headersTimer := e.startHeaderTimer(cancel)
+	stopTimer := e.startHeaderTimer(cancel)
+	defer stopTimer()
 	httpReq, err := e.build(attempt, req, accessToken)
 	if err != nil {
 		cancel()
 		return nil, &RequestError{Code: "bad-request", Message: "the request could not be built"}
 	}
-	client := &http.Client{
-		Transport:     e.Client.Transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	resp, err := client.Do(httpReq)
-	if headersTimer != nil {
-		headersTimer.Stop()
-	}
+	resp, err := e.transport().RoundTrip(httpReq)
 	if err != nil {
 		cancel()
 		if ctx.Err() != nil {
@@ -126,21 +129,37 @@ func (e *Engine) send(ctx context.Context, req Request, accessToken string) (*Re
 	return &Response{Status: resp.StatusCode, Header: resp.Header, Body: &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}}, nil
 }
 
-func (e *Engine) startHeaderTimer(cancel context.CancelFunc) *time.Timer {
-	if e.Client.Timeout <= 0 {
-		return nil
+func (e *Engine) transport() http.RoundTripper {
+	if e.Client != nil && e.Client.Transport != nil {
+		return e.Client.Transport
 	}
-	return time.AfterFunc(e.Client.Timeout, cancel)
+	return http.DefaultTransport
 }
 
-func (e *Engine) build(ctx context.Context, req Request, accessToken string) (*http.Request, error) {
-	var body io.Reader
-	if len(req.Body) > 0 {
-		body = bytes.NewReader(req.Body)
+// startHeaderTimer cancels the attempt if no response head arrives within the client's timeout.
+func (e *Engine) startHeaderTimer(cancel context.CancelFunc) (stop func()) {
+	if e.Client == nil || e.Client.Timeout <= 0 {
+		return func() {}
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), body)
+	afterFunc := e.AfterFunc
+	if afterFunc == nil {
+		afterFunc = func(d time.Duration, expire func()) func() bool { return time.AfterFunc(d, expire).Stop }
+	}
+	stopTimer := afterFunc(e.Client.Timeout, cancel)
+	return func() { stopTimer() }
+}
+
+// build makes a request the transport cannot replay on its own: it has no GetBody and closes its
+// connection, so a lost connection ends the attempt instead of repeating a possibly delivered mutation.
+func (e *Engine) build(ctx context.Context, req Request, accessToken string) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+	httpReq.Close = true
+	if len(req.Body) > 0 {
+		httpReq.Body = io.NopCloser(bytes.NewReader(req.Body))
+		httpReq.ContentLength = int64(len(req.Body))
 	}
 	for name, values := range req.Header {
 		httpReq.Header[name] = append([]string(nil), values...)
@@ -172,8 +191,8 @@ func (e *Engine) retryAfter(h http.Header) (time.Duration, bool) {
 		name = e.API.RateLimit.RetryAfterHeader
 	}
 	value := strings.TrimSpace(h.Get(name))
-	if seconds, err := strconv.ParseUint(value, 10, 32); err == nil {
-		return time.Duration(seconds) * time.Second, true
+	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		return time.Duration(min(seconds, uint64(maxRetryWait/time.Second))) * time.Second, true
 	}
 	if at, err := http.ParseTime(value); err == nil {
 		return max(at.Sub(e.now()), 0), true
@@ -207,12 +226,6 @@ func (e *Engine) sleep(ctx context.Context, d time.Duration) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-// discard closes a response that will be retried, reading only a little of its body.
-func discard(resp *Response) {
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit))
-	_ = resp.Body.Close()
 }
 
 // cancelOnClose ends the request's context when its body is closed.

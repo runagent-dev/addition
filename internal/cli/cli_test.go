@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -23,7 +24,7 @@ func (r result) command() string {
 
 func run(args ...string) result {
 	var stdout, stderr bytes.Buffer
-	code := Run(args, &stdout, &stderr)
+	code := Run(context.Background(), args, &stdout, &stderr)
 	return result{args: args, code: code, stdout: stdout.String(), stderr: stderr.String()}
 }
 
@@ -157,7 +158,7 @@ func (brokenWriter) Write([]byte) (int, error) { return 0, errors.New("no space 
 func TestStdoutWriteFailureIsAnOutputError(t *testing.T) {
 	for _, args := range [][]string{{"version"}, {"--help"}} {
 		var stderr bytes.Buffer
-		code := Run(args, brokenWriter{}, &stderr)
+		code := Run(context.Background(), args, brokenWriter{}, &stderr)
 
 		if code != ExitInternal {
 			t.Errorf("%v: exit code = %d, want %d", args, code, ExitInternal)
@@ -174,7 +175,7 @@ func TestNilArgsDoNotReadProcessArgs(t *testing.T) {
 	os.Args = []string{"addn.test", "bogus"}
 
 	var stdout, stderr bytes.Buffer
-	if code := Run(nil, &stdout, &stderr); code != ExitOK {
+	if code := Run(context.Background(), nil, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("exit code = %d, want %d (stderr: %q)", code, ExitOK, stderr.String())
 	}
 }
@@ -189,7 +190,7 @@ func TestHelpTopicMatchesHelpFlag(t *testing.T) {
 
 func TestNilWritersFallBackToProcessStreams(t *testing.T) {
 	var stderr bytes.Buffer
-	if code := Run([]string{"version"}, nil, &stderr); code != ExitOK {
+	if code := Run(context.Background(), []string{"version"}, nil, &stderr); code != ExitOK {
 		t.Fatalf("exit code = %d, want %d (stderr: %q)", code, ExitOK, stderr.String())
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -339,6 +340,10 @@ var challengeParam = regexp.MustCompile(`code_challenge=([A-Za-z0-9_-]{43})`)
 func (h *harness) run(args ...string) result { return h.runWithStdin(nil, args...) }
 
 func (h *harness) runWithStdin(stdin io.Reader, args ...string) result {
+	return h.runContext(context.Background(), stdin, args...)
+}
+
+func (h *harness) runContext(ctx context.Context, stdin io.Reader, args ...string) result {
 	d := h.deps
 	d.stdin = stdin
 	open := d.openBrowser
@@ -347,7 +352,7 @@ func (h *harness) runWithStdin(stdin io.Reader, args ...string) result {
 		return open(authorizeURL)
 	}
 	var stdout, stderr bytes.Buffer
-	code := execute(args, &stdout, &stderr, d)
+	code := executeContext(ctx, args, &stdout, &stderr, d)
 	r := result{args: args, code: code, stdout: stdout.String(), stderr: stderr.String()}
 	h.noteChallenges(r.stdout + r.stderr)
 	h.mu.Lock()
