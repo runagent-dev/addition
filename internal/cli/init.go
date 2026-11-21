@@ -51,6 +51,9 @@ var vaultErrorCodes = []struct {
 
 // vaultError maps known setup problems to exit 2; anything else is a failure of addn itself.
 func vaultError(err error) *Error {
+	if errors.Is(err, vault.ErrBusy) {
+		return &Error{Code: "vault-busy", Message: vault.ErrBusy.Error(), Exit: ExitInternal}
+	}
 	for _, c := range vaultErrorCodes {
 		if errors.Is(err, c.err) {
 			return &Error{Code: c.code, Message: err.Error(), Exit: ExitUsage}

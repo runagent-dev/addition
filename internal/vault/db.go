@@ -13,7 +13,8 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const dbFile = "addition.db"
@@ -95,13 +96,41 @@ func openDB(ctx context.Context, home string) (*sql.DB, error) {
 var beforeWriterLock = func() {}
 
 // beginWriterTx takes the SQLite writer lock (BEGIN IMMEDIATE) that every write and key publication holds.
-// The lock ignores caller cancellation; database/sql would otherwise roll back and release it mid-work.
+// Cancelling ctx stops the wait for the lock; once the lock is held, it is never released on cancellation.
 func beginWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	beforeWriterLock()
-	return db.BeginTx(context.WithoutCancel(ctx), nil)
+	type acquisition struct {
+		tx  *sql.Tx
+		err error
+	}
+	acquired := make(chan acquisition, 1)
+	go func() {
+		tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
+		acquired <- acquisition{tx, err}
+	}()
+	select {
+	case got := <-acquired:
+		return got.tx, writerLockError(got.err)
+	case <-ctx.Done():
+		go func() {
+			if got := <-acquired; got.tx != nil {
+				_ = got.tx.Rollback()
+			}
+		}()
+		return nil, ctx.Err()
+	}
+}
+
+// writerLockError names a busy database with addn's own error, so the driver's text never reaches the user.
+func writerLockError(err error) error {
+	var driverErr *sqlite.Error
+	if errors.As(err, &driverErr) && driverErr.Code()&0xff == sqlite3.SQLITE_BUSY {
+		return ErrBusy
+	}
+	return err
 }
 
 // withWriterLock runs fn while holding the writer lock, and commits nothing.
