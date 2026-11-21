@@ -96,8 +96,19 @@ func openDB(ctx context.Context, home string) (*sql.DB, error) {
 var beforeWriterLock = func() {}
 
 // beginWriterTx takes the SQLite writer lock (BEGIN IMMEDIATE) that every write and key publication holds.
-// Cancelling ctx stops the wait for the lock; once the lock is held, it is never released on cancellation.
+// The wait ignores caller cancellation: database/sql would otherwise roll back and release the lock mid-work.
 func beginWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	beforeWriterLock()
+	tx, err := db.BeginTx(context.WithoutCancel(ctx), nil)
+	return tx, writerLockError(err)
+}
+
+// beginInterruptibleWriterTx is beginWriterTx for callers that would rather give up than wait: cancelling
+// ctx stops the wait, and a lock granted after that is released at once. A lock already held is never released.
+func beginInterruptibleWriterTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
