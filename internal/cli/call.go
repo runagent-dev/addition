@@ -158,7 +158,7 @@ func sealCallError(ctx context.Context, err error) error {
 }
 
 // auditTimeout bounds a call audit write made after the command's own context may be cancelled.
-const auditTimeout = 5 * time.Second
+var auditTimeout = 5 * time.Second
 
 // recordCall audits a request that was sent. The call already happened, so it ignores cancellation
 // of the command, and a failed write is a stderr notice, not an error.
