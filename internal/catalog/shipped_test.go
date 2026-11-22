@@ -261,16 +261,16 @@ func TestShippedGoogleOperations(t *testing.T) {
 		method string
 		path   string
 	}{
-		"gmail":           {70, "users.messages.list", "GET", "/gmail/v1/users/{userId}/messages"},
-		"google-drive":    {50, "files.list", "GET", "/drive/v3/files"},
-		"google-calendar": {30, "events.list", "GET", "/calendar/v3/calendars/{calendarId}/events"},
-		"google-docs":     {3, "documents.get", "GET", "/v1/documents/{documentId}"},
-		"google-chat":     {40, "spaces.list", "GET", "/v1/spaces"},
+		"gmail":           {70, "gmail.users.messages.list", "GET", "/gmail/v1/users/{userId}/messages"},
+		"google-drive":    {50, "drive.files.list", "GET", "/drive/v3/files"},
+		"google-calendar": {30, "calendar.events.list", "GET", "/calendar/v3/calendars/{calendarId}/events"},
+		"google-docs":     {3, "docs.documents.get", "GET", "/v1/documents/{documentId}"},
+		"google-chat":     {40, "chat.spaces.list", "GET", "/v1/spaces"},
 	} {
 		t.Run(provider, func(t *testing.T) {
-			set, ok := c.Operations(provider)
-			if !ok {
-				t.Fatalf("no operations for %s", provider)
+			set, ok, err := c.Operations(provider)
+			if err != nil || !ok {
+				t.Fatalf("operations for %s: ok=%v err=%v", provider, ok, err)
 			}
 			if len(set.Operations) < want.min {
 				t.Errorf("%d operations, want at least %d", len(set.Operations), want.min)
@@ -288,5 +288,11 @@ func TestShippedGoogleOperations(t *testing.T) {
 				t.Errorf("operation %s missing", want.id)
 			}
 		})
+	}
+}
+
+func TestShippedOperationsAllValidate(t *testing.T) {
+	if err := shipped(t).CheckOperations(); err != nil {
+		t.Fatal(err)
 	}
 }

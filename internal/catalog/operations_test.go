@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -51,9 +52,9 @@ func operationsFS(files map[string]string) fstest.MapFS {
 func TestOperationsLoad(t *testing.T) {
 	c := mustLoad(t, operationsFS(map[string]string{"acme.yaml": validOperations, "_template.yaml": "provider: \"\"\n"}))
 
-	set, ok := c.Operations("acme")
-	if !ok {
-		t.Fatal("acme operations not loaded")
+	set, ok, err := c.Operations("acme")
+	if err != nil || !ok {
+		t.Fatalf("acme operations: ok=%v err=%v", ok, err)
 	}
 	op := set.Operations[0]
 	if op.ID != "widgets.get" || op.Method != "GET" || op.Path != "/v2/widgets/{widgetId}" || op.Effect != EffectRead {
@@ -62,18 +63,22 @@ func TestOperationsLoad(t *testing.T) {
 	if set.Source.Revision != "20260101" || len(op.Params) != 2 || op.Params[1].Enum[1] != "full" {
 		t.Errorf("source/params = %+v / %+v", set.Source, op.Params)
 	}
-	if _, ok := c.Operations("unknown"); ok {
-		t.Error("a provider without operations should report none")
+	if _, ok, err := c.Operations("unknown"); ok || err != nil {
+		t.Errorf("a provider without operations should report none, got ok=%v err=%v", ok, err)
 	}
-	if got := len(c.OperationSets()); got != 1 {
-		t.Errorf("OperationSets = %d, want 1", got)
+	if got := c.OperationProviders(); len(got) != 1 || got[0] != "acme" {
+		t.Errorf("OperationProviders = %v", got)
+	}
+	again, _, _ := c.Operations("acme")
+	if again != set {
+		t.Error("a second call should return the cached set")
 	}
 }
 
 func TestOperationsAreOptional(t *testing.T) {
 	c := mustLoad(t, operationsFS(nil))
-	if got := len(c.OperationSets()); got != 0 {
-		t.Errorf("OperationSets = %d, want 0", got)
+	if got := c.OperationProviders(); len(got) != 0 {
+		t.Errorf("OperationProviders = %v, want none", got)
 	}
 }
 
@@ -101,7 +106,7 @@ func TestOperationsRejectBadData(t *testing.T) {
 		body string
 		want []string
 	}{
-		"unknown provider": {replaceOnce(t, validOperations, "provider: acme", "provider: nope"), []string{"operations/acme.yaml", "unknown provider"}},
+		"unknown provider": {replaceOnce(t, validOperations, "provider: acme", "provider: nope"), []string{"operations/acme.yaml", "does not match the file name"}},
 		"host not allowed": {replaceOnce(t, validOperations, "host: example.com", "host: evil.example.net"), []string{"host", "allowed_hosts"}},
 		"path off prefix":  {replaceOnce(t, validOperations, "/v2/widgets/{widgetId}", "/other/{widgetId}"), []string{"widgets.get", "allowed_path_prefixes"}},
 		"duplicate id":     {dup, []string{"duplicate", "widgets.get"}},
@@ -113,20 +118,29 @@ func TestOperationsRejectBadData(t *testing.T) {
 		"declared path param not in path": {
 			replaceOnce(t, validOperations, "/v2/widgets/{widgetId}", "/v2/widgets"), []string{"widgets.get", "widgetId"},
 		},
-		"bad param type": {replaceOnce(t, validOperations, "type: string\n        required: true", "type: blob\n        required: true"), []string{"widgetId", "type"}},
+		"bad param type":  {replaceOnce(t, validOperations, "type: string\n        required: true", "type: blob\n        required: true"), []string{"widgetId", "type"}},
 		"bad param place": {replaceOnce(t, validOperations, "in: query", "in: cookie"), []string{"view", "in"}},
 		"unknown field":   {validOperations + "    colour: red\n", []string{"colour"}},
 		"path traversal":  {replaceOnce(t, validOperations, "/v2/widgets/{widgetId}", "/v2/../admin/{widgetId}"), []string{"widgets.get", "path"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			wantLoadError(t, operationsFS(map[string]string{"acme.yaml": tc.body}), tc.want...)
+			c := mustLoad(t, operationsFS(map[string]string{"acme.yaml": tc.body}))
+			err := c.CheckOperations()
+			if err == nil {
+				t.Fatalf("CheckOperations succeeded, want error mentioning %q", tc.want)
+			}
+			for _, f := range tc.want {
+				if !strings.Contains(err.Error(), f) {
+					t.Errorf("error %q does not mention %q", err, f)
+				}
+			}
 		})
 	}
 }
 
 func TestValidateOperationSetWithoutProviders(t *testing.T) {
 	c := mustLoad(t, operationsFS(map[string]string{"acme.yaml": validOperations}))
-	set, _ := c.Operations("acme")
+	set, _, _ := c.Operations("acme")
 	if err := ValidateOperationSet(set, nil); err != nil {
 		t.Errorf("a valid set must pass without a provider: %v", err)
 	}

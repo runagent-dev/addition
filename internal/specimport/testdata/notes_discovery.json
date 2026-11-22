@@ -21,6 +21,7 @@
         "title": {"type": "string", "description": "The note title. Shown in lists."},
         "body": {"type": "string", "description": "Free text, see [formatting](https://example.test/fmt) for details."},
         "pinned": {"type": "boolean"},
+        "tag": {"type": "string", "description": "Optional. Output only. A short tag. Not unique."},
         "labels": {"type": "array", "items": {"type": "string"}},
         "meta": {"$ref": "NoteMeta"}
       }

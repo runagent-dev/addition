@@ -150,6 +150,9 @@ func TestRequestBodyListsTopLevelFields(t *testing.T) {
 	if got["body"].Description != "Free text, see formatting for details." {
 		t.Errorf("markdown links should collapse to their text: %q", got["body"].Description)
 	}
+	if got["tag"].Description != "Optional. Output only. A short tag." {
+		t.Errorf("a leading label such as Optional. should not stand alone: %q", got["tag"].Description)
+	}
 	if got["labels"].Type != "string[]" || got["pinned"].Type != "boolean" || got["meta"].Type != "object" {
 		t.Errorf("types = %v %v %v", got["labels"].Type, got["pinned"].Type, got["meta"].Type)
 	}
@@ -187,11 +190,17 @@ func TestOutputIsDeterministicAndPassesCatalogValidation(t *testing.T) {
 
 func TestRejectsDocumentsItCannotTrust(t *testing.T) {
 	for name, mutate := range map[string]func(string) string{
-		"http root":        func(s string) string { return strings.Replace(s, "https://notes.example.test/", "http://notes.example.test/", 1) },
-		"other format":     func(s string) string { return strings.Replace(s, `"discoveryVersion": "v1"`, `"discoveryVersion": "v9"`, 1) },
-		"unknown verb":     func(s string) string { return strings.Replace(s, `"httpMethod": "PATCH"`, `"httpMethod": "TRACE"`, 1) },
-		"root with a path": func(s string) string { return strings.Replace(s, "https://notes.example.test/", "https://notes.example.test/x/", 1) },
-		"not json":         func(string) string { return "name: notes" },
+		"http root": func(s string) string {
+			return strings.Replace(s, "https://notes.example.test/", "http://notes.example.test/", 1)
+		},
+		"other format": func(s string) string {
+			return strings.Replace(s, `"discoveryVersion": "v1"`, `"discoveryVersion": "v9"`, 1)
+		},
+		"unknown verb": func(s string) string { return strings.Replace(s, `"httpMethod": "PATCH"`, `"httpMethod": "TRACE"`, 1) },
+		"root with a path": func(s string) string {
+			return strings.Replace(s, "https://notes.example.test/", "https://notes.example.test/x/", 1)
+		},
+		"not json": func(string) string { return "name: notes" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile("testdata/notes_discovery.json")
