@@ -252,3 +252,41 @@ func TestShippedGmailToolShape(t *testing.T) {
 		t.Errorf("get_message format param = %+v", get.Params)
 	}
 }
+
+func TestShippedGoogleOperations(t *testing.T) {
+	c := shipped(t)
+	for provider, want := range map[string]struct {
+		min    int
+		id     string
+		method string
+		path   string
+	}{
+		"gmail":           {70, "users.messages.list", "GET", "/gmail/v1/users/{userId}/messages"},
+		"google-drive":    {50, "files.list", "GET", "/drive/v3/files"},
+		"google-calendar": {30, "events.list", "GET", "/calendar/v3/calendars/{calendarId}/events"},
+		"google-docs":     {3, "documents.get", "GET", "/v1/documents/{documentId}"},
+		"google-chat":     {40, "spaces.list", "GET", "/v1/spaces"},
+	} {
+		t.Run(provider, func(t *testing.T) {
+			set, ok := c.Operations(provider)
+			if !ok {
+				t.Fatalf("no operations for %s", provider)
+			}
+			if len(set.Operations) < want.min {
+				t.Errorf("%d operations, want at least %d", len(set.Operations), want.min)
+			}
+			var found bool
+			for _, op := range set.Operations {
+				if op.ID == want.id {
+					found = true
+					if op.Method != want.method || op.Path != want.path || op.Effect != EffectRead || len(op.Scopes) == 0 {
+						t.Errorf("%s = %s %s effect=%s scopes=%v", op.ID, op.Method, op.Path, op.Effect, op.Scopes)
+					}
+				}
+			}
+			if !found {
+				t.Errorf("operation %s missing", want.id)
+			}
+		})
+	}
+}
