@@ -6,10 +6,10 @@ import (
 	"io/fs"
 )
 
-//go:embed providers toolkits guide
+//go:embed providers toolkits operations guide
 var data embed.FS
 
-// FS holds the providers/ and toolkits/ directories.
+// FS holds the providers/, toolkits/ and operations/ directories.
 var FS fs.FS = data
 
 // Guide holds the agent guide: one Markdown file per topic, recipes under apps/.

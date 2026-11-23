@@ -8,12 +8,18 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Catalog is the validated set of providers and the toolkits built on them.
 type Catalog struct {
 	providers map[string]*Provider
 	toolkits  map[string]*Toolkit
+
+	fsys           fs.FS
+	operationFiles []string
+	mu             sync.Mutex
+	operations     map[string]*OperationSet
 }
 
 // Load reads providers/ and toolkits/ from fsys. Files starting with "_" are templates and are skipped.
@@ -37,7 +43,14 @@ func LoadWithOptions(fsys fs.FS, opts Options) (*Catalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Catalog{providers: providers, toolkits: toolkits}, nil
+	operationFiles, err := listOperationFiles(fsys)
+	if err != nil {
+		return nil, err
+	}
+	return &Catalog{
+		providers: providers, toolkits: toolkits,
+		fsys: fsys, operationFiles: operationFiles, operations: map[string]*OperationSet{},
+	}, nil
 }
 
 // Providers returns every provider sorted by id.

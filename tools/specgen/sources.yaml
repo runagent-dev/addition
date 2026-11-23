@@ -1,0 +1,19 @@
+# API descriptions the operation lists in shared/operations are generated from.
+# Run: go run ./tools/specgen            (fetches each description)
+#      go run ./tools/specgen -from DIR  (reads DIR/<provider>.json instead, offline)
+sources:
+  - provider: gmail
+    kind: google-discovery
+    url: https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest
+  - provider: google-calendar
+    kind: google-discovery
+    url: https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest
+  - provider: google-chat
+    kind: google-discovery
+    url: https://www.googleapis.com/discovery/v1/apis/chat/v1/rest
+  - provider: google-docs
+    kind: google-discovery
+    url: https://www.googleapis.com/discovery/v1/apis/docs/v1/rest
+  - provider: google-drive
+    kind: google-discovery
+    url: https://www.googleapis.com/discovery/v1/apis/drive/v3/rest

@@ -1,0 +1,122 @@
+{
+  "kind": "discovery#restDescription",
+  "discoveryVersion": "v1",
+  "name": "notes",
+  "version": "v2",
+  "revision": "20260101",
+  "title": "Notes API",
+  "rootUrl": "https://notes.example.test/",
+  "servicePath": "notes/v2/",
+  "documentationLink": "https://example.test/docs/notes",
+  "parameters": {
+    "alt": {"type": "string", "location": "query", "enum": ["json", "media"], "description": "Data format for response."},
+    "fields": {"type": "string", "location": "query", "description": "Selector specifying which fields to include in a partial response."},
+    "key": {"type": "string", "location": "query", "description": "API key."}
+  },
+  "schemas": {
+    "Note": {
+      "id": "Note",
+      "type": "object",
+      "properties": {
+        "title": {"type": "string", "description": "The note title. Shown in lists."},
+        "body": {"type": "string", "description": "Free text, see [formatting](https://example.test/fmt) for details."},
+        "pinned": {"type": "boolean"},
+        "tag": {"type": "string", "description": "Optional. Output only. A short tag. Not unique."},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "meta": {"$ref": "NoteMeta"}
+      }
+    },
+    "NoteMeta": {"id": "NoteMeta", "type": "object", "properties": {"color": {"type": "string"}}},
+    "ListNotesResponse": {"id": "ListNotesResponse", "type": "object", "properties": {"notes": {"type": "array", "items": {"$ref": "Note"}}}}
+  },
+  "resources": {
+    "notes": {
+      "methods": {
+        "list": {
+          "id": "notes.list",
+          "httpMethod": "GET",
+          "path": "notes",
+          "description": "Lists the notes of the signed-in user. Results are newest first.",
+          "parameters": {
+            "pageSize": {"type": "integer", "format": "int32", "location": "query", "default": "10", "description": "Maximum notes per page."},
+            "labels": {"type": "string", "repeated": true, "location": "query", "description": "Only notes with all of these labels."},
+            "order": {"type": "string", "location": "query", "enum": ["newest", "oldest"], "enumDescriptions": ["Newest first.", "Oldest first."], "description": "Sort order."},
+            "minScore": {"type": "number", "format": "double", "location": "query", "description": "Relevance cut-off."},
+            "legacyFlag": {"type": "boolean", "location": "query", "deprecated": true, "description": "Deprecated: ignored."}
+          },
+          "response": {"$ref": "ListNotesResponse"},
+          "scopes": ["https://example.test/auth/notes.readonly", "https://example.test/auth/notes"]
+        },
+        "get": {
+          "id": "notes.get",
+          "httpMethod": "GET",
+          "path": "notes/{noteId}",
+          "parameterOrder": ["noteId"],
+          "description": "Gets one note.",
+          "parameters": {"noteId": {"type": "string", "location": "path", "required": true, "description": "The note id."}},
+          "response": {"$ref": "Note"},
+          "scopes": ["https://example.test/auth/notes.readonly"]
+        },
+        "create": {
+          "id": "notes.create",
+          "httpMethod": "POST",
+          "path": "notes",
+          "description": "Creates a note.",
+          "request": {"$ref": "Note"},
+          "response": {"$ref": "Note"},
+          "scopes": ["https://example.test/auth/notes"],
+          "supportsMediaUpload": true,
+          "mediaUpload": {"protocols": {"simple": {"path": "/upload/notes/v2/notes", "multipart": true}}}
+        },
+        "patch": {
+          "id": "notes.patch",
+          "httpMethod": "PATCH",
+          "path": "notes/{noteId}",
+          "description": "Updates a note.",
+          "parameters": {"noteId": {"type": "string", "location": "path", "required": true}},
+          "request": {"$ref": "Note"},
+          "scopes": ["https://example.test/auth/notes"]
+        },
+        "delete": {
+          "id": "notes.delete",
+          "httpMethod": "DELETE",
+          "path": "notes/{noteId}",
+          "description": "Deletes a note permanently.",
+          "parameters": {"noteId": {"type": "string", "location": "path", "required": true}},
+          "scopes": ["https://example.test/auth/notes"]
+        },
+        "search": {
+          "id": "notes.search",
+          "httpMethod": "POST",
+          "path": "notes:search",
+          "description": "Searches notes. The request carries the query.",
+          "request": {"$ref": "Note"},
+          "scopes": ["https://example.test/auth/notes.readonly"]
+        },
+        "batchDelete": {
+          "id": "notes.batchDelete",
+          "httpMethod": "POST",
+          "path": "notes:batchDelete",
+          "description": "Deletes many notes.",
+          "request": {"$ref": "Note"},
+          "scopes": ["https://example.test/auth/notes"]
+        }
+      },
+      "resources": {
+        "comments": {
+          "methods": {
+            "get": {
+              "id": "notes.comments.get",
+              "httpMethod": "GET",
+              "path": "{+name}",
+              "flatPath": "notes/{notesId}/comments/{commentsId}",
+              "description": "Gets a comment by resource name.",
+              "parameters": {"name": {"type": "string", "location": "path", "required": true, "pattern": "^notes/[^/]+/comments/[^/]+$", "description": "Resource name, notes/{note}/comments/{comment}."}},
+              "scopes": ["https://example.test/auth/notes.readonly"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

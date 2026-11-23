@@ -369,6 +369,7 @@ can use the same day.
 | **M4** | **Raw call** | `addition call` (§2.5): host allow-list, token injection, refresh under lock, 401 → retry once, 429 backoff, `-o` binary streaming, `call` audit event; `auth check --live` | **✅ agents can hit any Google API** |
 | **M4b** | **Apps are separate connections** | each app its own provider, scopes, hosts and account (`gmail`, `google-drive`, `google-calendar`, new `google-chat` and `google-docs`); `connect <app>`, no `--services`; `call <app>` (app required, no `--provider`); `accounts check` (`auth check` kept as a hidden alias) with `scopes_ready` / `missing_scopes`; one OAuth client per identity root; `legacy-account` for pre-M4b rows; `api.allowed_path_prefixes` keeps an app's token off other apps' routes on a shared host; `oauth2.revoke_scope` and `accounts remove --revoke [--and-siblings]` for Google's grant-wide revocation | ✅ one "Connect" card per app |
 | M4c | Doctor | `addition doctor`: one JSON report on the vault, master-key source, OAuth clients and accounts (offline), with `--live` probing each app's API, and a `next` command, so an agent can diagnose a broken install | ✅ done |
+| M5a | Spec import | `internal/specimport` turns a vendor's own API description into `shared/operations/<provider>.yaml` (every operation: method, path, scopes, params, body fields, derived `effect`); `tools/specgen` regenerates them; Google Discovery adapter first, covering gmail, drive, calendar, docs, chat. Later adapters take OpenAPI (GitHub, Slack, Discord, Microsoft Graph). Operations load lazily so startup stays fast | browse only; `addition search` / `describe` read it next |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
 | M7a | Release pipeline + installer | `addition version` build metadata, GoReleaser binaries (linux/mac/windows, amd64/arm64) with version-less archive names and `checksums.txt`, GitHub artifact attestation, `release.yml` on `v*` tags, a snapshot build in CI, `install.sh`, README install section. Built ahead of M5–M6 so every later milestone can be tried from a release | ✅ installable binaries |
@@ -389,7 +390,8 @@ can use the same day.
   output for any command.
 
 **Phase 1 non-goals:** MCP, policies, non-Google providers, sync, wrappers,
-API-key providers, OpenAPI import.
+API-key providers. Importing a vendor's own API description (Discovery, later OpenAPI) is in scope from M5a;
+copying another aggregator's connector registry is not (its licence forbids it).
 
 ### Phase 2 — "Safe and broader" → `v0.2.0`
 
