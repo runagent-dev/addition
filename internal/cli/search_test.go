@@ -116,14 +116,14 @@ func TestSearchRejectsBadInput(t *testing.T) {
 }
 
 type describeOut struct {
-	Op        string `json:"op"`
-	App       string `json:"app"`
-	Summary   string `json:"summary"`
-	Method    string `json:"method"`
-	Path      string `json:"path"`
-	Effect    string `json:"effect"`
-	Scopes    []string `json:"scopes_any_of"`
-	Params    []struct {
+	Op      string   `json:"op"`
+	App     string   `json:"app"`
+	Summary string   `json:"summary"`
+	Method  string   `json:"method"`
+	Path    string   `json:"path"`
+	Effect  string   `json:"effect"`
+	Scopes  []string `json:"scopes_any_of"`
+	Params  []struct {
 		Name     string `json:"name"`
 		In       string `json:"in"`
 		Required bool   `json:"required"`

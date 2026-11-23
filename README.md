@@ -52,7 +52,8 @@ Other ways in:
 ## For agents
 
 Install it (above), then run `addition guide`: the manual for agents is built into the binary,
-matches its version and works offline. [`llms.txt`](llms.txt) indexes the same pages for crawlers.
+matches its version and works offline. To find what an app can do, run `addition search <what you want to do>`,
+then `addition describe <op>`: both work offline, with no account. [`llms.txt`](llms.txt) indexes the same pages for crawlers.
 
 ## Quick start
 

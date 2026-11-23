@@ -146,34 +146,43 @@ func TestShippedIntentsFindTheRightOperation(t *testing.T) {
 	}
 	ix := opsearch.New(sets)
 	for query, want := range map[string]string{
-		"send an email":                    "gmail.users.messages.send",
-		"search my mail":                   "gmail.users.messages.list",
-		"read a message":                   "gmail.users.messages.get",
-		"download an email attachment":     "gmail.users.messages.attachments.get",
-		"list gmail labels":                "gmail.users.labels.list",
-		"create a draft":                   "gmail.users.drafts.create",
-		"move a message to trash":          "gmail.users.messages.trash",
-		"list calendar events":             "calendar.events.list",
-		"create a calendar event":          "calendar.events.insert",
-		"am i free busy":                   "calendar.freebusy.query",
-		"list my calendars":                "calendar.calendarList.list",
-		"find files in drive":              "drive.files.list",
-		"upload a file to drive":           "drive.files.create",
-		"get file metadata":                "drive.files.get",
-		"share a drive file":               "drive.permissions.create",
-		"delete a drive file":              "drive.files.delete",
-		"list chat spaces":                 "chat.spaces.list",
-		"post a message in a chat space":   "chat.spaces.messages.create",
-		"read a google doc":                "docs.documents.get",
-		"edit a google doc":                "docs.documents.batchUpdate",
-		"create a new document":            "docs.documents.create",
-		"drive.files.export":               "drive.files.export",
-		"export a google doc as pdf":       "drive.files.export",
-		"list members of a chat space":     "chat.spaces.members.list",
+		"send an email":                       "gmail.users.messages.send",
+		"search my mail":                      "gmail.users.messages.list",
+		"read a message":                      "gmail.users.messages.get",
+		"download an email attachment":        "gmail.users.messages.attachments.get",
+		"list gmail labels":                   "gmail.users.labels.list",
+		"create a draft":                      "gmail.users.drafts.create",
+		"move a message to trash":             "gmail.users.messages.trash",
+		"list calendar events":                "calendar.events.list",
+		"create a calendar event":             "calendar.events.insert",
+		"am i free busy":                      "calendar.freebusy.query",
+		"list my calendars":                   "calendar.calendarList.list",
+		"find files in drive":                 "drive.files.list",
+		"upload a file to drive":              "drive.files.create",
+		"get file metadata":                   "drive.files.get",
+		"share a drive file":                  "drive.permissions.create",
+		"delete a drive file":                 "drive.files.delete",
+		"list chat spaces":                    "chat.spaces.list",
+		"post a message in a chat space":      "chat.spaces.messages.create",
+		"read a google doc":                   "docs.documents.get",
+		"edit a google doc":                   "docs.documents.batchUpdate",
+		"create a new document":               "docs.documents.create",
+		"drive.files.export":                  "drive.files.export",
+		"export a google doc as pdf":          "drive.files.export",
+		"who are the members of a chat space": "chat.spaces.members.list",
+		"list members of a chat space":        "chat.spaces.members.list",
 	} {
 		hits, _ := ix.Search(query, opsearch.Options{Limit: 5})
 		if !slices.Contains(ids(hits), want) {
 			t.Errorf("%q: top 5 = %v, want %s", query, ids(hits), want)
 		}
+	}
+}
+
+func TestTotalCountsOnlyRelevantMatches(t *testing.T) {
+	ix := opsearch.New(fakeSets())
+	_, total := ix.Search("send", opsearch.Options{})
+	if total != 1 {
+		t.Errorf("total = %d, want only the clear match", total)
 	}
 }

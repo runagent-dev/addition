@@ -21,7 +21,7 @@ const (
 )
 
 // coreTopics are the topics every guide has, in reading order; apps is generated and the rest are files.
-var coreTopics = []string{"overview", "connect", "call", "accounts", "errors", "troubleshooting", appsTopic}
+var coreTopics = []string{"overview", "discover", "connect", "call", "accounts", "errors", "troubleshooting", appsTopic}
 
 // Topic is one page of the guide. Its Summary is the first line of its Body.
 type Topic struct {
