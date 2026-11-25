@@ -45,18 +45,22 @@ type accountRef struct{ provider, alias string }
 func parseAccountRef(c *catalog.Catalog, ref string) (accountRef, error) {
 	name, alias, ok := strings.Cut(ref, ":")
 	if !ok || name == "" || alias == "" {
-		return accountRef{}, usageError(fmt.Sprintf("%q is not <app>:<alias>, e.g. gmail:work", ref))
+		return accountRef{}, usageError("an account is <app>:<alias>, e.g. gmail:work")
 	}
 	p, found := lookupProvider(c, name)
 	if !found {
-		return accountRef{}, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", name), Exit: ExitUsage}
+		return accountRef{}, &Error{Code: "unknown-provider", Message: "unknown provider (see `addition providers`)", Exit: ExitUsage}
 	}
 	return accountRef{provider: p.ID, alias: alias}, nil
 }
 
 func notConnected(ref accountRef) *Error {
+	alias := ref.alias
+	if vault.LooksLikeCredential(alias) {
+		alias = "<alias>" // a token typed where an alias belongs is never repeated
+	}
 	return &Error{Code: "not-connected", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-		"no account %s:%s; connect it with `addition connect %s --as %s`", ref.provider, ref.alias, ref.provider, ref.alias)}
+		"no account %s:%s; connect it with `addition connect %s --as %s`", ref.provider, alias, ref.provider, alias)}
 }
 
 // accountSession is a loaded catalog and open vault for the account commands.

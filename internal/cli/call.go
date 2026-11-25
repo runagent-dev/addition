@@ -244,7 +244,7 @@ func callFailure(acct vault.Account, provider *catalog.Provider, err error) erro
 			"%s:%s must be reconnected; run `%s`", acct.Provider, acct.Alias, reconnectCommand(provider, acct, vault.KindOAuth2))}
 	case errors.Is(err, proxy.ErrAccountChanged):
 		return &Error{Code: "account-changed", Exit: ExitUsage, Message: fmt.Sprintf(
-			"%s:%s was removed and connected again while the call started; repeat the command", acct.Provider, acct.Alias)}
+			"the credential of %s:%s changed while the call was running; repeat the command", acct.Provider, acct.Alias)}
 	case errors.Is(err, proxy.ErrNoCredential):
 		return notConnected(accountRef{provider: acct.Provider, alias: acct.Alias})
 	case errors.Is(err, proxy.ErrNoOAuthClient):

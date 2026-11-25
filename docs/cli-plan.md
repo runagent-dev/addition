@@ -195,7 +195,11 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   A renewed token of another kind than the request was built for (another process replaced the credential) is not
   sent: the call fails as `account-changed`. `doctor` asks for an OAuth client only for the roots of stored OAuth
   credentials (a fresh vault still gets the Google hint), and reconnect hints say `--method oauth2` when the app's
-  default is a token.
+  default is a token. An alias is at most 32 characters and never one that looks like a credential (a known token
+  prefix such as `ghp_` or `pk_`, or the token being connected): pasting a token into `--as` is refused without
+  repeating it. Usage errors from the argument parser and the unknown-app, unknown-topic and account-reference
+  messages never repeat what was typed. GitHub's OAuth identity is `GET /user` (`id`, `login`), like its token's,
+  so an alias keeps its subject across the two methods.
 - **Back channel:** token, userinfo and revoke requests go straight to the HTTP
   transport, so no redirect is followed, and need a 2xx; any 3xx is a refusal.
   `addition` discards the standard library's logger, so `net/http` never writes to stderr. Error messages are addition's own: the operation, the HTTP status and at

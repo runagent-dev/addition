@@ -187,7 +187,7 @@ func renderApps(c *catalog.Catalog, recipes []Topic) string {
 		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n", p.ID, commandName(c, p), apiHost(p), scopeSummary(p), recipeLink(recipes, p.ID))
 	}
 	if tokens := tokenApps(c); len(tokens) > 0 {
-		fmt.Fprintf(&b, "\nToken apps (%s) connect with a token you create, not OAuth: `addition connect <app> --as <alias> --token-stdin` (`addition guide connect`), then `addition call <app> GET <path>`. They have no recipe yet.\n", strings.Join(tokens, ", "))
+		fmt.Fprintf(&b, "\nToken apps (%s) connect with a token you create by default: `addition connect <app> --as <alias> --token-stdin` (`addition guide connect`); where the app also offers OAuth, `--method oauth2` uses it, and reconnecting an OAuth account needs that flag. Then `addition call <app> GET <path>`. They have no recipe yet.\n", strings.Join(tokens, ", "))
 	}
 	if others := unsupportedApps(c); len(others) > 0 {
 		fmt.Fprintf(&b, "\nOther catalog entries (%s) are not supported in this release.\n", strings.Join(others, ", "))

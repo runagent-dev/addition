@@ -215,8 +215,9 @@ func liveIdentityReason(err error) string {
 }
 
 // liveCheckToken asks the app's identity endpoint, or its probe path, whether an API token still works.
-// The request goes through the call engine, so the host and path allow-lists apply. A token is never
-// refreshed, and a rejection is reported without changing the account.
+// The request goes through the call engine, so the host and path allow-lists apply. With an identity
+// schema the answer is read as connect reads it (bounded, echo-guarded, within the deadline) and must hold
+// the subject and display fields. A token is never refreshed, and a rejection does not change the account.
 func liveCheckToken(ctx context.Context, d deps, provider *catalog.Provider, acct vault.Account, token string) string {
 	if provider.APIKey == nil {
 		return "no-identity-endpoint"
@@ -227,8 +228,26 @@ func liveCheckToken(ctx context.Context, d deps, provider *catalog.Provider, acc
 	if err != nil {
 		return liveVerificationReason(err)
 	}
-	_ = resp.Body.Close()
-	return liveStatusReason(resp.Status)
+	defer resp.Body.Close()
+	if reason := liveStatusReason(resp.Status); reason != liveOK || provider.APIKey.Identity == nil {
+		return reason
+	}
+	if _, err := readIdentity(ctx, resp, provider.APIKey.Identity, token); err != nil {
+		return liveIdentityReadReason(err)
+	}
+	return liveOK
+}
+
+// liveIdentityReadReason classifies a 2xx identity response that could not be read as the schema says:
+// it never counts as live.
+func liveIdentityReadReason(err error) string {
+	if typed, ok := errors.AsType[*Error](err); ok && typed.Code == "network" {
+		return "network"
+	}
+	if typed, ok := errors.AsType[*Error](err); ok && typed.Code == "interrupted" {
+		return "internal"
+	}
+	return "identity-rejected"
 }
 
 func liveStatusReason(status int) string {

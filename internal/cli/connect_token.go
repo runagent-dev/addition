@@ -41,6 +41,9 @@ func connectWithToken(cmd *cobra.Command, d deps, provider *catalog.Provider, f 
 	if err != nil {
 		return err
 	}
+	if token != "" && strings.Contains(f.alias, token) {
+		return &Error{Code: "invalid-account", Exit: ExitUsage, Message: "an alias must not contain a credential; nothing was sent"}
+	}
 	if err := checkTokenShape(provider.APIKey, token); err != nil {
 		return err
 	}

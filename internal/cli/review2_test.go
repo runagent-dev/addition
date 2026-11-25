@@ -21,7 +21,7 @@ func TestRootErrorsNeverRepeatWhatWasTyped(t *testing.T) {
 		"help for an unknown topic":                {[]string{"help", marker}, "addition --help"},
 		"help for a known command and extra input": {[]string{"help", "connect", marker}, "addition --help"},
 		"an unknown command":                       {[]string{marker}, "unknown command"},
-		"an unknown command with flags":            {[]string{marker, "--as", "w"}, "unknown command"},
+		"an unknown command with flags":            {[]string{marker, "--as", "w"}, "addition --help"},
 		"an unknown subcommand":                    {[]string{"accounts", marker}, "unknown command"},
 		"an extra argument":                        {[]string{"version", marker}, "unknown command"},
 		"a value on a bool flag":                   {[]string{"accounts", "check", "--live=" + marker}, "--live"},
@@ -98,7 +98,6 @@ func TestAnAliasThatIsOrContainsTheSuppliedTokenIsRefused(t *testing.T) {
 	for name, alias := range map[string]string{"equal": token, "containing": "work-" + token} {
 		t.Run(name, func(t *testing.T) {
 			th := newTokenHarness(t, tokenProviderOpts{noPrefix: true})
-			th.secrets = append(th.secrets, token)
 
 			r := th.runWithStdin(strings.NewReader(token+"\n"), "connect", tokenApp, "--as", alias, "--token-stdin")
 

@@ -20,7 +20,7 @@ addition accounts remove gmail:work          # local only
 | `status` | Meaning | Do this |
 |---|---|---|
 | `active` | The stored state, not proof: it can still have `live: false` or missing scopes | `accounts check --live` |
-| `needs-reauth` | The refresh token was refused or revoked, or the provider rejected an `api_key` token | `addition connect <app> --as <alias>`; for an `api_key` account add `--token-stdin` and a new token |
+| `needs-reauth` | The refresh token was refused or revoked, or the provider rejected an `api_key` token | `addition connect <app> --as <alias>`; for an `api_key` account add `--token-stdin` and a new token; for an OAuth account of an app whose default is a token (`github`), add `--method oauth2` to keep OAuth |
 | `legacy` | Predates per-app connections (`google:<alias>`) | Remove it, then connect each app you use |
 
 - An `api_key` account (a token you created) has `scopes: []`, `scopes_ready: true`, `missing_scopes: []`, no refresh token and no expiry; none of that is a problem. `check --live` verifies it with one `GET` of the app's identity endpoint (no refresh), and `live_reason` is `token-rejected` when the provider refuses it.

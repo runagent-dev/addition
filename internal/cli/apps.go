@@ -45,7 +45,7 @@ func missingScopes(want, have []string) []string {
 func appProvider(c *catalog.Catalog, name string) (*catalog.Provider, error) {
 	p, ok := lookupProvider(c, name)
 	if !ok {
-		return nil, &Error{Code: "unknown-provider", Exit: ExitUsage, Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", name)}
+		return nil, &Error{Code: "unknown-provider", Exit: ExitUsage, Message: "unknown provider (see `addition providers`)"}
 	}
 	if !c.Connectable(p.ID) {
 		return nil, notAnApp(c, p)

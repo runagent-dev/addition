@@ -288,16 +288,19 @@ func validateCreateURL(k fieldChecker) {
 	}
 }
 
-// validateProbeAsVerification checks that, without an identity, the probe path a token is verified at is a plain
-// path the provider's allowed path prefixes permit; its query, if any, is not part of the route.
+// validateProbeAsVerification checks that, without an identity, the probe path a token is verified at survives
+// request resolution: it parses, its query parses, and its route is a plain path under the allowed path prefixes.
 func validateProbeAsVerification(k fieldChecker, api map[string]any) {
 	probe, _ := api["probe_path"].(string)
-	route, _, _ := strings.Cut(probe, "?")
-	if !PlainPath(route) || strings.ContainsAny(route, "#") {
-		k.fail("identity", "is missing, so a token is verified at api.probe_path, which must be a plain path without dot segments, escapes or empty segments, got %q", probe)
+	target, err := url.Parse(probe)
+	if err == nil {
+		_, err = url.ParseQuery(target.RawQuery)
+	}
+	if err != nil || strings.Contains(probe, "#") || strings.ContainsFunc(probe, isSpaceOrControl) || !PlainPath(target.EscapedPath()) {
+		k.fail("identity", "is missing, so a token is verified at api.probe_path, which must be a plain path with a valid query, without a fragment, dot segments, escapes of slashes or empty segments, got %q", probe)
 		return
 	}
-	if !pathHasAllowedPrefix(route, api) {
+	if !pathHasAllowedPrefix(target.EscapedPath(), api) {
 		k.fail("identity", "is missing, so a token is verified at api.probe_path %q, which is not under any api.allowed_path_prefixes", probe)
 	}
 }

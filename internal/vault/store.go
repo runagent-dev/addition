@@ -186,11 +186,27 @@ var ErrInvalidAccount = errors.New("invalid account")
 
 var (
 	providerIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
-	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 )
 
-// LooksLikeCredential reports whether name resembles a token or key, so it is never accepted as an alias or repeated.
-func LooksLikeCredential(name string) bool { return false }
+// credentialPrefixes are the starts of well-known tokens and keys; a name that carries one is taken for a credential.
+var credentialPrefixes = []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxb-", "xoxp-", "xoxa-", "xoxs-", "pk_", "sk_", "rk_", "glpat-"}
+
+// LooksLikeCredential reports whether name resembles a token or key: a known credential prefix at its start or
+// after a - or _. Such a name is never accepted as an alias or repeated in a message.
+func LooksLikeCredential(name string) bool {
+	for i := range name {
+		if i > 0 && name[i-1] != '-' && name[i-1] != '_' {
+			continue
+		}
+		for _, prefix := range credentialPrefixes {
+			if strings.HasPrefix(name[i:], prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // ValidateAccountName checks a provider id and alias before anything is stored under them.
 func ValidateAccountName(provider, alias string) error {
@@ -199,6 +215,9 @@ func ValidateAccountName(provider, alias string) error {
 	}
 	if !aliasPattern.MatchString(alias) {
 		return fmt.Errorf("%w: alias must match %s", ErrInvalidAccount, aliasPattern)
+	}
+	if LooksLikeCredential(alias) {
+		return fmt.Errorf("%w: an alias must not look like a credential; use a short name such as work", ErrInvalidAccount)
 	}
 	return nil
 }

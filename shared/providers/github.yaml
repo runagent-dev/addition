@@ -30,6 +30,10 @@ oauth2:
   token_params: {}
   token_response_format: "json"
   client_auth_method: "body"
+  identity:
+    url: "https://api.github.com/user"
+    field: "login"
+    subject_field: "id"
 
 api:
   base_url: "https://api.github.com"

@@ -143,7 +143,7 @@ func newClientListCmd(d deps) *cobra.Command {
 func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, error) {
 	p, ok := c.Provider(id)
 	if !ok {
-		return nil, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", id), Exit: ExitUsage}
+		return nil, &Error{Code: "unknown-provider", Message: "unknown provider (see `addition providers`)", Exit: ExitUsage}
 	}
 	root, err := c.IdentityRoot(id)
 	if err != nil {

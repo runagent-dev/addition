@@ -44,8 +44,6 @@ func (a *accountSession) liveChecks(cmd *cobra.Command, d deps, accts checkedAcc
 		switch {
 		case !slices.ContainsFunc(accts.healthy, func(h vault.Account) bool { return h.ID == acct.ID }) || !found:
 			checks = append(checks, doctorCheck{ID: id, Status: checkSkip, Summary: "not probed: the account needs attention first"})
-		case a.probePath(cmd.Context(), provider, acct) == "":
-			checks = append(checks, doctorCheck{ID: id, Status: checkSkip, Summary: "this app defines no probe request"})
 		default:
 			check, err := a.probe(cmd, d, provider, acct)
 			if err != nil {
@@ -62,19 +60,29 @@ func (a *accountSession) liveChecks(cmd *cobra.Command, d deps, accts checkedAcc
 func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Provider, acct vault.Account) (doctorCheck, error) {
 	ctx, cancel := context.WithTimeout(cmd.Context(), probeTimeout)
 	defer cancel()
-	target, err := proxy.ResolveURL(provider.API, a.probePath(ctx, provider, acct), nil)
-	if err != nil {
-		return doctorCheck{}, callRequestError(err)
-	}
-	kind := a.kindOf(ctx, acct)
 	held := &heldValues{}
 	collect := func() { held.collect(context.WithoutCancel(ctx), a, acct, provider) }
 	collect()
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
+	if d.beforeLiveToken != nil {
+		d.beforeLiveToken()
+	}
 	token, err := tokens.Access(ctx)
 	collect()
+	kind := tokens.AuthMethod()
+	if kind == "" {
+		kind = a.kindOf(ctx, acct) // only for the hint: nothing was read
+	}
 	if err != nil {
 		return probeFailure(provider, acct, kind, err)
+	}
+	path := probePathFor(provider, kind)
+	if path == "" {
+		return doctorCheck{Status: checkSkip, Summary: "this app defines no probe request"}, nil
+	}
+	target, err := proxy.ResolveURL(provider.API, path, nil)
+	if err != nil {
+		return doctorCheck{}, callRequestError(err)
 	}
 	engine := &proxy.Engine{
 		Client: d.httpClient, API: provider.API, AuthMethod: tokens.AuthMethod(), AllowCleartext: d.loopbackProviders,
@@ -97,9 +105,9 @@ func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Pro
 	return verdict, nil
 }
 
-// probePath is the app's probe request; a token account falls back to the identity path it was verified with.
-func (a *accountSession) probePath(ctx context.Context, provider *catalog.Provider, acct vault.Account) string {
-	if provider.API.ProbePath == "" && provider.APIKey != nil && provider.APIKey.Identity != nil && a.kindOf(ctx, acct) == vault.KindAPIKey {
+// probePathFor is the app's probe request; a token account falls back to the identity path it was verified with.
+func probePathFor(provider *catalog.Provider, kind string) string {
+	if provider.API.ProbePath == "" && kind == vault.KindAPIKey && provider.APIKey != nil && provider.APIKey.Identity != nil {
 		return provider.APIKey.Identity.Path
 	}
 	return provider.API.ProbePath
