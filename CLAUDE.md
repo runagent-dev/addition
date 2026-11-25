@@ -170,6 +170,7 @@ If a milestone surfaces one of these as "nice to have", note it in the PR descri
 ## 10. References
 
 - `docs/cli-plan.md` — direction, architecture, phases, decisions.
+- `docs/ui-plan.md` — the local UI, the npm entry point and the call log (milestones M7c, U0–U6).
 - `shared/test-fixtures/` — behavioural contract.
 - `archive/sdk-v0.1` branch — the SDK implementation the Go port is based on.
 
