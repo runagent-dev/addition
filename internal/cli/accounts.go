@@ -45,18 +45,22 @@ type accountRef struct{ provider, alias string }
 func parseAccountRef(c *catalog.Catalog, ref string) (accountRef, error) {
 	name, alias, ok := strings.Cut(ref, ":")
 	if !ok || name == "" || alias == "" {
-		return accountRef{}, usageError(fmt.Sprintf("%q is not <app>:<alias>, e.g. gmail:work", ref))
+		return accountRef{}, usageError("an account is <app>:<alias>, e.g. gmail:work")
 	}
 	p, found := lookupProvider(c, name)
 	if !found {
-		return accountRef{}, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", name), Exit: ExitUsage}
+		return accountRef{}, &Error{Code: "unknown-provider", Message: "unknown provider (see `addition providers`)", Exit: ExitUsage}
 	}
 	return accountRef{provider: p.ID, alias: alias}, nil
 }
 
 func notConnected(ref accountRef) *Error {
+	alias := ref.alias
+	if vault.LooksLikeCredential(alias) {
+		alias = "<alias>" // a token typed where an alias belongs is never repeated
+	}
 	return &Error{Code: "not-connected", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-		"no account %s:%s; connect it with `addition connect %s --as %s`", ref.provider, ref.alias, ref.provider, ref.alias)}
+		"no account %s:%s; connect it with `addition connect %s --as %s`", ref.provider, alias, ref.provider, alias)}
 }
 
 // accountSession is a loaded catalog and open vault for the account commands.
@@ -129,6 +133,7 @@ type accountListing struct {
 	Provider        string     `json:"provider"`
 	Alias           string     `json:"alias"`
 	Identity        string     `json:"identity"`
+	Method          string     `json:"method"`
 	Scopes          []string   `json:"scopes"`
 	ScopesReady     bool       `json:"scopes_ready"`
 	MissingScopes   []string   `json:"missing_scopes"`
@@ -140,6 +145,14 @@ type accountListing struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
+// credentialKind is how the credential was obtained, or "" for an account that has none.
+func credentialKind(cred vault.Credential, found bool) string {
+	if !found {
+		return ""
+	}
+	return cred.Kind
+}
+
 func expiryOf(cred vault.Credential) *time.Time {
 	if cred.ExpiresAt.IsZero() {
 		return nil
@@ -148,7 +161,7 @@ func expiryOf(cred vault.Credential) *time.Time {
 }
 
 func (a *accountSession) listing(ctx context.Context, acct vault.Account) (accountListing, error) {
-	cred, _, err := a.credential(ctx, acct)
+	cred, found, err := a.credential(ctx, acct)
 	if err != nil {
 		return accountListing{}, err
 	}
@@ -156,9 +169,10 @@ func (a *accountSession) listing(ctx context.Context, acct vault.Account) (accou
 	if err != nil && !errors.Is(err, vault.ErrNotFound) {
 		return accountListing{}, vaultError(err)
 	}
-	ready, missing := readiness(a.catalog, acct)
+	ready, missing := readiness(a.catalog, acct, credentialKind(cred, found))
 	return accountListing{
-		Provider: acct.Provider, Alias: acct.Alias, Identity: acct.Identity, Scopes: acct.Scopes, Status: a.statusOf(acct),
+		Provider: acct.Provider, Alias: acct.Alias, Identity: acct.Identity, Method: credentialKind(cred, found),
+		Scopes: acct.Scopes, Status: a.statusOf(acct),
 		ScopesReady: ready, MissingScopes: missing,
 		ExpiresAt: expiryOf(cred), HasRefreshToken: cred.RefreshToken != "", Default: def == acct.Alias,
 		CreatedAt: acct.CreatedAt, UpdatedAt: acct.UpdatedAt,

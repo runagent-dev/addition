@@ -13,10 +13,12 @@ import (
 
 // Provider is a provider config with its extends chain already merged in.
 type Provider struct {
-	ID       string   `yaml:"id"`
-	Name     string   `yaml:"name"`
+	ID   string `yaml:"id"`
+	Name string `yaml:"name"`
+	// AuthType is the method `addition connect` uses unless told otherwise: MethodOAuth2 or MethodAPIKey.
 	AuthType string   `yaml:"auth_type"`
 	OAuth2   *OAuth2  `yaml:"oauth2"`
+	APIKey   *APIKey  `yaml:"api_key"`
 	API      API      `yaml:"api"`
 	Doctor   Doctor   `yaml:"doctor"`
 	Quirks   []string `yaml:"quirks"`
@@ -24,6 +26,49 @@ type Provider struct {
 	Extends string `yaml:"-"`
 	// IdentityRoot is the top of the extends chain: it owns the OAuth client the app's accounts use.
 	IdentityRoot string `yaml:"-"`
+}
+
+// The ways an account can be connected, and the values a credential's kind takes in the vault.
+const (
+	MethodOAuth2 = "oauth2"
+	MethodAPIKey = "api_key"
+)
+
+// AuthMethods lists the methods the provider supports, sorted.
+func (p *Provider) AuthMethods() []string {
+	var methods []string
+	if p.APIKey != nil {
+		methods = append(methods, MethodAPIKey)
+	}
+	if p.OAuth2 != nil {
+		methods = append(methods, MethodOAuth2)
+	}
+	return methods
+}
+
+// Supports reports whether the provider can be connected with method.
+func (p *Provider) Supports(method string) bool {
+	return slices.Contains(p.AuthMethods(), method)
+}
+
+// APIKey describes a provider that can be connected with a token the user creates, such as a
+// personal access token. AuthPrefix is a pointer because an explicit empty string means the
+// header value is the bare token, while absent means api.auth_prefix applies.
+type APIKey struct {
+	CreateURL    string          `yaml:"create_url"`
+	Instructions []string        `yaml:"instructions"`
+	TokenPrefix  string          `yaml:"token_prefix"`
+	EnvVar       string          `yaml:"env_var"`
+	AuthPrefix   *string         `yaml:"auth_prefix"`
+	Identity     *APIKeyIdentity `yaml:"identity"`
+}
+
+// APIKeyIdentity names the GET that tells who a token belongs to: Path on the API's own host, and
+// dot-paths into the JSON answer for the stable SubjectField and a display Field.
+type APIKeyIdentity struct {
+	Path         string `yaml:"path"`
+	Field        string `yaml:"field"`
+	SubjectField string `yaml:"subject_field"`
 }
 
 type OAuth2 struct {
@@ -82,6 +127,17 @@ type API struct {
 	Service string `yaml:"service"`
 	// ProbePath is a cheap authenticated GET that `addition doctor --live` sends to check the app works.
 	ProbePath string `yaml:"probe_path"`
+	// APIKeyAuthPrefix is the provider's api_key.auth_prefix, set when the provider is loaded.
+	APIKeyAuthPrefix *string `yaml:"-"`
+}
+
+// AuthPrefixFor is the word that precedes the token in the auth header of a credential obtained with
+// method: the api_key block's own prefix when it has one, else AuthPrefix. It may be empty.
+func (a API) AuthPrefixFor(method string) string {
+	if method == MethodAPIKey && a.APIKeyAuthPrefix != nil {
+		return *a.APIKeyAuthPrefix
+	}
+	return a.AuthPrefix
 }
 
 // Doctor holds the hints `addition doctor` gives for a provider; all are optional.
@@ -263,6 +319,9 @@ func decodeProvider(fields map[string]any) (*Provider, error) {
 	}
 	if p.OAuth2 != nil && p.OAuth2.RevokeScope == "" {
 		p.OAuth2.RevokeScope = revokeScopeToken
+	}
+	if p.APIKey != nil {
+		p.API.APIKeyAuthPrefix = p.APIKey.AuthPrefix
 	}
 	return &p, nil
 }

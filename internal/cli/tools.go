@@ -2,7 +2,6 @@ package cli
 
 import (
 	"cmp"
-	"fmt"
 	"slices"
 
 	"github.com/spf13/cobra"
@@ -31,7 +30,7 @@ func newToolsCmd(d deps) *cobra.Command {
 				return err
 			}
 			if _, ok := c.Provider(provider); provider != "" && !ok {
-				return usageError(fmt.Sprintf("unknown provider %q (see `addition providers`)", provider))
+				return usageError("unknown provider (see `addition providers`)")
 			}
 			rows := []toolListing{}
 			for _, tk := range c.Toolkits() {

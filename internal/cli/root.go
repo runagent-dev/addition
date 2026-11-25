@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Run executes addition with args and returns the process exit code. Cancelling ctx interrupts the command.
@@ -71,6 +72,7 @@ func newRoot(d deps) *cobra.Command {
 		PersistentPreRunE: rejectHiddenCompletion,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetFlagErrorFunc(safeFlagError)
 	root.SetHelpCommand(newHelpCmd(root))
 	root.AddCommand(
 		newVersionCmd(), newProvidersCmd(d), newToolsCmd(d), newInitCmd(d),
@@ -88,7 +90,7 @@ func newHelpCmd(root *cobra.Command) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			target, rest, err := root.Find(args)
 			if err != nil || len(rest) > 0 {
-				return usageError(fmt.Sprintf("unknown help topic %q", strings.Join(args, " ")))
+				return usageError("unknown help topic; run `addition --help`")
 			}
 			target.InitDefaultHelpFlag()
 			target.InitDefaultVersionFlag()
@@ -100,18 +102,61 @@ func newHelpCmd(root *cobra.Command) *cobra.Command {
 // rejectHiddenCompletion blocks cobra's __complete command, which bypasses DisableDefaultCmd.
 func rejectHiddenCompletion(cmd *cobra.Command, _ []string) error {
 	if cmd.Name() == cobra.ShellCompRequestCmd {
-		return usageError(fmt.Sprintf("unknown command %q for \"addition\"", cmd.CalledAs()))
+		return usageError(unknownCommand)
 	}
 	return nil
 }
 
-// asError keeps typed failures; anything else came from cobra's argument parsing.
+const unknownCommand = "unknown command; run `addition --help`"
+
+// asError keeps typed failures; anything else came from cobra's argument parsing, whose text can repeat
+// what was typed, so only its own argument-count messages are passed on.
 func asError(err error) *Error {
 	var typed *Error
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return usageError(err.Error())
+	msg := err.Error()
+	if strings.HasPrefix(msg, "unknown command") {
+		return usageError(unknownCommand)
+	}
+	for _, safe := range cobraCountMessages {
+		if strings.HasPrefix(msg, safe) {
+			return usageError(msg)
+		}
+	}
+	return usageError("invalid usage; run `addition --help`")
+}
+
+// cobraCountMessages start the argument and flag-group errors that name only numbers and flags the command defines.
+var cobraCountMessages = []string{
+	"accepts ", "requires at least ", "requires at most ", "required flag(s) ",
+	"if any flags in the group", "at least one of the flags", "only one of the flags",
+}
+
+// safeFlagError reports a flag that could not be parsed without repeating anything that was typed: a
+// secret given the wrong way, as in --flag=value on a bool flag or a pasted token taken for a flag, would
+// otherwise come back in cobra's message. Only flag names the command defines appear.
+func safeFlagError(cmd *cobra.Command, err error) error {
+	problem := "a flag could not be read"
+	msg := err.Error()
+	if strings.HasPrefix(msg, "unknown flag") || strings.HasPrefix(msg, "unknown shorthand flag") {
+		problem = "unknown flag"
+	}
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		name := "--" + flag.Name
+		display := name
+		if flag.Shorthand != "" {
+			display = "-" + flag.Shorthand + ", " + name
+		}
+		switch {
+		case strings.Contains(msg, fmt.Sprintf("for %q flag", display)):
+			problem = "invalid value for " + name
+		case msg == "flag needs an argument: "+name:
+			problem = name + " needs a value"
+		}
+	})
+	return usageError(problem + "; run `" + cmd.CommandPath() + " --help`")
 }
 
 func writeErrorEnvelope(w io.Writer, e *Error) {

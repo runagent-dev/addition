@@ -256,13 +256,20 @@ func FetchIdentity(ctx context.Context, hc *http.Client, p *catalog.Provider, ac
 	if !isSuccess(status) {
 		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Code: allowlisted(defaultAdapter{}.errorCode(parsed))}
 	}
-	subject, ok := identifier(lookup(parsed, id.SubjectField))
+	return ParseIdentity(status, body, id.SubjectField, id.Field)
+}
+
+// ParseIdentity reads the stable subject and the display name out of a 2xx identity response, by
+// dot-path. A response without either is a *ProviderError that names the path, never the content.
+func ParseIdentity(status int, body []byte, subjectField, displayField string) (Identity, error) {
+	parsed := parseBody(body, "json")
+	subject, ok := identifier(lookup(parsed, subjectField))
 	if !ok {
-		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Problem: "the response has no subject at '" + id.SubjectField + "'"}
+		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Problem: "the response has no subject at '" + subjectField + "'"}
 	}
-	display, _ := lookup(parsed, id.Field).(string)
+	display, _ := lookup(parsed, displayField).(string)
 	if display == "" {
-		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Problem: "the response has no string at '" + id.Field + "'"}
+		return Identity{}, &ProviderError{Op: OpIdentity, Status: status, Problem: "the response has no string at '" + displayField + "'"}
 	}
 	return Identity{Subject: subject, Display: display}, nil
 }

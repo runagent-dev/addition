@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/runagent-dev/addition/internal/catalog"
 	"github.com/runagent-dev/addition/internal/proxy"
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
 func TestCallFailureReportsAReplacedAccountAsAUsageError(t *testing.T) {
-	err := callFailure(vault.Account{Provider: "gmail", Alias: "work"}, "google", proxy.ErrAccountChanged)
+	err := callFailure(vault.Account{Provider: "gmail", Alias: "work"}, &catalog.Provider{ID: "gmail", IdentityRoot: "google"}, proxy.ErrAccountChanged)
 
 	failure := asError(err)
 	if failure.Code != "account-changed" || failure.Exit != ExitUsage {

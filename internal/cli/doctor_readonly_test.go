@@ -122,7 +122,7 @@ func TestDoctorWithAnUnreadableHomeFailsClearly(t *testing.T) {
 
 func TestDoctorOnAnOlderSchemaUpgradesItLikeAnyCommand(t *testing.T) {
 	c := newCallHarness(t)
-	rawExec(t, c.home, `ALTER TABLE credentials DROP COLUMN revision; UPDATE meta SET value = '2' WHERE key = 'schema_version'`)
+	rawExec(t, c.home, `ALTER TABLE credentials DROP COLUMN revision; ALTER TABLE credentials DROP COLUMN kind; UPDATE meta SET value = '2' WHERE key = 'schema_version'`)
 
 	wantHealthy(t, c.run("doctor"))
 }

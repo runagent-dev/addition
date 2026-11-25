@@ -42,8 +42,19 @@ type Account struct {
 	UpdatedAt time.Time
 }
 
+// How a credential was obtained. An empty Kind is KindOAuth2.
+const (
+	KindOAuth2 = "oauth2"
+	KindAPIKey = "api_key"
+)
+
+// ErrInvalidCredential rejects a credential before it is stored; it never echoes the bad value.
+var ErrInvalidCredential = errors.New("invalid credential")
+
 // Credential is an account's token set. Empty RefreshToken and zero ExpiresAt mean "none".
+// An api_key credential is a token the user created: it has no refresh token or expiry and is never refreshed.
 type Credential struct {
+	Kind         string
 	AccessToken  string
 	RefreshToken string
 	TokenType    string
@@ -175,8 +186,27 @@ var ErrInvalidAccount = errors.New("invalid account")
 
 var (
 	providerIDPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
-	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 )
+
+// credentialPrefixes are the starts of well-known tokens and keys; a name that carries one is taken for a credential.
+var credentialPrefixes = []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxb-", "xoxp-", "xoxa-", "xoxs-", "pk_", "sk_", "rk_", "glpat-"}
+
+// LooksLikeCredential reports whether name resembles a token or key: a known credential prefix at its start or
+// after a - or _. Such a name is never accepted as an alias or repeated in a message.
+func LooksLikeCredential(name string) bool {
+	for i := range name {
+		if i > 0 && name[i-1] != '-' && name[i-1] != '_' {
+			continue
+		}
+		for _, prefix := range credentialPrefixes {
+			if strings.HasPrefix(name[i:], prefix) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // ValidateAccountName checks a provider id and alias before anything is stored under them.
 func ValidateAccountName(provider, alias string) error {
@@ -185,6 +215,9 @@ func ValidateAccountName(provider, alias string) error {
 	}
 	if !aliasPattern.MatchString(alias) {
 		return fmt.Errorf("%w: alias must match %s", ErrInvalidAccount, aliasPattern)
+	}
+	if LooksLikeCredential(alias) {
+		return fmt.Errorf("%w: an alias must not look like a credential; use a short name such as work", ErrInvalidAccount)
 	}
 	return nil
 }
@@ -335,6 +368,13 @@ func scanAccount(row scanner) (Account, error) {
 
 // PutCredential replaces the account's credential.
 func (o ops) PutCredential(ctx context.Context, accountID int64, c Credential) error {
+	switch c.Kind {
+	case "":
+		c.Kind = KindOAuth2
+	case KindOAuth2, KindAPIKey:
+	default:
+		return fmt.Errorf("%w: unknown credential kind", ErrInvalidCredential)
+	}
 	access, err := o.seal(accessTokenSlot(accountID), c.AccessToken)
 	if err != nil {
 		return err
@@ -354,16 +394,17 @@ func (o ops) PutCredential(ctx context.Context, accountID int64, c Credential) e
 		c.TokenType = "Bearer"
 	}
 	_, err = o.q.ExecContext(ctx, `
-		INSERT INTO credentials (account_id, access_token_encrypted, refresh_token_encrypted, token_type, expires_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO credentials (account_id, access_token_encrypted, refresh_token_encrypted, token_type, expires_at, updated_at, kind)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (account_id) DO UPDATE SET
 			access_token_encrypted = excluded.access_token_encrypted,
 			refresh_token_encrypted = excluded.refresh_token_encrypted,
 			token_type = excluded.token_type,
 			expires_at = excluded.expires_at,
 			updated_at = excluded.updated_at,
+			kind = excluded.kind,
 			revision = credentials.revision + 1`,
-		accountID, access, refresh, c.TokenType, expires, o.timestamp())
+		accountID, access, refresh, c.TokenType, expires, o.timestamp(), c.Kind)
 	if isForeignKeyViolation(err) {
 		return fmt.Errorf("account %d: %w", accountID, ErrNotFound)
 	}
@@ -375,9 +416,9 @@ func (o ops) GetCredential(ctx context.Context, accountID int64) (Credential, er
 	var access, updated string
 	var refresh, expires sql.NullString
 	err := o.q.QueryRowContext(ctx, `
-		SELECT access_token_encrypted, refresh_token_encrypted, token_type, expires_at, updated_at, revision
+		SELECT access_token_encrypted, refresh_token_encrypted, token_type, expires_at, updated_at, revision, kind
 		FROM credentials WHERE account_id = ?`, accountID).
-		Scan(&access, &refresh, &c.TokenType, &expires, &updated, &c.Revision)
+		Scan(&access, &refresh, &c.TokenType, &expires, &updated, &c.Revision, &c.Kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Credential{}, fmt.Errorf("credential for account %d: %w", accountID, ErrNotFound)
 	}

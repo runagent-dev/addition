@@ -143,7 +143,7 @@ func newClientListCmd(d deps) *cobra.Command {
 func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, error) {
 	p, ok := c.Provider(id)
 	if !ok {
-		return nil, &Error{Code: "unknown-provider", Message: fmt.Sprintf("unknown provider %q (see `addition providers`)", id), Exit: ExitUsage}
+		return nil, &Error{Code: "unknown-provider", Message: "unknown provider (see `addition providers`)", Exit: ExitUsage}
 	}
 	root, err := c.IdentityRoot(id)
 	if err != nil {
@@ -153,7 +153,7 @@ func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, err
 		return nil, &Error{Code: "not-identity-root", Exit: ExitUsage,
 			Message: fmt.Sprintf("%s apps share the OAuth client of %s; run `addition client add %s`", id, root, root)}
 	}
-	if p.AuthType != "oauth2" || p.OAuth2 == nil {
+	if p.OAuth2 == nil {
 		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", id), Exit: ExitUsage}
 	}
 	return p, nil

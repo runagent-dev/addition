@@ -44,8 +44,6 @@ func (a *accountSession) liveChecks(cmd *cobra.Command, d deps, accts checkedAcc
 		switch {
 		case !slices.ContainsFunc(accts.healthy, func(h vault.Account) bool { return h.ID == acct.ID }) || !found:
 			checks = append(checks, doctorCheck{ID: id, Status: checkSkip, Summary: "not probed: the account needs attention first"})
-		case provider.API.ProbePath == "":
-			checks = append(checks, doctorCheck{ID: id, Status: checkSkip, Summary: "this app defines no probe request"})
 		default:
 			check, err := a.probe(cmd, d, provider, acct)
 			if err != nil {
@@ -62,35 +60,65 @@ func (a *accountSession) liveChecks(cmd *cobra.Command, d deps, accts checkedAcc
 func (a *accountSession) probe(cmd *cobra.Command, d deps, provider *catalog.Provider, acct vault.Account) (doctorCheck, error) {
 	ctx, cancel := context.WithTimeout(cmd.Context(), probeTimeout)
 	defer cancel()
-	target, err := proxy.ResolveURL(provider.API, provider.API.ProbePath, nil)
-	if err != nil {
-		return doctorCheck{}, callRequestError(err)
-	}
 	held := &heldValues{}
 	collect := func() { held.collect(context.WithoutCancel(ctx), a, acct, provider) }
 	collect()
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
+	if d.beforeLiveToken != nil {
+		d.beforeLiveToken()
+	}
 	token, err := tokens.Access(ctx)
 	collect()
-	if err != nil {
-		return probeFailure(acct, err)
+	kind := tokens.AuthMethod()
+	if kind == "" {
+		kind = a.kindOf(ctx, acct) // only for the hint: nothing was read
 	}
-	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, AllowCleartext: d.loopbackProviders, Renewer: collectingRenewer{tokens: tokens, collect: collect}, Now: d.now, Sleep: d.sleep}
+	if err != nil {
+		return probeFailure(provider, acct, kind, err)
+	}
+	path := probePathFor(provider, kind)
+	if path == "" {
+		return doctorCheck{Status: checkSkip, Summary: "this app defines no probe request"}, nil
+	}
+	target, err := proxy.ResolveURL(provider.API, path, nil)
+	if err != nil {
+		return doctorCheck{}, callRequestError(err)
+	}
+	engine := &proxy.Engine{
+		Client: d.httpClient, API: provider.API, AuthMethod: tokens.AuthMethod(), AllowCleartext: d.loopbackProviders,
+		Renewer: collectingRenewer{tokens: tokens, collect: collect}, Now: d.now, Sleep: d.sleep,
+	}
 	header := http.Header{"User-Agent": {"addition/" + currentBuild().Version}}
 	resp, err := engine.Do(ctx, proxy.Request{Method: http.MethodGet, URL: target, Header: header}, token)
 	if err != nil {
 		if attempted, sent := errors.AsType[*proxy.Attempted](err); sent {
 			recordCall(cmd, a.store, acct, http.MethodGet, attempted.Status)
 		}
-		return probeFailure(acct, err)
+		return probeFailure(provider, acct, kind, err)
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, http.MethodGet, resp.Status)
-	verdict := probeVerdict(acct, provider.API, resp, *held)
+	verdict := probeVerdict(provider, acct, kind, resp, *held)
 	if verdict.Code == probeForbidden && ctx.Err() != nil {
 		return unavailableVerdict("the API did not finish answering in time, so the account could not be checked"), nil
 	}
 	return verdict, nil
+}
+
+// probePathFor is the app's probe request; a token account falls back to the identity path it was verified with.
+func probePathFor(provider *catalog.Provider, kind string) string {
+	if provider.API.ProbePath == "" && kind == vault.KindAPIKey && provider.APIKey != nil && provider.APIKey.Identity != nil {
+		return provider.APIKey.Identity.Path
+	}
+	return provider.API.ProbePath
+}
+
+// kindOf is how the account's credential was obtained; an account without one counts as OAuth.
+func (a *accountSession) kindOf(ctx context.Context, acct vault.Account) string {
+	if cred, found, err := a.credential(ctx, acct); err == nil && found {
+		return cred.Kind
+	}
+	return vault.KindOAuth2
 }
 
 // collectingRenewer notes the vault's secrets after every renewal, so each refresh token a probe rotates through is held.
@@ -98,6 +126,8 @@ type collectingRenewer struct {
 	tokens  *proxy.TokenManager
 	collect func()
 }
+
+func (r collectingRenewer) AuthMethod() string { return r.tokens.AuthMethod() }
 
 func (r collectingRenewer) Renew(ctx context.Context, rejected string) (string, error) {
 	token, err := r.tokens.Renew(ctx, rejected)
@@ -126,27 +156,28 @@ func nonEmpty(values ...string) []string {
 	return slices.DeleteFunc(slices.Clone(values), func(v string) bool { return v == "" })
 }
 
-func probeVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, held heldValues) doctorCheck {
+func probeVerdict(provider *catalog.Provider, acct vault.Account, kind string, resp *proxy.Response, held heldValues) doctorCheck {
 	switch {
 	case resp.Status >= 200 && resp.Status <= 299:
 		return doctorCheck{Status: checkOK, Code: checkOK, Summary: fmt.Sprintf("the API accepted the account's token (HTTP %d)", resp.Status)}
 	case resp.Status == http.StatusUnauthorized:
-		return probeNeedsReauth(acct, "the API rejected the account's token (HTTP 401)")
+		return probeNeedsReauth(provider, acct, kind, "the API rejected the account's token (HTTP 401)")
 	case resp.Status == http.StatusForbidden:
-		return forbiddenVerdict(acct, api, resp, held)
+		return forbiddenVerdict(provider, acct, kind, resp, held)
 	}
 	return unavailableVerdict(fmt.Sprintf("the API answered HTTP %d, so the account could not be checked", resp.Status))
 }
 
-func probeNeedsReauth(acct vault.Account, summary string) doctorCheck {
-	return doctorCheck{Status: checkFail, Code: codeNeedsReauth, Summary: summary, Fix: reconnectFix(acct)}
+func probeNeedsReauth(provider *catalog.Provider, acct vault.Account, kind, summary string) doctorCheck {
+	return doctorCheck{Status: checkFail, Code: codeNeedsReauth, Summary: summary, Fix: reconnectCommand(provider, acct, kind)}
 }
 
 func unavailableVerdict(summary string) doctorCheck {
 	return doctorCheck{Status: checkWarn, Code: probeUnavailable, Summary: summary}
 }
 
-func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response, held heldValues) doctorCheck {
+func forbiddenVerdict(provider *catalog.Provider, acct vault.Account, kind string, resp *proxy.Response, held heldValues) doctorCheck {
+	api := provider.API
 	disabled, err := serviceDisabled(resp, held.secrets)
 	if err != nil && !errors.Is(err, proxy.ErrCredentialEcho) {
 		return unavailableVerdict("the API did not finish answering, so the account could not be checked")
@@ -157,7 +188,7 @@ func forbiddenVerdict(acct vault.Account, api catalog.API, resp *proxy.Response,
 			Summary: "the " + api.Service + " API is not enabled in the OAuth client's Cloud project",
 		}
 	}
-	return doctorCheck{Status: checkFail, Code: probeForbidden, Fix: reconnectFix(acct), Summary: "the API refused the account (HTTP 403)"}
+	return doctorCheck{Status: checkFail, Code: probeForbidden, Fix: reconnectCommand(provider, acct, kind), Summary: "the API refused the account (HTTP 403)"}
 }
 
 type errorDetail struct {
@@ -247,7 +278,7 @@ func trustedJSON(data []byte, guard *proxy.EchoGuard) bool {
 }
 
 // probeFailure classifies a failure before or while sending the probe; only addition's own errors and codes leave.
-func probeFailure(acct vault.Account, err error) (doctorCheck, error) {
+func probeFailure(provider *catalog.Provider, acct vault.Account, kind string, err error) (doctorCheck, error) {
 	var refused *oauth.ProviderError
 	var tokenNet *oauth.NetworkError
 	var apiNet *proxy.NetworkError
@@ -256,12 +287,14 @@ func probeFailure(acct vault.Account, err error) (doctorCheck, error) {
 		return doctorCheck{}, interrupted()
 	case errors.Is(err, context.DeadlineExceeded):
 		return unavailableVerdict("the API did not answer in time, so the account could not be checked"), nil
+	case errors.Is(err, proxy.ErrTokenRejected):
+		return probeNeedsReauth(provider, acct, vault.KindAPIKey, "the API rejected the account's token; it must be replaced"), nil
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken), errors.Is(err, proxy.ErrNoCredential):
-		return probeNeedsReauth(acct, "the account's tokens cannot be refreshed; it must be reconnected"), nil
+		return probeNeedsReauth(provider, acct, kind, "the account's tokens cannot be refreshed; it must be reconnected"), nil
 	case errors.Is(err, proxy.ErrNoOAuthClient):
 		return doctorCheck{Status: checkSkip, Summary: "not probed: no OAuth client is stored to refresh the token"}, nil
 	case errors.As(err, &refused) && refused.Status < 500:
-		return probeNeedsReauth(acct, "the provider refused to refresh the account's token"), nil
+		return probeNeedsReauth(provider, acct, kind, "the provider refused to refresh the account's token"), nil
 	case errors.As(err, &refused), errors.As(err, &tokenNet), errors.As(err, &apiNet), errors.Is(err, proxy.ErrAccountChanged):
 		return unavailableVerdict("the provider could not be reached, so the account could not be checked"), nil
 	}

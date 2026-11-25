@@ -1,4 +1,4 @@
-Google Cloud setup, expiring tokens, and the usual install, vault and key problems.
+Google Cloud setup, expiring and rejected tokens, and the usual install, vault and key problems.
 
 # Troubleshooting
 
@@ -18,8 +18,16 @@ While the consent screen is in **Testing**, refresh tokens expire after 7 days: 
 
 ## Common failures
 
-- `needs-reauth`, `scopes-not-granted` (exit 3), `legacy-account` (exit 3): reconnect with `addition connect <app> --as <alias>`; for a legacy `google:<alias>` account, remove it and connect each app separately.
+- `needs-reauth`, `scopes-not-granted` (exit 3), `legacy-account` (exit 3): reconnect with `addition connect <app> --as <alias>` (a token account also needs `--token-stdin`); for a legacy `google:<alias>` account, remove it and connect each app separately.
 - HTTP 403 `SERVICE_DISABLED`: enable that API in the Cloud project, retry after a minute. HTTP 403 `insufficientPermissions`: a scope is missing; `addition accounts show <app>:<alias>`, reconnect.
+
+## Token accounts (API keys, personal access tokens)
+
+- `invalid-token` (exit 3) on `connect`: the app refused the token, so nothing was stored. Create a new one at the URL in the message and run `addition connect <app> --as <alias> --token-stdin` again, with the token on stdin.
+- `needs-reauth` on a call, or `accounts check --live` showing `token-rejected`: the token was revoked or expired at the provider. The fix is the same `connect` with a new token; the alias and its other settings stay.
+- `token-required`: nobody is at a terminal and no source was given. Pipe the token in with `--token-stdin` or name an environment variable with `--token-env`; a token is never taken from an argument.
+- HTTP 403 on a call with a valid token: the token lacks the access that API needs (for GitHub, its permissions or repository selection); create a token that has it.
+- `addition doctor` needs no OAuth client for token accounts and never asks for Google Cloud setup for them.
 
 ## Key problems
 
