@@ -3,7 +3,10 @@
 // throttling and one expired token. It never follows redirects.
 package proxy
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrNeedsReauth    = errors.New("the account needs to be reconnected")
@@ -11,6 +14,9 @@ var (
 	ErrNoCredential   = errors.New("the account has no stored credential")
 	ErrNoOAuthClient  = errors.New("no OAuth client is stored for the provider")
 	ErrAccountChanged = errors.New("the account was replaced after it was selected")
+	// ErrTokenRejected is a pasted API token the provider refused. It is a kind of ErrNeedsReauth: the
+	// token cannot be refreshed, only replaced.
+	ErrTokenRejected = fmt.Errorf("the provider rejected the stored token: %w", ErrNeedsReauth)
 )
 
 // RequestError is a request addition refuses to send. Code is a stable machine-readable identifier

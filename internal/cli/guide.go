@@ -63,17 +63,17 @@ func printGuide(w io.Writer, g *guide.Guide, args []string, asJSON bool) error {
 	}
 	topic, ok := g.Topic(args[0])
 	if !ok {
-		return unknownTopic(g, args[0])
+		return unknownTopic(g)
 	}
 	_, err := io.WriteString(w, topic.Body)
 	return err
 }
 
-func unknownTopic(g *guide.Guide, name string) *Error {
+func unknownTopic(g *guide.Guide) *Error {
 	var ids []string
 	for _, e := range g.Entries() {
 		ids = append(ids, e.ID)
 	}
 	return &Error{Code: "unknown-topic", Exit: ExitUsage,
-		Message: fmt.Sprintf("unknown guide topic %q; valid topics: %s", name, strings.Join(ids, ", "))}
+		Message: fmt.Sprintf("unknown guide topic; valid topics: %s", strings.Join(ids, ", "))}
 }

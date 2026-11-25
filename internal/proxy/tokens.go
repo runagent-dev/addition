@@ -33,6 +33,14 @@ type TokenManager struct {
 
 	mu        sync.Mutex
 	handedOut *seen
+	method    string
+}
+
+// AuthMethod is how the credential last handed out was obtained: catalog.MethodOAuth2 or MethodAPIKey.
+func (m *TokenManager) AuthMethod() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.method
 }
 
 // Access returns the account's access token, refreshing it first if it expires within AccessTokenSkew.
@@ -48,7 +56,7 @@ func (m *TokenManager) Access(ctx context.Context) (string, error) {
 		return "", ErrAccountChanged
 	}
 	if acct.Status != vault.AccountActive {
-		return "", ErrNeedsReauth
+		return "", reauthError(ctx, m.Store, acct.ID)
 	}
 	cred, err := m.Store.GetCredential(ctx, acct.ID)
 	if errors.Is(err, vault.ErrNotFound) {
@@ -58,7 +66,7 @@ func (m *TokenManager) Access(ctx context.Context) (string, error) {
 		return "", err
 	}
 	m.remember(cred)
-	if !m.expiring(cred) {
+	if cred.Kind == vault.KindAPIKey || !m.expiring(cred) {
 		return cred.AccessToken, nil
 	}
 	return m.refresh(ctx, seen{revision: cred.Revision, haveRevision: true})
@@ -89,6 +97,19 @@ func (m *TokenManager) remember(c vault.Credential) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.handedOut = &seen{revision: c.Revision, haveRevision: true}
+	m.method = c.Kind
+}
+
+// reauthError says the account must be reconnected: with a new token if its credential is an API key.
+func reauthError(ctx context.Context, store credentialReader, accountID int64) error {
+	if cred, err := store.GetCredential(ctx, accountID); err == nil && cred.Kind == vault.KindAPIKey {
+		return ErrTokenRejected
+	}
+	return ErrNeedsReauth
+}
+
+type credentialReader interface {
+	GetCredential(ctx context.Context, accountID int64) (vault.Credential, error)
 }
 
 func (m *TokenManager) lastSeen(rejected string) seen {
@@ -136,7 +157,7 @@ func (m *TokenManager) refresh(ctx context.Context, caller seen) (string, error)
 			return nil
 		}
 		if acct.Status != vault.AccountActive {
-			failure = ErrNeedsReauth
+			failure = reauthError(ctx, tx, acct.ID)
 			return nil
 		}
 		cred, err := tx.GetCredential(ctx, acct.ID)
@@ -150,6 +171,12 @@ func (m *TokenManager) refresh(ctx context.Context, caller seen) (string, error)
 		if !caller.isStale(cred) {
 			latest = cred
 			return nil
+		}
+		if cred.Kind == vault.KindAPIKey {
+			failure = ErrTokenRejected
+			acct.Status = vault.AccountNeedsReauth
+			_, err := tx.UpdateAccount(ctx, acct)
+			return err
 		}
 		if cred.RefreshToken == "" {
 			failure = ErrNoRefreshToken

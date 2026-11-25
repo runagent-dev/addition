@@ -3,12 +3,13 @@ package cli
 import "github.com/spf13/cobra"
 
 type providerListing struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	AuthType     string  `json:"auth_type"`
-	Extends      *string `json:"extends"`
-	IdentityRoot string  `json:"identity_root"`
-	Connectable  bool    `json:"connectable"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	AuthType     string   `json:"auth_type"`
+	AuthMethods  []string `json:"auth_methods"`
+	Extends      *string  `json:"extends"`
+	IdentityRoot string   `json:"identity_root"`
+	Connectable  bool     `json:"connectable"`
 }
 
 func newProvidersCmd(d deps) *cobra.Command {
@@ -27,7 +28,7 @@ func newProvidersCmd(d deps) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				row := providerListing{ID: p.ID, Name: p.Name, AuthType: p.AuthType, IdentityRoot: root, Connectable: c.Connectable(p.ID)}
+				row := providerListing{ID: p.ID, Name: p.Name, AuthType: p.AuthType, AuthMethods: append([]string{}, p.AuthMethods()...), IdentityRoot: root, Connectable: c.Connectable(p.ID)}
 				if p.Extends != "" {
 					row.Extends = &p.Extends
 				}

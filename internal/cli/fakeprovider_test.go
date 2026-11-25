@@ -316,6 +316,8 @@ type harness struct {
 	mu         sync.Mutex
 	results    []result
 	challenges map[string]bool
+	// secrets are extra values no command may print, log or take as an argument, such as pasted API tokens.
+	secrets []string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -439,6 +441,7 @@ func (h *harness) assertNothingLeaked() {
 		}
 	}
 	secrets = append(secrets, h.google.issued...)
+	secrets = append(secrets, h.secrets...)
 	for _, q := range h.google.authorizes {
 		challenges[q.Get("code_challenge")] = true
 	}
@@ -446,6 +449,11 @@ func (h *harness) assertNothingLeaked() {
 
 	for _, r := range h.results {
 		assertNoLeak(h.t, r, secrets...)
+		for _, secret := range h.secrets {
+			if slices.ContainsFunc(r.args, func(arg string) bool { return strings.Contains(arg, secret) }) {
+				h.t.Errorf("a secret was passed in the arguments of `%s`, where `ps` can see it", r.command())
+			}
+		}
 		for stream, out := range map[string]string{"stdout": r.stdout, "stderr": r.stderr} {
 			for _, run := range base64URLRun.FindAllString(out, -1) {
 				for i := 0; i+43 <= len(run); i++ {

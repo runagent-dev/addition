@@ -68,19 +68,30 @@ func runAccountsRemove(cmd *cobra.Command, d deps, ref string, f removeFlags) er
 	var siblings []vault.Account
 	outcome := revokeOutcome{}
 	if f.revoke {
-		if siblings, err = a.grantSiblings(ctx, acct); err != nil {
+		// The siblings and the revocation both come from this one read of the credential.
+		cred, hasCred, err := a.credential(ctx, acct)
+		if err != nil {
+			return err
+		}
+		if siblings, err = a.grantSiblings(ctx, acct, cred, hasCred); err != nil {
 			return err
 		}
 		if len(siblings) > 0 && !f.andSiblings {
 			return a.revokeAffectsOthers(acct, siblings)
 		}
-		outcome = a.revoke(ctx, d, acct)
+		if d.afterSiblingSelection != nil {
+			d.afterSiblingSelection()
+		}
+		outcome = a.revoke(ctx, d, acct, cred, hasCred)
 	}
 	invalidated := []vault.Account{}
 	if outcome.OK {
 		invalidated = siblings
 	}
 	var marked []string
+	if d.beforeRemoveCommit != nil {
+		d.beforeRemoveCommit()
+	}
 	err = a.store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
 		marked = nil
 		if err := tx.Audit(ctx, vault.RevokeEvent{AccountID: acct.ID}); err != nil {
@@ -124,6 +135,11 @@ func markNeedsReauth(ctx context.Context, tx *vault.Tx, acct vault.Account) (boo
 	if err != nil {
 		return false, err
 	}
+	if cred, err := tx.GetCredential(ctx, current.ID); err == nil && cred.Kind == vault.KindAPIKey {
+		return false, nil
+	} else if err != nil && !errors.Is(err, vault.ErrNotFound) {
+		return false, err
+	}
 	current.Status = vault.AccountNeedsReauth
 	if _, err := tx.UpdateAccount(ctx, current); err != nil {
 		return false, err
@@ -133,9 +149,9 @@ func markNeedsReauth(ctx context.Context, tx *vault.Tx, acct vault.Account) (boo
 
 // grantSiblings lists the other accounts a revocation of acct reaches: where the provider revokes a
 // whole grant, those under the same identity root that belong to the same identity.
-func (a *accountSession) grantSiblings(ctx context.Context, acct vault.Account) ([]vault.Account, error) {
+func (a *accountSession) grantSiblings(ctx context.Context, acct vault.Account, cred vault.Credential, hasCred bool) ([]vault.Account, error) {
 	provider, ok := a.catalog.Provider(acct.Provider)
-	if !ok || provider.OAuth2 == nil || !provider.OAuth2.RevokesGrant() {
+	if !ok || provider.OAuth2 == nil || !provider.OAuth2.RevokesGrant() || hasCred && cred.Kind == vault.KindAPIKey {
 		return nil, nil
 	}
 	all, err := a.store.ListAccounts(ctx, "")
@@ -145,11 +161,18 @@ func (a *accountSession) grantSiblings(ctx context.Context, acct vault.Account) 
 	var siblings []vault.Account
 	for _, other := range all {
 		otherProvider, known := a.catalog.Provider(other.Provider)
-		if other.ID != acct.ID && known && otherProvider.IdentityRoot == provider.IdentityRoot && sameIdentity(acct, other) {
+		if other.ID != acct.ID && known && otherProvider.IdentityRoot == provider.IdentityRoot && sameIdentity(acct, other) && a.holdsGrant(ctx, other) {
 			siblings = append(siblings, other)
 		}
 	}
 	return siblings, nil
+}
+
+// holdsGrant reports whether revoking a grant can reach the account: not if its credential is a token the
+// user created, which is a separate credential at the provider.
+func (a *accountSession) holdsGrant(ctx context.Context, acct vault.Account) bool {
+	cred, found, err := a.credential(ctx, acct)
+	return err != nil || !found || cred.Kind != vault.KindAPIKey
 }
 
 // sameIdentity compares stable subjects; when either account lacks one it falls back to the display identity.
@@ -174,16 +197,22 @@ func (a *accountSession) revokeAffectsOthers(acct vault.Account, siblings []vaul
 }
 
 // revoke asks the provider to drop the grant, preferring the refresh token, which revokes the whole grant at Google.
-func (a *accountSession) revoke(ctx context.Context, d deps, acct vault.Account) revokeOutcome {
+func (a *accountSession) revoke(ctx context.Context, d deps, acct vault.Account, cred vault.Credential, found bool) revokeOutcome {
 	out := revokeOutcome{Attempted: true}
 	provider, ok := a.catalog.Provider(acct.Provider)
-	if !ok || provider.OAuth2 == nil {
+	if !ok {
 		out.Error = "the provider is no longer in the catalog"
 		return out
 	}
-	cred, found, err := a.credential(ctx, acct)
-	if err != nil || !found {
+	if !found {
 		out.Error = "the account has no stored token to revoke"
+		return out
+	}
+	if cred.Kind == vault.KindAPIKey {
+		return revokeOutcome{Error: "addition cannot revoke an API token: revoke it where you created it; nothing was sent"}
+	}
+	if provider.OAuth2 == nil {
+		out.Error = "the provider no longer supports OAuth"
 		return out
 	}
 	token := cred.RefreshToken

@@ -186,16 +186,30 @@ func renderApps(c *catalog.Catalog, recipes []Topic) string {
 	for _, p := range c.Apps(supportedRoot) {
 		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n", p.ID, commandName(c, p), apiHost(p), scopeSummary(p), recipeLink(recipes, p.ID))
 	}
+	if tokens := tokenApps(c); len(tokens) > 0 {
+		fmt.Fprintf(&b, "\nToken apps (%s) connect with a token you create by default: `addition connect <app> --as <alias> --token-stdin` (`addition guide connect`); where the app also offers OAuth, `--method oauth2` uses it, and reconnecting an OAuth account needs that flag. Then `addition call <app> GET <path>`. They have no recipe yet.\n", strings.Join(tokens, ", "))
+	}
 	if others := unsupportedApps(c); len(others) > 0 {
 		fmt.Fprintf(&b, "\nOther catalog entries (%s) are not supported in this release.\n", strings.Join(others, ", "))
 	}
 	return b.String()
 }
 
+// tokenApps are the connectable apps outside the supported root that can be connected with a token.
+func tokenApps(c *catalog.Catalog) []string {
+	var ids []string
+	for _, p := range c.Providers() {
+		if p.IdentityRoot != supportedRoot && c.Connectable(p.ID) && p.Supports(catalog.MethodAPIKey) {
+			ids = append(ids, "`"+p.ID+"`")
+		}
+	}
+	return ids
+}
+
 func unsupportedApps(c *catalog.Catalog) []string {
 	var ids []string
 	for _, p := range c.Providers() {
-		if p.IdentityRoot != supportedRoot && c.Connectable(p.ID) {
+		if p.IdentityRoot != supportedRoot && c.Connectable(p.ID) && !p.Supports(catalog.MethodAPIKey) {
 			ids = append(ids, "`"+p.ID+"`")
 		}
 	}
@@ -219,6 +233,9 @@ func apiHost(p *catalog.Provider) string {
 
 func scopeSummary(p *catalog.Provider) string {
 	var scopes []string
+	if p.OAuth2 == nil {
+		return ""
+	}
 	for _, s := range p.OAuth2.DefaultScopes {
 		s = strings.TrimPrefix(s, googleScopePrefix)
 		if !slices.Contains(identityScopes, s) {

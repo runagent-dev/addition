@@ -172,8 +172,8 @@ func TestMigrationsCreateTheSchema(t *testing.T) {
 	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil {
 		t.Fatalf("schema_version: %v", err)
 	}
-	if version != "3" || vault.SchemaVersion != 3 {
-		t.Errorf("schema_version = %s (binary %d), want 3", version, vault.SchemaVersion)
+	if version != "4" || vault.SchemaVersion != 4 {
+		t.Errorf("schema_version = %s (binary %d), want 4", version, vault.SchemaVersion)
 	}
 	var mode string
 	_ = db.QueryRow(`PRAGMA journal_mode`).Scan(&mode)

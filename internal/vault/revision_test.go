@@ -39,7 +39,7 @@ func TestOpenUpgradesASchemaTwoVaultWithRevisionOnePerCredential(t *testing.T) {
 	_ = s.PutCredential(ctx, acct.ID, vault.Credential{AccessToken: accessToken})
 	_ = s.Close()
 	db := rawDB(t, f.home)
-	if _, err := db.Exec(`ALTER TABLE credentials DROP COLUMN revision; UPDATE meta SET value = '2' WHERE key = 'schema_version'`); err != nil {
+	if _, err := db.Exec(`ALTER TABLE credentials DROP COLUMN revision; ALTER TABLE credentials DROP COLUMN kind; UPDATE meta SET value = '2' WHERE key = 'schema_version'`); err != nil {
 		t.Fatal(err)
 	}
 

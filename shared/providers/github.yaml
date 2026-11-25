@@ -1,6 +1,18 @@
 id: "github"
 name: "GitHub"
-auth_type: "oauth2"
+auth_type: "api_key"   # what `addition connect github` does; the oauth2 block below is the other way in
+
+api_key:
+  create_url: "https://github.com/settings/tokens"
+  instructions:
+    - "Choose Generate new token; a fine-grained token limits access to the repositories you pick."
+    - "Grant only the access your agent needs, set an expiry, and generate it."
+    - "Copy the token: GitHub shows it only once."
+  env_var: "GITHUB_TOKEN"
+  identity:
+    path: "/user"
+    field: "login"
+    subject_field: "id"
 
 oauth2:
   authorize_url: "https://github.com/login/oauth/authorize"
@@ -18,6 +30,10 @@ oauth2:
   token_params: {}
   token_response_format: "json"
   client_auth_method: "body"
+  identity:
+    url: "https://api.github.com/user"
+    field: "login"
+    subject_field: "id"
 
 api:
   base_url: "https://api.github.com"
@@ -25,6 +41,7 @@ api:
     - "api.github.com"
   auth_header: "Authorization"
   auth_prefix: "Bearer"
+  probe_path: "/user"
   rate_limit:
     requests_per_second: 5
     retry_after_header: "Retry-After"

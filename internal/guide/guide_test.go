@@ -122,15 +122,20 @@ func TestAppsTopicListsOnlyTheGoogleApps(t *testing.T) {
 func TestAppsTopicMentionsOtherProvidersOnOneUnsupportedLine(t *testing.T) {
 	g, _ := Load(shared.Guide, shippedCatalog(t))
 	apps, _ := g.Topic("apps")
-	var mentions []string
+	var unsupported, tokens []string
 	for line := range strings.SplitSeq(apps.Body, "\n") {
-		if strings.Contains(line, "`github`") || strings.Contains(line, "`slack`") {
-			mentions = append(mentions, line)
+		if strings.Contains(line, "`slack`") {
+			unsupported = append(unsupported, line)
+		}
+		if strings.Contains(line, "`github`") {
+			tokens = append(tokens, line)
 		}
 	}
-	if len(mentions) != 1 || !strings.Contains(mentions[0], "not supported in this release") ||
-		!strings.Contains(mentions[0], "`github`") || !strings.Contains(mentions[0], "`slack`") {
-		t.Errorf("github and slack must share one line saying they are not supported in this release, got %q", mentions)
+	if len(unsupported) != 1 || !strings.Contains(unsupported[0], "not supported in this release") || strings.Contains(unsupported[0], "`github`") {
+		t.Errorf("slack must be named on one line saying it is not supported in this release, got %q", unsupported)
+	}
+	if len(tokens) != 1 || !strings.Contains(tokens[0], "--token-stdin") || strings.Contains(tokens[0], "not supported") {
+		t.Errorf("github must be named on one line that says it connects with a token, got %q", tokens)
 	}
 	if strings.Contains(apps.Body, "Apps this binary can connect") || strings.Contains(apps.Body, "use `addition call`") {
 		t.Error("the apps topic still advertises every catalog entry")

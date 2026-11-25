@@ -13,7 +13,7 @@ import (
 	"github.com/runagent-dev/addition/shared"
 )
 
-const maxAllGuideBytes = 32 * 1024
+const maxAllGuideBytes = 40 * 1024
 
 type guideEntry struct {
 	ID      string `json:"id"`
