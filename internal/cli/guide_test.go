@@ -62,7 +62,7 @@ func TestGuideJSONListsEveryTopic(t *testing.T) {
 			t.Errorf("entry %+v is malformed", e)
 		}
 	}
-	for _, want := range []string{"overview", "connect", "call", "errors", "accounts", "apps", "troubleshooting", "gmail", "google-drive", "google-calendar", "google-chat", "google-docs", "all"} {
+	for _, want := range []string{"overview", "connect", "call", "errors", "accounts", "apps", "troubleshooting", "gmail", "google-drive", "google-calendar", "google-chat", "google-docs", "clickup", "all"} {
 		if _, ok := ids[want]; !ok {
 			t.Errorf("topic %q is not listed", want)
 		}

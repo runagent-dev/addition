@@ -7,7 +7,7 @@ What addition is, how to think about it, and the first run: install, init, clien
 ## Mental model
 
 - **Connection = app + alias.** Each app (`gmail`, `google-drive`, `google-calendar`, `google-chat`, `google-docs`) is connected separately under an alias (`work`): `gmail:work` and `google-drive:work` are two connections with their own scopes.
-- **Two ways in.** Google apps connect with OAuth. Some apps, such as `github`, connect with a token the human creates (an API key or personal access token): `addition connect github --as me --token-stdin`, no OAuth client needed (`addition guide connect`). Both are stored the same way and used through `addition call`.
+- **Two ways in.** Google apps connect with OAuth. Some apps, such as `github` and `clickup`, connect with a token the human creates (an API key or personal token): `addition connect clickup --as work --token-stdin`, no OAuth client needed (`addition guide connect`). Both are stored the same way and used through `addition call`.
 - **The vault** is one SQLite file under `$ADDITION_HOME`. Secrets in it (the OAuth client secret, access and refresh tokens, API tokens) are encrypted at the field level with a master key kept outside the file.
 - **Output contract.** Data commands print JSON on stdout. Exceptions: `addition guide` and `--help` print text, and `addition call` prints the upstream body exactly as received (JSON, raw text or nothing; see `addition guide call`). A failure prints `{"error":{"code","message"}}` on stderr and exits non-zero (`addition guide errors`). Commands never prompt unless stdin is a terminal.
 

@@ -298,7 +298,7 @@ func TestProvidersListAuthMethods(t *testing.T) {
 	}](t, h.mustRun("providers"))
 
 	want := map[string][]string{
-		"github": {"api_key", "oauth2"}, "gmail": {"oauth2"}, "google": {"oauth2"}, "slack": {"oauth2"},
+		"clickup": {"api_key"}, "github": {"api_key", "oauth2"}, "gmail": {"oauth2"}, "google": {"oauth2"}, "slack": {"oauth2"},
 	}
 	seen := 0
 	for _, row := range rows {

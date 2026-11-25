@@ -38,6 +38,9 @@ func TestShippedGoogleRevocationIsGrantWide(t *testing.T) {
 	c := shipped(t)
 
 	for _, p := range c.Providers() {
+		if p.OAuth2 == nil {
+			continue
+		}
 		want := "token"
 		if p.IdentityRoot == "google" {
 			want = "grant"
