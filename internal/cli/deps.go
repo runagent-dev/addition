@@ -34,6 +34,8 @@ type deps struct {
 	// reads, and just before `accounts remove` takes the writer lock, so a test can change the vault in that window.
 	beforeLiveToken    func()
 	beforeRemoveCommit func()
+	// afterSiblingSelection runs in `accounts remove --revoke` once the grant's siblings are chosen, before the revocation.
+	afterSiblingSelection func()
 	// loopbackProviders is for tests: providers may list host:port API hosts and be reached over http.
 	loopbackProviders bool
 }

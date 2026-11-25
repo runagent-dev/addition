@@ -313,3 +313,25 @@ func TestAChildInheritingTheProbePathIsCheckedAgainstItsOwnPrefixes(t *testing.T
 
 	wantLoadError(t, providerFS(map[string]string{"tok.yaml": parent, "child.yaml": child}), "child.yaml", "probe_path")
 }
+
+func TestTheFullVerificationURLIsValidatedLikeRequestResolution(t *testing.T) {
+	noIdentity := func(probe string) string {
+		body := strings.Replace(apiKeyOnlyProvider, "  identity:\n    path: \"/me\"\n    field: \"name\"\n    subject_field: \"id\"\n", "", 1)
+		return strings.Replace(body, "  probe_path: \"/me\"\n", "  probe_path: \""+probe+"\"\n", 1)
+	}
+	mustLoad(t, providerFS(map[string]string{"tok.yaml": noIdentity("/v1/me?x=1&y=%20")}))
+
+	for name, probe := range map[string]string{"a bad escape in the query": "/v1/me?x=%zz", "a bad escape in the path": "/v1/%zz", "a fragment": "/v1/me#x", "a space in the query": "/v1/me?x=a b"} {
+		t.Run(name, func(t *testing.T) {
+			wantLoadError(t, providerFS(map[string]string{"tok.yaml": noIdentity(probe)}), "tok.yaml", "probe_path")
+		})
+	}
+}
+
+func TestShippedGitHubOAuthKnowsWhoSignedIn(t *testing.T) {
+	id := mustProvider(t, shipped(t), "github").OAuth2.Identity
+
+	if id == nil || id.URL != "https://api.github.com/user" || id.Field != "login" || id.SubjectField != "id" {
+		t.Errorf("github oauth2.identity = %+v, want GET /user with the stable id as subject and the login as display", id)
+	}
+}

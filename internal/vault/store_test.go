@@ -337,7 +337,7 @@ func TestCreateAccountValidatesProviderAndAlias(t *testing.T) {
 	const marker = "ya29.SYNTHETIC-TOKEN-MARKER"
 	ctx := context.Background()
 	s, f := newStore(t)
-	long := strings.Repeat("a", 65)
+	long := strings.Repeat("a", 33)
 
 	bad := []vault.Account{
 		{Provider: marker, Alias: "work"},
@@ -365,7 +365,7 @@ func TestCreateAccountValidatesProviderAndAlias(t *testing.T) {
 	good := []vault.Account{
 		{Provider: "google", Alias: "work"},
 		{Provider: "google-workspace", Alias: "0_personal-2"},
-		{Provider: "x1", Alias: long[:64]},
+		{Provider: "x1", Alias: long[:32]},
 	}
 	for _, a := range good {
 		if _, err := s.CreateAccount(ctx, a); err != nil {

@@ -90,3 +90,21 @@ func TestTheOAuthCompletionExampleListsTheMethodField(t *testing.T) {
 		t.Errorf("the OAuth completion line %q must list the method field connect now prints", line)
 	}
 }
+
+func TestTheGuideDescribesATokenAsGitHubsDefaultAndShowsHowToKeepOAuth(t *testing.T) {
+	g, _ := loadedGuide(t)
+	apps, _ := g.Topic("apps")
+	var line string
+	for l := range strings.SplitSeq(apps.Body, "\n") {
+		if strings.Contains(l, "`github`") {
+			line = l
+		}
+	}
+	if strings.Contains(line, "not OAuth") || !strings.Contains(line, "default") || !strings.Contains(line, "--method oauth2") {
+		t.Errorf("the apps line %q must say a token is the default and how to use OAuth", line)
+	}
+	accounts, _ := g.Topic("accounts")
+	if !strings.Contains(accounts.Body, "--method oauth2") {
+		t.Error("accounts.md must show --method oauth2 for reconnecting an OAuth account of a token-default app")
+	}
+}

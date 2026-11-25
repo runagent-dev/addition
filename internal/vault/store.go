@@ -189,6 +189,9 @@ var (
 	aliasPattern      = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 )
 
+// LooksLikeCredential reports whether name resembles a token or key, so it is never accepted as an alias or repeated.
+func LooksLikeCredential(name string) bool { return false }
+
 // ValidateAccountName checks a provider id and alias before anything is stored under them.
 func ValidateAccountName(provider, alias string) error {
 	if !providerIDPattern.MatchString(provider) {

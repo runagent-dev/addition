@@ -135,3 +135,26 @@ func TestAnOldBinaryStillRefusesTheNewerSchema(t *testing.T) {
 		t.Errorf("Open err = %v, want ErrSchemaTooNew", err)
 	}
 }
+
+func TestAnAliasThatLooksLikeACredentialIsRefusedWithoutBeingRepeated(t *testing.T) {
+	for _, alias := range []string{
+		"ghp_synthetic_review_marker", "gho_x", "github_pat_abc", "xoxb-123", "xoxp-1", "pk_work", "sk_test", "my-ghp_abc", "a_sk_live",
+	} {
+		err := vault.ValidateAccountName("github", alias)
+
+		if !errors.Is(err, vault.ErrInvalidAccount) {
+			t.Errorf("alias %q: err = %v, want ErrInvalidAccount", alias, err)
+		}
+		if err != nil && strings.Contains(err.Error(), alias) {
+			t.Errorf("the error repeats the alias: %v", err)
+		}
+	}
+	for _, alias := range []string{"work", "task_1", "desk-2", "0_personal-2", "tskpk"} {
+		if err := vault.ValidateAccountName("github", alias); err != nil {
+			t.Errorf("alias %q: %v", alias, err)
+		}
+	}
+	if !vault.LooksLikeCredential("ghp_abc") || vault.LooksLikeCredential("work") {
+		t.Error("LooksLikeCredential disagrees with ValidateAccountName")
+	}
+}

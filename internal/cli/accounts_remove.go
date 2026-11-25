@@ -74,6 +74,9 @@ func runAccountsRemove(cmd *cobra.Command, d deps, ref string, f removeFlags) er
 		if len(siblings) > 0 && !f.andSiblings {
 			return a.revokeAffectsOthers(acct, siblings)
 		}
+		if d.afterSiblingSelection != nil {
+			d.afterSiblingSelection()
+		}
 		outcome = a.revoke(ctx, d, acct)
 	}
 	invalidated := []vault.Account{}
