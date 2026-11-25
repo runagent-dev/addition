@@ -303,6 +303,7 @@ func TestDoctorAsksForAClientOnlyForRootsWithOAuthCredentials(t *testing.T) {
 func TestReconnectHintsNameTheOAuthMethodWhenTheAppDefaultsToATokenButTheAccountIsOAuth(t *testing.T) {
 	th := newTokenHarness(t)
 	seededGitHub(t, th, th.oauthCredential(false))
+	th.mustRun("client", "add", "github", "--file", writeClientFile(t, "installed"))
 
 	env := th.wantError(th.run("call", "github", "GET", "/user"), ExitNeedsConnect, "needs-reauth")
 	if !strings.Contains(env.Error.Message, "addition connect github --as me --method oauth2") {

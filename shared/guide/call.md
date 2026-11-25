@@ -31,7 +31,7 @@ addition call google-calendar -a work POST /calendar/v3/calendars/primary/events
 - **Redirects** are never followed: a 3xx exits 4 with an empty stdout.
 - **Compressed bodies** (a Content-Encoding such as gzip) are refused with `unsupported-encoding`, exit 5 on a 2xx.
 - A response that contains the access token is withheld (`credential-echo`).
-- addition renews an expiring token, retries once on a 401 and waits out a 429. Do not loop on exit 3.
+- addition renews an expiring token and waits out a 429. A 401 with a refresh token to renew is retried once; if it repeats, the upstream body is on stdout and stderr says `upstream-error`. A 401 with nothing to renew, such as an API token the provider rejected, exits 3 with `needs-reauth` and empty stdout. Do not loop on exit 3.
 
 ## Exit codes
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/runagent-dev/addition/internal/catalog"
 	"github.com/runagent-dev/addition/internal/oauth"
@@ -75,6 +76,7 @@ func newConnectCmd(d deps) *cobra.Command {
 			return startConnect(cmd, d, args[0], f)
 		},
 	}
+	cmd.SetFlagErrorFunc(connectFlagError)
 	cmd.Flags().StringVar(&f.alias, "as", "", "alias for the account, e.g. work")
 	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "print the authorize URL and finish later with --complete")
 	cmd.Flags().StringVar(&f.complete, "complete", "", "finish a --no-browser connect with the URL the browser landed on")
@@ -82,6 +84,30 @@ func newConnectCmd(d deps) *cobra.Command {
 	cmd.Flags().BoolVar(&f.tokenStdin, "token-stdin", false, "read an API token from one line of standard input")
 	cmd.Flags().StringVar(&f.tokenEnv, "token-env", "", "read an API token from the environment variable `NAME`")
 	return cmd
+}
+
+// connectFlagError reports a flag that could not be parsed without repeating anything that was typed: a
+// token given the wrong way would otherwise come back in cobra's message. Only addition's own flag names appear.
+func connectFlagError(cmd *cobra.Command, err error) error {
+	problem := "a flag could not be read"
+	msg := err.Error()
+	if strings.HasPrefix(msg, "unknown flag") || strings.HasPrefix(msg, "unknown shorthand flag") {
+		problem = "unknown flag"
+	}
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		name := "--" + flag.Name
+		display := name
+		if flag.Shorthand != "" {
+			display = "-" + flag.Shorthand + ", " + name
+		}
+		switch {
+		case strings.Contains(msg, fmt.Sprintf("for %q flag", display)):
+			problem = "invalid value for " + name
+		case msg == "flag needs an argument: "+name:
+			problem = name + " needs a value"
+		}
+	})
+	return usageError(problem + "; run `addition connect --help`")
 }
 
 // connectTarget is everything both flows resolve before talking to the provider.
@@ -99,6 +125,10 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	c, err := d.loadCatalog()
 	if err != nil {
 		return err
+	}
+	if _, known := lookupProvider(c, providerID); !known {
+		return &Error{Code: "unknown-provider", Exit: ExitUsage,
+			Message: "that is not a known app (see `addition providers`); connect never takes a token as an argument"}
 	}
 	app, err := appProvider(c, providerID)
 	if err != nil {
@@ -502,8 +532,9 @@ func saveAccount(ctx context.Context, tx *vault.Tx, t connectTarget, auth oauth.
 	}
 	if added := missingScopes(existing.Scopes, t.accountScopes); len(missingScopes(added, auth.Scopes)) > 0 {
 		return savedAccount{}, &Error{Code: "stale-authorization", Exit: ExitUsage, Message: fmt.Sprintf(
-			"%s:%s gained %s after this authorization started, and it did not ask for them; nothing was changed. Run `addition connect %s --as %s` again to authorize every scope",
-			r.Provider, r.Alias, strings.Join(missingScopes(added, auth.Scopes), " "), r.Provider, r.Alias)}
+			"%s:%s gained %s after this authorization started, and it did not ask for them; nothing was changed. Run `%s` again to authorize every scope",
+			r.Provider, r.Alias, strings.Join(missingScopes(added, auth.Scopes), " "),
+			reconnectCommand(t.provider, vault.Account{Provider: r.Provider, Alias: r.Alias}, vault.KindOAuth2))}
 	}
 	sameSubject := existing.Subject != "" && existing.Subject == subject
 	existing.Identity, existing.Subject, existing.Scopes, existing.Status = r.Identity, subject, r.Scopes, vault.AccountActive

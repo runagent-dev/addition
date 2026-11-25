@@ -270,6 +270,8 @@ func validateAPIKey(k fieldChecker, api map[string]any) {
 		}
 	case api["probe_path"] == nil:
 		k.fail("identity", "is missing and api.probe_path is not set: a token is verified with one of them")
+	default:
+		validateProbeAsVerification(k, api)
 	}
 }
 
@@ -286,6 +288,25 @@ func validateCreateURL(k fieldChecker) {
 	}
 }
 
+// validateProbeAsVerification checks that, without an identity, the probe path a token is verified at is a plain
+// path the provider's allowed path prefixes permit; its query, if any, is not part of the route.
+func validateProbeAsVerification(k fieldChecker, api map[string]any) {
+	probe, _ := api["probe_path"].(string)
+	route, _, _ := strings.Cut(probe, "?")
+	if !PlainPath(route) || strings.ContainsAny(route, "#") {
+		k.fail("identity", "is missing, so a token is verified at api.probe_path, which must be a plain path without dot segments, escapes or empty segments, got %q", probe)
+		return
+	}
+	if !pathHasAllowedPrefix(route, api) {
+		k.fail("identity", "is missing, so a token is verified at api.probe_path %q, which is not under any api.allowed_path_prefixes", probe)
+	}
+}
+
+func pathHasAllowedPrefix(path string, api map[string]any) bool {
+	prefixes, _ := api["allowed_path_prefixes"].([]any)
+	return len(prefixes) == 0 || slices.ContainsFunc(prefixes, func(p any) bool { s, _ := p.(string); return strings.HasPrefix(path, s) })
+}
+
 func validateAPIKeyIdentity(id fieldChecker, api map[string]any) {
 	id.onlyKeys("path", "field", "subject_field")
 	id.nonEmptyString("path")
@@ -299,8 +320,7 @@ func validateAPIKeyIdentity(id fieldChecker, api map[string]any) {
 		id.fail("path", "must be a plain absolute path on the API's host, without query, escapes or dot segments, got %q", path)
 		return
 	}
-	prefixes, _ := api["allowed_path_prefixes"].([]any)
-	if len(prefixes) > 0 && !slices.ContainsFunc(prefixes, func(p any) bool { s, _ := p.(string); return strings.HasPrefix(path, s) }) {
+	if !pathHasAllowedPrefix(path, api) {
 		id.fail("path", "does not start with one of api.allowed_path_prefixes, so the token could not be sent there")
 	}
 }

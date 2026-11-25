@@ -125,7 +125,7 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 		doctorCheck{ID: "vault", Status: checkOK, Summary: fmt.Sprintf("the vault is initialised (schema %d)", vault.SchemaVersion)},
 		doctorCheck{ID: "master-key", Status: checkOK, Summary: fmt.Sprintf("the master key unlocks the vault (recorded source: %s)", snap.KeySource)},
 	)
-	rep.Checks = append(rep.Checks, session.clientChecks(clientIDs, snap.Accounts)...)
+	rep.Checks = append(rep.Checks, session.clientChecks(clientIDs, snap)...)
 	rep.Checks = append(rep.Checks, accounts.checks...)
 	rep.Checks = append(rep.Checks, session.cloudSetupChecks(snap, clientIDs)...)
 	if live {
@@ -248,14 +248,12 @@ func clientRoots(cat *catalog.Catalog) []string {
 	return roots
 }
 
-// clientChecks reports the OAuth client of each root that has setup hints. A vault whose accounts all
-// belong to other roots, such as token accounts, needs none of them, so only a fresh vault gets the nudge.
-func (a *accountSession) clientChecks(clientIDs map[string]string, accts []vault.Account) []doctorCheck {
+// clientChecks reports the OAuth client of each root that needs one. A fresh vault is nudged towards the
+// roots that say how to set one up; otherwise the roots are those of the stored OAuth credentials, so a
+// vault of token accounts is never asked for a client, and a root without a hint is still reported.
+func (a *accountSession) clientChecks(clientIDs map[string]string, snap vault.Snapshot) []doctorCheck {
 	var checks []doctorCheck
-	for _, id := range clientRoots(a.catalog) {
-		if len(accts) > 0 && !a.hasAccountUnder(accts, id) {
-			continue
-		}
+	for _, id := range a.rootsNeedingAClient(snap) {
 		check := doctorCheck{ID: "oauth-client:" + id, Status: checkOK, Summary: "an OAuth client is stored for " + id + " apps"}
 		if _, stored := clientIDs[id]; !stored {
 			check = doctorCheck{
@@ -268,18 +266,27 @@ func (a *accountSession) clientChecks(clientIDs map[string]string, accts []vault
 	return checks
 }
 
+func (a *accountSession) rootsNeedingAClient(snap vault.Snapshot) []string {
+	if len(snap.Accounts) == 0 {
+		return clientRoots(a.catalog)
+	}
+	var roots []string
+	for _, acct := range snap.Accounts {
+		cred, found := snap.Credentials[acct.ID]
+		p, known := a.catalog.Provider(acct.Provider)
+		if found && cred.Kind == vault.KindOAuth2 && known && !slices.Contains(roots, p.IdentityRoot) {
+			roots = append(roots, p.IdentityRoot)
+		}
+	}
+	slices.Sort(roots)
+	return roots
+}
+
 // checkedAccounts are the account checks plus the accounts that passed them, which are safe to probe.
 type checkedAccounts struct {
 	checks  []doctorCheck
 	all     []vault.Account
 	healthy []vault.Account
-}
-
-func (a *accountSession) hasAccountUnder(accts []vault.Account, root string) bool {
-	return slices.ContainsFunc(accts, func(acct vault.Account) bool {
-		p, ok := a.catalog.Provider(acct.Provider)
-		return ok && p.IdentityRoot == root
-	})
 }
 
 func (a *accountSession) accountChecks(snap vault.Snapshot, now time.Time) checkedAccounts {
@@ -302,7 +309,7 @@ func (a *accountSession) accountChecks(snap vault.Snapshot, now time.Time) check
 // accountCheck is the offline verdict of `accounts check` on one account, with the fix for what is wrong.
 func (a *accountSession) accountCheck(acct vault.Account, cred vault.Credential, found bool) doctorCheck {
 	kind := credentialKind(cred, found)
-	check := doctorCheck{ID: "account:" + acct.Provider + ":" + acct.Alias, Status: checkFail, Fix: reconnectCommand(acct, kind)}
+	check := doctorCheck{ID: "account:" + acct.Provider + ":" + acct.Alias, Status: checkFail, Fix: reconnectCommand(a.provider(acct.Provider), acct, kind)}
 	status := a.statusOf(acct)
 	if status == statusLegacy {
 		check.Code, check.Summary = codeLegacy, legacyAccountError(a.catalog, acct).Message

@@ -179,7 +179,7 @@ func runCall(cmd *cobra.Command, d deps, appName, rawMethod, rawPath string, f c
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
 	token, err := tokens.Access(ctx)
 	if err != nil {
-		return callFailure(acct, provider.IdentityRoot, err)
+		return callFailure(acct, provider, err)
 	}
 	engine := &proxy.Engine{
 		Client: d.httpClient, API: provider.API, AuthMethod: tokens.AuthMethod(), AllowCleartext: d.loopbackProviders,
@@ -190,7 +190,7 @@ func runCall(cmd *cobra.Command, d deps, appName, rawMethod, rawPath string, f c
 		if attempted, sent := errors.AsType[*proxy.Attempted](err); sent {
 			recordCall(cmd, a.store, acct, req.method, attempted.Status)
 		}
-		return callFailure(acct, provider.IdentityRoot, err)
+		return callFailure(acct, provider, err)
 	}
 	defer resp.Body.Close()
 	recordCall(cmd, a.store, acct, req.method, resp.Status)
@@ -229,7 +229,7 @@ func callRequestError(err error) error {
 }
 
 // callFailure maps token and transport failures to exit codes. Every message is addition's own.
-func callFailure(acct vault.Account, clientProvider string, err error) error {
+func callFailure(acct vault.Account, provider *catalog.Provider, err error) error {
 	var refused *oauth.ProviderError
 	var tokenNet *oauth.NetworkError
 	var apiNet *proxy.NetworkError
@@ -238,10 +238,10 @@ func callFailure(acct vault.Account, clientProvider string, err error) error {
 		return interrupted()
 	case errors.Is(err, proxy.ErrTokenRejected):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-			"the provider rejected the token of %s:%s; create a new one and run `%s`", acct.Provider, acct.Alias, reconnectCommand(acct, vault.KindAPIKey))}
+			"the provider rejected the token of %s:%s; create a new one and run `%s`", acct.Provider, acct.Alias, reconnectCommand(provider, acct, vault.KindAPIKey))}
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-			"%s:%s must be reconnected; run `%s`", acct.Provider, acct.Alias, reconnectCommand(acct, vault.KindOAuth2))}
+			"%s:%s must be reconnected; run `%s`", acct.Provider, acct.Alias, reconnectCommand(provider, acct, vault.KindOAuth2))}
 	case errors.Is(err, proxy.ErrAccountChanged):
 		return &Error{Code: "account-changed", Exit: ExitUsage, Message: fmt.Sprintf(
 			"%s:%s was removed and connected again while the call started; repeat the command", acct.Provider, acct.Alias)}
@@ -249,7 +249,7 @@ func callFailure(acct vault.Account, clientProvider string, err error) error {
 		return notConnected(accountRef{provider: acct.Provider, alias: acct.Alias})
 	case errors.Is(err, proxy.ErrNoOAuthClient):
 		return &Error{Code: "no-oauth-client", Exit: ExitUsage, Message: fmt.Sprintf(
-			"no OAuth client for %s; run `addition client add %s --file client_secret.json`", acct.Provider, clientProvider)}
+			"no OAuth client for %s; run `addition client add %s --file client_secret.json`", acct.Provider, provider.IdentityRoot)}
 	case errors.As(err, &refused):
 		return &Error{Code: "refresh-rejected", Message: refused.Error(), Exit: upstreamExit(refused.Status)}
 	case errors.As(err, &tokenNet), errors.As(err, &apiNet):

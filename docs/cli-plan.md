@@ -182,7 +182,8 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   a terminal (`token-required`, exit `2`). It must carry `token_prefix` if the provider sets one
   (`token-prefix-mismatch`). It is then proved with one `GET` of `api_key.identity.path` (else `api.probe_path`),
   sent through the `addition call` engine, so the host and path allow-lists, the echo guard and the
-  no-redirect rule apply; a response that repeats the token is `credential-echo`. `401`/`403` is `invalid-token`
+  no-redirect rule apply. The check is a single attempt (no 401 renewal, no 429 retry) under a 15 s deadline that covers
+  the identity body, and `accounts check --live` uses the same request; a response that repeats the token is `credential-echo`. `401`/`403` is `invalid-token`
   (exit `3`, naming `create_url`) and stores nothing; other failures are `identity-rejected` (4/5) or `network`.
   On success the account (identity and subject from `api_key.identity`, no scopes) and a credential of kind
   `api_key` are stored in one transaction with a `connect` audit row. Reconnecting an alias replaces the credential
@@ -190,7 +191,11 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   `api_key.auth_prefix` when the block sets it (an explicit empty string sends the bare token), else `api.auth_prefix`.
   An `api_key` credential is never refreshed: a `401` on a call marks the account `needs-reauth` (exit `3`, naming
   `addition connect <app> --as <alias> --token-stdin`). Such an account has no scopes (`scopes_ready: true`),
-  needs no OAuth client, and `accounts remove --revoke` sends nothing for it.
+  needs no OAuth client, and `accounts remove --revoke` sends nothing for it and never counts it as a grant sibling.
+  A renewed token of another kind than the request was built for (another process replaced the credential) is not
+  sent: the call fails as `account-changed`. `doctor` asks for an OAuth client only for the roots of stored OAuth
+  credentials (a fresh vault still gets the Google hint), and reconnect hints say `--method oauth2` when the app's
+  default is a token.
 - **Back channel:** token, userinfo and revoke requests go straight to the HTTP
   transport, so no redirect is followed, and need a 2xx; any 3xx is a refusal.
   `addition` discards the standard library's logger, so `net/http` never writes to stderr. Error messages are addition's own: the operation, the HTTP status and at

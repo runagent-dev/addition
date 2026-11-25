@@ -148,7 +148,9 @@ func checkTokenShape(key *catalog.APIKey, token string) error {
 // verifyToken proves token with one GET of the app's identity endpoint, or its probe path, through
 // the engine `addition call` uses: the host and path allow-lists, the echo guard and no redirects apply.
 func verifyToken(ctx context.Context, d deps, provider *catalog.Provider, alias, token string) (oauth.Identity, error) {
-	resp, err := sendVerification(ctx, d, provider, alias, token)
+	checked, cancel := context.WithTimeout(ctx, verifyTimeout)
+	defer cancel()
+	resp, err := sendVerification(checked, d, provider, token)
 	if err != nil {
 		return oauth.Identity{}, err
 	}
@@ -166,32 +168,30 @@ func verifyToken(ctx context.Context, d deps, provider *catalog.Provider, alias,
 	return readIdentity(ctx, resp, identity, token)
 }
 
-func sendVerification(ctx context.Context, d deps, provider *catalog.Provider, alias, token string) (*proxy.Response, error) {
+func sendVerification(ctx context.Context, d deps, provider *catalog.Provider, token string) (*proxy.Response, error) {
 	target, err := verificationURL(provider)
 	if err != nil {
 		return nil, callRequestError(err)
 	}
 	engine := &proxy.Engine{
-		Client: d.httpClient, API: provider.API, AuthMethod: catalog.MethodAPIKey,
+		Client: d.httpClient, API: provider.API, AuthMethod: catalog.MethodAPIKey, SingleAttempt: true,
 		AllowCleartext: d.loopbackProviders, Now: d.now, Sleep: d.sleep,
 	}
 	header := http.Header{"Accept": {"application/json"}, "User-Agent": {"addition/" + currentBuild().Version}}
 	resp, err := engine.Do(ctx, proxy.Request{Method: http.MethodGet, URL: target, Header: header}, token)
-	if err == nil {
-		return resp, nil
+	if err != nil {
+		return nil, verificationFailure(err)
 	}
-	if attempted, sent := errors.AsType[*proxy.Attempted](err); sent && attempted.Status == http.StatusUnauthorized {
-		return nil, invalidToken(provider, alias)
-	}
-	return nil, verificationFailure(ctx, err)
+	return resp, nil
 }
 
 // verificationFailure maps a failure to send the check to addition's own error; no transport text leaves.
-func verificationFailure(ctx context.Context, err error) error {
+// Only a cancelled command is interrupted: the check's own deadline is a network failure.
+func verificationFailure(err error) error {
 	if reqErr, ok := errors.AsType[*proxy.RequestError](err); ok {
 		return callRequestError(reqErr)
 	}
-	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) {
 		return interrupted()
 	}
 	return networkFailure()
@@ -214,7 +214,7 @@ func readIdentity(ctx context.Context, resp *proxy.Response, identity *catalog.A
 	switch {
 	case errors.Is(err, proxy.ErrCredentialEcho):
 		return oauth.Identity{}, credentialEcho()
-	case err != nil && (ctx.Err() != nil || errors.Is(err, context.Canceled)):
+	case err != nil && errors.Is(err, context.Canceled):
 		return oauth.Identity{}, interrupted()
 	case err != nil:
 		return oauth.Identity{}, networkFailure()
@@ -271,11 +271,16 @@ func tokenBelongsToAnother(provider *catalog.Provider, existing vault.Account) *
 		provider.ID, existing.Alias, existing.Identity)}
 }
 
-// reconnectCommand is what replaces the credential of an account: the token command for an API key.
-func reconnectCommand(acct vault.Account, kind string) string {
+// reconnectCommand is what replaces the credential of an account obtained with kind. A token command
+// says so with --token-stdin; an OAuth one names its method when the app's default is another, so the
+// hint does not start a token connection. p is nil for an app that is no longer in the catalog.
+func reconnectCommand(p *catalog.Provider, acct vault.Account, kind string) string {
 	command := fmt.Sprintf("addition connect %s --as %s", acct.Provider, acct.Alias)
-	if kind == vault.KindAPIKey {
+	switch {
+	case kind == vault.KindAPIKey:
 		command += " --token-stdin"
+	case p != nil && p.AuthType != catalog.MethodOAuth2 && p.Supports(catalog.MethodOAuth2):
+		command += " --method oauth2"
 	}
 	return command
 }

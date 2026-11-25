@@ -127,6 +127,11 @@ func markNeedsReauth(ctx context.Context, tx *vault.Tx, acct vault.Account) (boo
 	if err != nil {
 		return false, err
 	}
+	if cred, err := tx.GetCredential(ctx, current.ID); err == nil && cred.Kind == vault.KindAPIKey {
+		return false, nil
+	} else if err != nil && !errors.Is(err, vault.ErrNotFound) {
+		return false, err
+	}
 	current.Status = vault.AccountNeedsReauth
 	if _, err := tx.UpdateAccount(ctx, current); err != nil {
 		return false, err
@@ -151,11 +156,18 @@ func (a *accountSession) grantSiblings(ctx context.Context, acct vault.Account) 
 	var siblings []vault.Account
 	for _, other := range all {
 		otherProvider, known := a.catalog.Provider(other.Provider)
-		if other.ID != acct.ID && known && otherProvider.IdentityRoot == provider.IdentityRoot && sameIdentity(acct, other) {
+		if other.ID != acct.ID && known && otherProvider.IdentityRoot == provider.IdentityRoot && sameIdentity(acct, other) && a.holdsGrant(ctx, other) {
 			siblings = append(siblings, other)
 		}
 	}
 	return siblings, nil
+}
+
+// holdsGrant reports whether revoking a grant can reach the account: not if its credential is a token the
+// user created, which is a separate credential at the provider.
+func (a *accountSession) holdsGrant(ctx context.Context, acct vault.Account) bool {
+	cred, found, err := a.credential(ctx, acct)
+	return err != nil || !found || cred.Kind != vault.KindAPIKey
 }
 
 // sameIdentity compares stable subjects; when either account lacks one it falls back to the display identity.

@@ -27,7 +27,7 @@ read -r URL
 addition connect --complete "$URL"
 ```
 
-`read -r URL` takes the URL from stdin (a private prompt or secret input), so it is never typed into a command. stdout is `{"provider","alias","identity","scopes","created"}`.
+`read -r URL` takes the URL from stdin (a private prompt or secret input), so it is never typed into a command. stdout is `{"provider","alias","identity","scopes","created","method"}` (`"method":"oauth2"`).
 
 A link works once and expires after 10 minutes; then run `--no-browser` again. The callback URL carries a one-use authorization code: keep it out of logs, shell history and transcripts.
 

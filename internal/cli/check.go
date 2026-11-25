@@ -127,22 +127,21 @@ func accessTokenState(cred vault.Credential, found bool, now time.Time) string {
 const liveOK = "ok"
 
 // liveCheck refreshes the account's token if needed and asks the identity endpoint whether it
-// works. The result is a reason code addition chose, never provider text.
+// works. The result is a reason code addition chose, never provider text. The endpoint and the header
+// follow the kind of the one credential read that supplied the token, so a credential replaced
+// meanwhile by another kind is never sent where the old one belonged.
 func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Account) string {
 	provider, found := a.catalog.Provider(acct.Provider)
 	if found && !a.catalog.Connectable(provider.ID) {
 		return "legacy-account"
 	}
-	if found {
-		if cred, has, err := a.credential(ctx, acct); err == nil && has && cred.Kind == vault.KindAPIKey {
-			return a.liveCheckToken(ctx, d, provider, acct)
-		}
-	}
-	if !found || provider.OAuth2 == nil || provider.OAuth2.Identity == nil {
+	if !found {
 		return "no-identity-endpoint"
 	}
-	if !identityURLAllowed(provider, d.loopbackProviders) {
-		return "identity-not-allowed"
+	if a.kindOf(ctx, acct) != vault.KindAPIKey {
+		if refusal := oauthIdentityRefusal(provider, d); refusal != "" {
+			return refusal
+		}
 	}
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
 	if d.beforeLiveToken != nil {
@@ -152,8 +151,25 @@ func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Accou
 	if err != nil {
 		return liveTokenReason(err)
 	}
+	if tokens.AuthMethod() == vault.KindAPIKey {
+		return liveCheckToken(ctx, d, provider, acct, token)
+	}
+	if refusal := oauthIdentityRefusal(provider, d); refusal != "" {
+		return refusal
+	}
 	_, err = oauth.FetchIdentity(ctx, d.httpClient, provider, token)
 	return liveIdentityReason(err)
+}
+
+// oauthIdentityRefusal says why an OAuth token cannot be checked at the provider's identity endpoint, or "".
+func oauthIdentityRefusal(provider *catalog.Provider, d deps) string {
+	switch {
+	case provider.OAuth2 == nil || provider.OAuth2.Identity == nil:
+		return "no-identity-endpoint"
+	case !identityURLAllowed(provider, d.loopbackProviders):
+		return "identity-not-allowed"
+	}
+	return ""
 }
 
 // identityURLAllowed checks the identity endpoint the token is about to be sent to against the provider's allowed hosts.
@@ -199,20 +215,15 @@ func liveIdentityReason(err error) string {
 }
 
 // liveCheckToken asks the app's identity endpoint, or its probe path, whether an API token still works.
-// A token is never refreshed, and a rejection is reported without changing the account.
-func (a *accountSession) liveCheckToken(ctx context.Context, d deps, provider *catalog.Provider, acct vault.Account) string {
+// The request goes through the call engine, so the host and path allow-lists apply. A token is never
+// refreshed, and a rejection is reported without changing the account.
+func liveCheckToken(ctx context.Context, d deps, provider *catalog.Provider, acct vault.Account, token string) string {
 	if provider.APIKey == nil {
 		return "no-identity-endpoint"
 	}
-	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
-	if d.beforeLiveToken != nil {
-		d.beforeLiveToken()
-	}
-	token, err := tokens.Access(ctx)
-	if err != nil {
-		return liveTokenReason(err)
-	}
-	resp, err := sendVerification(ctx, d, provider, acct.Alias, token)
+	checked, cancel := context.WithTimeout(ctx, verifyTimeout)
+	defer cancel()
+	resp, err := sendVerification(checked, d, provider, token)
 	if err != nil {
 		return liveVerificationReason(err)
 	}
@@ -233,10 +244,10 @@ func liveStatusReason(status int) string {
 func liveVerificationReason(err error) string {
 	if typed, ok := errors.AsType[*Error](err); ok {
 		switch typed.Code {
-		case "invalid-token":
-			return "token-rejected"
 		case "network":
 			return "network"
+		case "host-not-allowed", "path-not-allowed":
+			return "identity-not-allowed"
 		}
 	}
 	return "internal"

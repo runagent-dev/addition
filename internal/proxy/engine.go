@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/runagent-dev/addition/internal/catalog"
+	"github.com/runagent-dev/addition/internal/vault"
 )
 
 const (
@@ -55,8 +56,10 @@ type Engine struct {
 	// which decides the word in front of the token in the auth header.
 	AuthMethod string
 	Renewer    Renewer
-	Now        func() time.Time
-	Sleep      func(ctx context.Context, d time.Duration) error
+	// SingleAttempt sends the request once: a 401 is not renewed and a 429 is not retried, both are returned.
+	SingleAttempt bool
+	Now           func() time.Time
+	Sleep         func(ctx context.Context, d time.Duration) error
 	// Jitter returns a random duration in [0, max]; nil uses math/rand.
 	Jitter func(max time.Duration) time.Duration
 	// AllowCleartext lets tests send to http URLs; production sends over https only.
@@ -87,13 +90,16 @@ func (e *Engine) Do(ctx context.Context, req Request, accessToken string) (*Resp
 		}
 		lastStatus, resp.Tokens = resp.Status, sent
 		switch {
-		case resp.Status == http.StatusUnauthorized && !renewed:
+		case resp.Status == http.StatusUnauthorized && !renewed && !e.SingleAttempt:
 			renewed = true
 			_ = resp.Body.Close()
 			if accessToken, err = e.renew(ctx, accessToken); err != nil {
 				return nil, &Attempted{Status: lastStatus, Err: &AuthFailure{Status: lastStatus, Err: err}}
 			}
-		case resp.Status == http.StatusTooManyRequests && throttled < maxThrottleRetries:
+			if e.credentialKindChanged() {
+				return nil, &Attempted{Status: lastStatus, Err: ErrAccountChanged}
+			}
+		case resp.Status == http.StatusTooManyRequests && throttled < maxThrottleRetries && !e.SingleAttempt:
 			wait := e.retryDelay(resp.Header, throttled)
 			_ = resp.Body.Close()
 			throttled++
@@ -112,6 +118,24 @@ func afterSending(lastStatus int, err error) error {
 		return err
 	}
 	return &Attempted{Status: lastStatus, Err: err}
+}
+
+// methodReporter is a Renewer that knows how the credential it last handed out was obtained.
+type methodReporter interface{ AuthMethod() string }
+
+// credentialKindChanged reports that the renewed token belongs to a credential of another kind than the one
+// the request was built for, such as an OAuth credential another process replaced with a token. Its header
+// would be wrong, so the request is not sent again and the caller repeats the command.
+func (e *Engine) credentialKindChanged() bool {
+	reporter, ok := e.Renewer.(methodReporter)
+	return ok && normalizeMethod(reporter.AuthMethod()) != normalizeMethod(e.AuthMethod)
+}
+
+func normalizeMethod(method string) string {
+	if method == "" {
+		return vault.KindOAuth2
+	}
+	return method
 }
 
 func (e *Engine) renew(ctx context.Context, rejected string) (string, error) {
