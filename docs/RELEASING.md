@@ -27,6 +27,21 @@ Never tag an older commit. GitHub runs the workflow definition that exists at th
 on an old commit runs the old workflow with its old permissions and checks. The workflow's own check that the
 commit is on `main` only holds for workflows that contain it.
 
+## npm package
+
+`@addition/cli` (`npm/cli`) is published by hand, after the GitHub release exists, because the shim downloads that
+release. Its version must equal the release's, and it needs the `@addition` npm scope to be claimed first.
+
+```bash
+cd npm/cli
+npm version X.Y.Z --no-git-tag-version
+npm test
+npm publish --access public
+git checkout package.json        # the committed version stays 0.0.0
+```
+
+Check it from a clean data dir: `ADDITION_HOME=$(mktemp -d) npx @addition/cli@X.Y.Z version` prints the release's version.
+
 ## Rules enforced on GitHub today
 
 Two rulesets are active (`gh api repos/runagent-dev/addition/rulesets`):

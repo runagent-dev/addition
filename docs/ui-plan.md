@@ -14,7 +14,7 @@ every tool; everyone gets a page showing what their agents did.
 - **One database.** CLI and UI both work on `addition.db`. A connection made in the UI is there in the CLI, and the
   other way round. The CLI never needs the UI to be running.
 - **Distribution like T3 Code.** `npx @addition/cli` runs a small shim that fetches the released binary and verifies its
-  checksum (§9). With no arguments it opens the UI. `npm i -g @addition/cli` puts `addition` on `PATH` for agents.
+  checksum (§9). With no arguments, at a terminal, `addition` opens the UI (from U2). `npm i -g @addition/cli` puts `addition` on `PATH` for agents.
 - **Everything agents did is visible to the user and hidden from the agents** (§5, §6).
 
 Still true, and unchanged: no hosted component, no telemetry, no account with us, tokens never leave the vault in
@@ -189,9 +189,10 @@ explicit decision to change them.
 ## 9. Packaging
 
 - **npm shim (M7c).** `@addition/cli` is a zero-dependency Node script: it picks the archive for the platform from
-  the release, checks it against `checksums.txt`, unpacks it beside a completion marker, runs `addition --version`
-  to validate it, publishes it with an atomic rename, then runs it with the caller's arguments and stdio. With no
-  arguments it runs `addition ui`. Installs are cached under `$ADDITION_HOME/runtime/versions/<version>`. This is
+  the release, checks it against `checksums.txt`, unpacks the binary beside a completion marker, runs
+  `addition version` to validate it, publishes it with an atomic rename, then runs it with the caller's arguments,
+  stdin and exit code. The shim adds no behaviour of its own: that `addition` with no arguments at a terminal opens
+  the UI is the binary's job, from U2. Installs are cached under `$ADDITION_HOME/runtime/versions/<version>`. This is
   the same shape T3 Code's `t3` package uses.
 - **Desktop.** Level 1: the browser. Level 2: a browser app window, where the OS offers one (a courtesy, not a
   milestone). Level 3: an installable app with a tray icon, autostart and updates, built as a Tauri shell that starts

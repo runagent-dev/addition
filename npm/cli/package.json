@@ -1,0 +1,30 @@
+{
+  "name": "@addition/cli",
+  "version": "0.0.0",
+  "description": "addition: local-first CLI that gives coding agents authenticated access to your accounts. Fetches the released binary for this platform and checks its checksum.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/runagent-dev/addition#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/runagent-dev/addition.git",
+    "directory": "npm/cli"
+  },
+  "type": "module",
+  "bin": {
+    "addition": "bin/addition.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
