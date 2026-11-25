@@ -187,7 +187,7 @@ func renderApps(c *catalog.Catalog, recipes []Topic) string {
 		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n", p.ID, commandName(c, p), apiHost(p), scopeSummary(p), recipeLink(recipes, p.ID))
 	}
 	if tokens := tokenApps(c); len(tokens) > 0 {
-		fmt.Fprintf(&b, "\nToken apps (%s) connect with a token you create by default: `addition connect <app> --as <alias> --token-stdin` (`addition guide connect`); where the app also offers OAuth, `--method oauth2` uses it, and reconnecting an OAuth account needs that flag. Then `addition call <app> GET <path>`. They have no recipe yet.\n", strings.Join(tokens, ", "))
+		fmt.Fprintf(&b, "\nToken apps (%s) connect with a token you create by default: `addition connect <app> --as <alias> --token-stdin` (`addition guide connect`); where the app also offers OAuth, `--method oauth2` uses it, and reconnecting an OAuth account needs that flag. Then `addition call <app> GET <path>`.%s\n", "`"+strings.Join(tokens, "`, `")+"`", tokenRecipeNote(c, recipes))
 	}
 	if others := unsupportedApps(c); len(others) > 0 {
 		fmt.Fprintf(&b, "\nOther catalog entries (%s) are not supported in this release.\n", strings.Join(others, ", "))
@@ -195,12 +195,32 @@ func renderApps(c *catalog.Catalog, recipes []Topic) string {
 	return b.String()
 }
 
+// tokenRecipeNote says which token apps have a recipe and which do not.
+func tokenRecipeNote(c *catalog.Catalog, recipes []Topic) string {
+	var with, without []string
+	for _, id := range tokenApps(c) {
+		if slices.ContainsFunc(recipes, func(t Topic) bool { return t.ID == id }) {
+			with = append(with, "`addition guide "+id+"`")
+		} else {
+			without = append(without, "`"+id+"`")
+		}
+	}
+	var note string
+	if len(with) > 0 {
+		note += " Recipes: " + strings.Join(with, ", ") + "."
+	}
+	if len(without) > 0 {
+		note += " No recipe yet for " + strings.Join(without, ", ") + "."
+	}
+	return note
+}
+
 // tokenApps are the connectable apps outside the supported root that can be connected with a token.
 func tokenApps(c *catalog.Catalog) []string {
 	var ids []string
 	for _, p := range c.Providers() {
 		if p.IdentityRoot != supportedRoot && c.Connectable(p.ID) && p.Supports(catalog.MethodAPIKey) {
-			ids = append(ids, "`"+p.ID+"`")
+			ids = append(ids, p.ID)
 		}
 	}
 	return ids

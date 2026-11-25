@@ -23,6 +23,7 @@ After installing, run `addition guide`. To find what you can do, run `addition s
 
 ## App recipes
 
+- [clickup](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/clickup.md): ClickUp recipes for `addition call clickup`: connect with a personal token, find the Workspace id, tasks, comments, pagination and rate limits.
 - [gmail](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/gmail.md): Gmail recipes for `addition call gmail`: profile, search, read, send, attachments, pagination and pitfalls.
 - [google-calendar](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/google-calendar.md): Google Calendar recipes for `addition call calendar`: calendars, events in a window, creating events and RFC3339 times.
 - [google-chat](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/apps/google-chat.md): Google Chat recipes for `addition call google-chat`: spaces, messages and sending, with the Workspace-only caveats.

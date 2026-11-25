@@ -1,0 +1,36 @@
+id: "clickup"
+name: "ClickUp"
+auth_type: "api_key"
+
+api_key:
+  create_url: "https://app.clickup.com/settings/apps"
+  instructions:
+    - "Open Settings, then Apps, and find API Token."
+    - "Choose Generate (or Regenerate, which replaces the old token) and copy the token; it starts with pk_ and never expires."
+    - "The token acts as you, in every Workspace you can open."
+  token_prefix: "pk_"
+  env_var: "CLICKUP_TOKEN"
+  auth_prefix: ""   # ClickUp wants the personal token alone in Authorization, with no Bearer
+  identity:
+    path: "/api/v2/user"
+    field: "user.email"
+    subject_field: "user.id"
+
+api:
+  base_url: "https://api.clickup.com"
+  allowed_hosts:
+    - "api.clickup.com"
+  allowed_path_prefixes:
+    - "/api/"
+  auth_header: "Authorization"
+  auth_prefix: "Bearer"
+  probe_path: "/api/v2/user"
+  rate_limit:
+    requests_per_second: 1
+    retry_after_header: "Retry-After"
+
+quirks:
+  - "A personal token goes in Authorization without Bearer; a token from an OAuth app would need Bearer"
+  - "Workspaces are called teams in the API: GET /api/v2/team lists them, and most routes take a team_id"
+  - "100 requests a minute per token on Free, Unlimited and Business; 1,000 on Business Plus; 10,000 on Enterprise"
+  - "A 429 carries X-RateLimit-Reset as a Unix timestamp, not Retry-After"

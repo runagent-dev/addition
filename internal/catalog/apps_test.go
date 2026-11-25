@@ -89,6 +89,9 @@ func TestShippedProvidersNeverWidenAGrantBeyondTheRequestedScopes(t *testing.T) 
 	c := shipped(t)
 
 	for _, p := range c.Providers() {
+		if p.OAuth2 == nil {
+			continue
+		}
 		if _, widens := p.OAuth2.AuthorizeParams["include_granted_scopes"]; widens {
 			t.Errorf("%s sets include_granted_scopes, which widens a token past the app's scopes", p.ID)
 		}

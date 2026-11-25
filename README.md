@@ -1,8 +1,8 @@
 # Addition
 
 `addition` is a local-first CLI that gives your coding agents authenticated access
-to your accounts — several Gmail inboxes, Drives and calendars, and later
-GitHub, Slack and Discord — from any harness, on any machine.
+to your accounts — several Gmail inboxes, Drives and calendars, several ClickUp users,
+GitHub with a token, and later Slack and Discord — from any harness, on any machine.
 
 ## Install
 
@@ -64,6 +64,7 @@ addition client add google --file client_secret.json    # your own OAuth client;
 addition connect gmail --as work                        # one connection per app
 addition connect google-calendar --as work
 addition connect github --as me --token-env GITHUB_TOKEN   # a token you created, no OAuth client needed
+addition connect clickup --as work --token-env CLICKUP_TOKEN  # one ClickUp user per alias; start with GET /api/v2/team
 addition accounts list
 addition accounts check --live                          # does each token still work?
 addition doctor --live                                  # also probe each app's API once
@@ -84,7 +85,7 @@ OAuth client, each account) and `next`, the single command to run now. It exits 
 Run it first after installing, and whenever something fails. doctor opens the vault like any other command
 (it may apply a pending schema upgrade) and makes no network request unless you pass `--live`.
 
-Apps that take a token (GitHub: a personal access token) connect without OAuth: addition reads the token from
+Apps that take a token (GitHub and ClickUp: a personal token) connect without OAuth: addition reads the token from
 `--token-stdin` (one line), from the environment variable named by `--token-env NAME`, or from a prompt that does not echo at
 a terminal. It is never a flag value, and it is checked with one request to the app before anything is stored
 (`invalid-token`, exit 3, if the app refuses it). `addition providers` lists each app's `auth_methods`.

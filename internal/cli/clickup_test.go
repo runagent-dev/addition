@@ -115,7 +115,7 @@ func TestAClickUpAliasCannotBeRepointedAtAnotherUsersToken(t *testing.T) {
 func TestClickUpRefusesATokenThatIsNotPersonalBeforeSendingAnything(t *testing.T) {
 	th, api := newClickUpHarness(t)
 
-	r := th.connectClickUp("work", "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature")
+	r := th.connectClickUp("work", "eyJhbGciOiJIUzI1NiJ9.payload.signature")
 
 	env := th.wantError(r, ExitUsage, "token-prefix-mismatch")
 	if !strings.Contains(env.Error.Message, `"pk_"`) || strings.Contains(r.stderr, "eyJhbGci") {
