@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/runagent-dev/addition/internal/crypto"
 	"github.com/runagent-dev/addition/internal/vault"
 )
 
@@ -88,11 +89,12 @@ func TestAnAPIKeyIsSealedLikeEveryOtherToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, _ := s.CreateAccount(ctx, vault.Account{Provider: "github", Alias: "other"})
-	if _, err := rawDB(t, f.home).Exec(`INSERT INTO credentials (account_id, access_token_encrypted, updated_at, kind) VALUES (?, ?, 'x', 'api_key')`, other.ID, blob); err != nil {
+	if _, err := rawDB(t, f.home).Exec(`INSERT INTO credentials (account_id, access_token_encrypted, updated_at, kind)
+		SELECT ?, access_token_encrypted, updated_at, kind FROM credentials WHERE account_id = ?`, other.ID, acct.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetCredential(ctx, other.ID); err == nil {
-		t.Error("a blob copied to another account opened; its AAD must still bind the row")
+	if _, err := s.GetCredential(ctx, other.ID); !errors.Is(err, crypto.ErrDecrypt) {
+		t.Errorf("a blob copied to another account: err = %v, want a decryption failure, because its AAD binds the row", err)
 	}
 }
 

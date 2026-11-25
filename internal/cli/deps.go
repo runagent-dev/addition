@@ -30,6 +30,10 @@ type deps struct {
 	sleep func(ctx context.Context, d time.Duration) error
 	// prompter reads a secret from a person at a terminal; nil means there is none, and nothing is ever asked.
 	prompter secretPrompter
+	// beforeLiveToken and beforeRemoveCommit are for tests: they run just before the credential a live check
+	// reads, and just before `accounts remove` takes the writer lock, so a test can change the vault in that window.
+	beforeLiveToken    func()
+	beforeRemoveCommit func()
 	// loopbackProviders is for tests: providers may list host:port API hosts and be reached over http.
 	loopbackProviders bool
 }

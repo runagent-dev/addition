@@ -289,3 +289,27 @@ func TestShippedGoogleAppsStayOAuthOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestTheEffectiveVerificationPathIsValidatedAfterTheMerge(t *testing.T) {
+	noIdentity := func(probe string) string {
+		body := strings.Replace(apiKeyOnlyProvider, "  identity:\n    path: \"/me\"\n    field: \"name\"\n    subject_field: \"id\"\n", "", 1)
+		return strings.Replace(body, "  probe_path: \"/me\"\n", "  probe_path: \""+probe+"\"\n  allowed_path_prefixes: [\"/v1/\"]\n", 1)
+	}
+	mustLoad(t, providerFS(map[string]string{"tok.yaml": noIdentity("/v1/me")}))
+	mustLoad(t, providerFS(map[string]string{"tok.yaml": noIdentity("/v1/me?fields=id")}))
+
+	for name, probe := range map[string]string{
+		"outside the prefixes": "/me", "a dot segment": "/v1/../me", "a double slash": "/v1//me", "an escaped slash": "/v1/a%2fb",
+	} {
+		t.Run(name, func(t *testing.T) {
+			wantLoadError(t, providerFS(map[string]string{"tok.yaml": noIdentity(probe)}), "tok.yaml", "probe_path")
+		})
+	}
+}
+
+func TestAChildInheritingTheProbePathIsCheckedAgainstItsOwnPrefixes(t *testing.T) {
+	parent := strings.Replace(apiKeyOnlyProvider, "  identity:\n    path: \"/me\"\n    field: \"name\"\n    subject_field: \"id\"\n", "", 1)
+	child := "id: \"child\"\nname: \"Child\"\nauth_type: \"api_key\"\nextends: \"tok\"\napi:\n  allowed_path_prefixes: [\"/v2/\"]\n"
+
+	wantLoadError(t, providerFS(map[string]string{"tok.yaml": parent, "child.yaml": child}), "child.yaml", "probe_path")
+}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/runagent-dev/addition/internal/vault"
 )
 
 const (
@@ -215,4 +218,67 @@ type neverReadStdin struct{ t *testing.T }
 func (r neverReadStdin) Read([]byte) (int, error) {
 	r.t.Error("the command read standard input")
 	return 0, io.EOF
+}
+
+// seedAccount stores an account and its credential straight in the vault, as an earlier connect would have.
+func (h *harness) seedAccount(provider, alias, subject string, cred vault.Credential) vault.Account {
+	h.t.Helper()
+	return h.seedAccountWithScopes(provider, alias, subject, []string{}, cred)
+}
+
+func (h *harness) seedAccountWithScopes(provider, alias, subject string, scopes []string, cred vault.Credential) vault.Account {
+	h.t.Helper()
+	ctx := context.Background()
+	s, err := vault.Open(ctx, h.deps.env)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer s.Close()
+	acct, err := s.CreateAccount(ctx, vault.Account{Provider: provider, Alias: alias, Identity: alias + "@example", Subject: subject, Scopes: scopes})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := s.PutCredential(ctx, acct.ID, cred); err != nil {
+		h.t.Fatal(err)
+	}
+	return acct
+}
+
+// replaceCredential stores cred over the account's credential, as another addition process would.
+func (h *harness) replaceCredential(provider, alias string, cred vault.Credential) {
+	h.t.Helper()
+	ctx := context.Background()
+	s, err := vault.Open(ctx, h.deps.env)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer s.Close()
+	acct, err := s.GetAccount(ctx, provider, alias)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := s.PutCredential(ctx, acct.ID, cred); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// oauthCredential is a fresh OAuth credential whose access token the fake Google accepts.
+func (h *harness) oauthCredential(withRefresh bool) vault.Credential {
+	cred := vault.Credential{AccessToken: fakeAccessToken + "-seeded", ExpiresAt: h.clock.Now().Add(time.Hour)}
+	if withRefresh {
+		cred.RefreshToken = fakeRefreshToken
+	}
+	return cred
+}
+
+// dualAppYAML is an app that can be connected with a token (the default) or OAuth, with its OAuth identity on the fake Google.
+func dualAppYAML(apiHost, googleHost, googleURL string) string {
+	return "id: \"dualapp\"\nname: \"Dual App\"\nauth_type: \"api_key\"\n" +
+		"api_key:\n  create_url: \"https://dualapp.example/tokens\"\n  identity:\n    path: \"/v1/me\"\n    field: \"login\"\n    subject_field: \"id\"\n" +
+		"oauth2:\n  authorize_url: \"" + googleURL + "/authorize\"\n  token_url: \"" + googleURL + "/token\"\n  refresh_supported: true\n" +
+		"  pkce_supported: true\n  pkce_required: false\n  default_scopes: []\n  scopes_delimiter: \"space\"\n  authorize_params: {}\n  token_params: {}\n" +
+		"  token_response_format: \"json\"\n  client_auth_method: \"body\"\n" +
+		"  identity:\n    url: \"" + googleURL + "/userinfo\"\n    field: \"email\"\n    subject_field: \"sub\"\n" +
+		"api:\n  base_url: \"https://" + apiHost + "\"\n  allowed_hosts:\n    - \"" + apiHost + "\"\n    - \"" + googleHost + "\"\n" +
+		"  auth_header: \"Authorization\"\n  auth_prefix: \"Bearer\"\n"
 }

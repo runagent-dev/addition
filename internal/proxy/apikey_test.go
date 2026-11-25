@@ -167,3 +167,44 @@ func TestARejectedAPIKeyIsNeverResentByTheEngine(t *testing.T) {
 		t.Errorf("requests = %d, renewals = %d; want one each", n, len(renewer.calls))
 	}
 }
+
+func TestA401RetryNeverCrossesAChangeOfCredentialKind(t *testing.T) {
+	cases := map[string]struct {
+		start, replacement vault.Credential
+		startMethod        string
+	}{
+		"an OAuth credential replaced by a token": {expiringIn(time.Hour), apiKeyCredential(), vault.KindOAuth2},
+		"a token replaced by an OAuth credential": {apiKeyCredential(), expiringIn(time.Hour), vault.KindAPIKey},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newVaultFixture(t, tc.start)
+			m := f.manager(f.store)
+			token, err := m.Access(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			other := f.open()
+			up := newUpstream(t, func(n int, w http.ResponseWriter, r *http.Request) {
+				if n == 1 {
+					if err := other.PutCredential(context.Background(), f.account.ID, tc.replacement); err != nil {
+						t.Error(err)
+					}
+				}
+				reply(http.StatusUnauthorized, `{}`)(n, w, r)
+			})
+			e := apiKeyEngine(ptr(""), tc.startMethod, &sleeps{})
+			e.Renewer = m
+			e.API.AllowedHosts = listedTestHosts()
+
+			_, _, err = do(t, e, proxy.Request{Method: "GET", URL: up.url("/me")}, token)
+
+			if !errors.Is(err, proxy.ErrAccountChanged) {
+				t.Fatalf("err = %v, want ErrAccountChanged: the credential changed kind while the call ran", err)
+			}
+			if n := len(up.seen()); n != 1 {
+				t.Errorf("the API saw %d requests; nothing may be resent with a header built for the other kind", n)
+			}
+		})
+	}
+}

@@ -145,6 +145,9 @@ func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Accou
 		return "identity-not-allowed"
 	}
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
+	if d.beforeLiveToken != nil {
+		d.beforeLiveToken()
+	}
 	token, err := tokens.Access(ctx)
 	if err != nil {
 		return liveTokenReason(err)
@@ -202,6 +205,9 @@ func (a *accountSession) liveCheckToken(ctx context.Context, d deps, provider *c
 		return "no-identity-endpoint"
 	}
 	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
+	if d.beforeLiveToken != nil {
+		d.beforeLiveToken()
+	}
 	token, err := tokens.Access(ctx)
 	if err != nil {
 		return liveTokenReason(err)

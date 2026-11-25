@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -20,6 +21,9 @@ import (
 
 // maxTokenBytes bounds the line read for a token; real tokens are far shorter.
 const maxTokenBytes = 16 << 10
+
+// verifyTimeout bounds one token check, from the request to the last byte of the identity response.
+var verifyTimeout = 15 * time.Second
 
 // maxIdentityBody bounds the identity response read to learn who a token belongs to.
 const maxIdentityBody = 1 << 20

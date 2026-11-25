@@ -60,3 +60,33 @@ func TestTheGuideCommandCheckerKnowsTheTokenFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestTheGuideSaysWhatA401Does(t *testing.T) {
+	g, _ := loadedGuide(t)
+	call, _ := g.Topic("call")
+	var line string
+	for l := range strings.SplitSeq(call.Body, "\n") {
+		if strings.Contains(l, "retries once on a 401") || strings.Contains(l, "401") && strings.Contains(l, "renews") {
+			line = l
+		}
+	}
+	for _, want := range []string{"refresh token", "upstream-error", "needs-reauth", "empty stdout"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the 401 line %q does not say %q: a 401 with a refresh token is retried once and, if it repeats, is the upstream body; one with none, such as a token account, exits 3 with nothing on stdout", line, want)
+		}
+	}
+}
+
+func TestTheOAuthCompletionExampleListsTheMethodField(t *testing.T) {
+	g, _ := loadedGuide(t)
+	connect, _ := g.Topic("connect")
+	var line string
+	for l := range strings.SplitSeq(connect.Body, "\n") {
+		if strings.Contains(l, `"provider","alias","identity","scopes","created"`) && strings.Contains(l, "read -r URL") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, `"method"`) {
+		t.Errorf("the OAuth completion line %q must list the method field connect now prints", line)
+	}
+}

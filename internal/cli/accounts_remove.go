@@ -81,6 +81,9 @@ func runAccountsRemove(cmd *cobra.Command, d deps, ref string, f removeFlags) er
 		invalidated = siblings
 	}
 	var marked []string
+	if d.beforeRemoveCommit != nil {
+		d.beforeRemoveCommit()
+	}
 	err = a.store.WithImmediateTx(ctx, func(tx *vault.Tx) error {
 		marked = nil
 		if err := tx.Audit(ctx, vault.RevokeEvent{AccountID: acct.ID}); err != nil {
