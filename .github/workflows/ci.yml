@@ -29,6 +29,13 @@ jobs:
             go test -race ./...
             CGO_ENABLED=0 go build ./cmd/addition
           '
+      # The runner's own Node: the shim has no dependencies and is tested with node:test.
+      - name: npm shim
+        shell: bash
+        working-directory: npm/cli
+        run: |
+          node --test
+          npm pack --dry-run
       # A broken release config, installer or non-reproducible build must fail here, not on the first tag.
       - name: release config and installer
         shell: bash

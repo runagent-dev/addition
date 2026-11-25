@@ -72,11 +72,18 @@ function home() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "addition-home-"));
 }
 
+/** The shim runs as a child process, asynchronously: the fake release server shares this event loop. */
 function run(args, { base, addHome, input, env = {} }) {
-  return spawnSync(process.execPath, [shim, ...args], {
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ADDITION_HOME: addHome, ADDITION_BASE_URL: base, ...env },
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [shim, ...args], {
+      env: { ...process.env, ADDITION_HOME: addHome, ADDITION_BASE_URL: base, ...env },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(input ?? "");
   });
 }
 
@@ -91,7 +98,7 @@ test("runs the released binary with the caller's arguments and returns its outpu
   const rel = await release();
   const addHome = home();
   try {
-    const result = run(["echo-args", "gmail", "--as", "work"], { base: rel.base, addHome });
+    const result = await run(["echo-args", "gmail", "--as", "work"], { base: rel.base, addHome });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "args:gmail --as work");
     assert.equal(fs.readFileSync(path.join(cached(addHome), ".install-complete"), "utf8").trim(), version);
@@ -104,8 +111,8 @@ test("the binary's exit code is the shim's exit code", { skip }, async () => {
   const rel = await release();
   const addHome = home();
   try {
-    assert.equal(run(["exit-with", "7"], { base: rel.base, addHome }).status, 7);
-    assert.equal(run(["exit-with", "3"], { base: rel.base, addHome }).status, 3);
+    assert.equal((await run(["exit-with", "7"], { base: rel.base, addHome })).status, 7);
+    assert.equal((await run(["exit-with", "3"], { base: rel.base, addHome })).status, 3);
   } finally {
     await rel.close();
   }
@@ -115,7 +122,7 @@ test("standard input reaches the binary, so a token can be piped to connect", { 
   const rel = await release();
   const addHome = home();
   try {
-    const result = run(["echo-stdin"], { base: rel.base, addHome, input: "line from the caller\n" });
+    const result = await run(["echo-stdin"], { base: rel.base, addHome, input: "line from the caller\n" });
     assert.equal(result.stdout, "line from the caller\n");
   } finally {
     await rel.close();
@@ -126,8 +133,8 @@ test("the second run uses the cached binary and downloads nothing", { skip }, as
   const rel = await release();
   const addHome = home();
   try {
-    run(["echo-args", "one"], { base: rel.base, addHome });
-    run(["echo-args", "two"], { base: rel.base, addHome });
+    await run(["echo-args", "one"], { base: rel.base, addHome });
+    await run(["echo-args", "two"], { base: rel.base, addHome });
     assert.equal(rel.hits[rel.name], 1);
     assert.equal(rel.hits["checksums.txt"], 1);
   } finally {
@@ -139,7 +146,7 @@ test("an archive that does not match checksums.txt is refused and never run or c
   const rel = await release({ checksums: `${"0".repeat(64)}  ${assetFor(process.platform, process.arch).archive}\n` });
   const addHome = home();
   try {
-    const result = run(["echo-args", "x"], { base: rel.base, addHome });
+    const result = await run(["echo-args", "x"], { base: rel.base, addHome });
     assert.equal(result.status, 1);
     assert.equal(errorOf(result).code, "checksum-mismatch");
     assert.equal(result.stdout, "");
@@ -153,7 +160,7 @@ test("a release that does not list this platform's archive is refused", { skip }
   const rel = await release({ checksums: `${"a".repeat(64)}  addition_plan9_amd64.tar.gz\n` });
   const addHome = home();
   try {
-    const result = run(["echo-args", "x"], { base: rel.base, addHome });
+    const result = await run(["echo-args", "x"], { base: rel.base, addHome });
     assert.equal(result.status, 1);
     assert.equal(errorOf(result).code, "asset-not-listed");
     assert.equal(fs.existsSync(cached(addHome)), false);
@@ -166,7 +173,7 @@ test("a missing release says which version and suggests waiting", { skip }, asyn
   const rel = await release({ status: { "checksums.txt": 404 } });
   const addHome = home();
   try {
-    const result = run(["echo-args", "x"], { base: rel.base, addHome });
+    const result = await run(["echo-args", "x"], { base: rel.base, addHome });
     assert.equal(result.status, 1);
     const error = errorOf(result);
     assert.equal(error.code, "release-not-found");
@@ -180,7 +187,7 @@ test("a binary that reports another version is refused and not cached", { skip }
   const rel = await release({ archive: archiveOf({ addition: fakeBinary("9.9.9") }) });
   const addHome = home();
   try {
-    const result = run(["echo-args", "x"], { base: rel.base, addHome });
+    const result = await run(["echo-args", "x"], { base: rel.base, addHome });
     assert.equal(result.status, 1);
     assert.equal(errorOf(result).code, "version-mismatch");
     assert.equal(fs.existsSync(cached(addHome)), false);
@@ -193,7 +200,7 @@ test("an archive without the binary is refused", { skip }, async () => {
   const rel = await release({ archive: archiveOf({ NOTICE: "not the binary" }) });
   const addHome = home();
   try {
-    const result = run(["echo-args", "x"], { base: rel.base, addHome });
+    const result = await run(["echo-args", "x"], { base: rel.base, addHome });
     assert.equal(result.status, 1);
     assert.equal(errorOf(result).code, "bad-archive");
     assert.equal(fs.existsSync(cached(addHome)), false);
@@ -205,7 +212,7 @@ test("an archive without the binary is refused", { skip }, async () => {
 test("only https, or http on the loopback, is accepted as the release origin", { skip }, async () => {
   const addHome = home();
   for (const base of ["http://example.com/releases", "ftp://example.com/releases", "not a url"]) {
-    const result = run(["echo-args", "x"], { base, addHome });
+    const result = await run(["echo-args", "x"], { base, addHome });
     assert.equal(result.status, 1, base);
     assert.equal(errorOf(result).code, "insecure-base-url", base);
   }
