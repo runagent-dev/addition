@@ -284,6 +284,9 @@ func TestRecipesMatchTheirProviders(t *testing.T) {
 		if !c.Connectable(p.ID) {
 			t.Errorf("recipe %s is not a connectable app", p.ID)
 		}
+		if p.OAuth2 == nil {
+			continue
+		}
 		for _, scope := range scopeURL.FindAllString(topic.Body, -1) {
 			if !slices.Contains(p.OAuth2.DefaultScopes, scope) {
 				t.Errorf("recipe %s names scope %s, which %s does not request", p.ID, scope, p.ID)
@@ -295,8 +298,8 @@ func TestRecipesMatchTheirProviders(t *testing.T) {
 			}
 		}
 	}
-	if recipes != 5 {
-		t.Errorf("found %d recipes, want the five Google apps", recipes)
+	if recipes != 6 {
+		t.Errorf("found %d recipes, want the five Google apps and ClickUp", recipes)
 	}
 }
 

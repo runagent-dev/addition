@@ -51,7 +51,7 @@ func TestProvidersListsCatalogSortedByID(t *testing.T) {
 		ids = append(ids, p.ID)
 		byID[p.ID] = p
 	}
-	if want := []string{"github", "gmail", "google", "google-calendar", "google-chat", "google-docs", "google-drive", "slack"}; !slices.Equal(ids, want) {
+	if want := []string{"clickup", "github", "gmail", "google", "google-calendar", "google-chat", "google-docs", "google-drive", "slack"}; !slices.Equal(ids, want) {
 		t.Fatalf("ids = %v, want %v", ids, want)
 	}
 

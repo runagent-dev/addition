@@ -38,7 +38,7 @@ func TestShippedProviders(t *testing.T) {
 	for _, p := range c.Providers() {
 		ids = append(ids, p.ID)
 	}
-	want := []string{"github", "gmail", "google", "google-calendar", "google-chat", "google-docs", "google-drive", "slack"}
+	want := []string{"clickup", "github", "gmail", "google", "google-calendar", "google-chat", "google-docs", "google-drive", "slack"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("provider ids = %v, want %v", ids, want)
 	}
@@ -294,5 +294,31 @@ func TestShippedGoogleOperations(t *testing.T) {
 func TestShippedOperationsAllValidate(t *testing.T) {
 	if err := shipped(t).CheckOperations(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestShippedClickUpIsATokenOnlyProviderThatSendsTheBareToken(t *testing.T) {
+	c := shipped(t)
+	p := mustProvider(t, c, "clickup")
+
+	if p.AuthType != MethodAPIKey || p.OAuth2 != nil || !slices.Equal(p.AuthMethods(), []string{MethodAPIKey}) {
+		t.Fatalf("auth_type = %q, oauth2 = %v, methods = %v; want a token-only provider", p.AuthType, p.OAuth2, p.AuthMethods())
+	}
+	if root, err := c.IdentityRoot("clickup"); err != nil || root != "clickup" || !c.Connectable("clickup") {
+		t.Errorf("IdentityRoot = %q, %v; Connectable = %v", root, err, c.Connectable("clickup"))
+	}
+	k := p.APIKey
+	if k == nil || k.CreateURL != "https://app.clickup.com/settings/apps" || k.TokenPrefix != "pk_" || k.EnvVar != "CLICKUP_TOKEN" || len(k.Instructions) == 0 {
+		t.Fatalf("api_key = %+v", k)
+	}
+	if k.AuthPrefix == nil || *k.AuthPrefix != "" || p.API.AuthPrefixFor(MethodAPIKey) != "" {
+		t.Errorf("auth prefix = %v; ClickUp wants the personal token alone in Authorization", k.AuthPrefix)
+	}
+	if k.Identity == nil || k.Identity.Path != "/api/v2/user" || k.Identity.Field != "user.email" || k.Identity.SubjectField != "user.id" {
+		t.Errorf("api_key.identity = %+v", k.Identity)
+	}
+	if p.API.BaseURL != "https://api.clickup.com" || !slices.Equal(p.API.AllowedHosts, []string{"api.clickup.com"}) ||
+		p.API.AuthHeader != "Authorization" || p.API.ProbePath != "/api/v2/user" || !slices.Equal(p.API.AllowedPathPrefixes, []string{"/api/"}) {
+		t.Errorf("api = %+v", p.API)
 	}
 }
