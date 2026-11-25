@@ -81,8 +81,11 @@ func legacyAccountError(c *catalog.Catalog, acct vault.Account) *Error {
 }
 
 // readiness compares an account's granted scopes with its app's default scopes. An account whose
-// provider is no longer an app has nothing to compare against.
-func readiness(c *catalog.Catalog, acct vault.Account) (ready bool, missing []string) {
+// provider is no longer an app has nothing to compare against, and a token account has no scopes to lack.
+func readiness(c *catalog.Catalog, acct vault.Account, kind string) (ready bool, missing []string) {
+	if kind == vault.KindAPIKey {
+		return true, []string{}
+	}
 	p, ok := c.Provider(acct.Provider)
 	if !ok || !c.Connectable(p.ID) || p.OAuth2 == nil {
 		return false, []string{}

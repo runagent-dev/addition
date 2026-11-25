@@ -153,7 +153,7 @@ func identityRootProvider(c *catalog.Catalog, id string) (*catalog.Provider, err
 		return nil, &Error{Code: "not-identity-root", Exit: ExitUsage,
 			Message: fmt.Sprintf("%s apps share the OAuth client of %s; run `addition client add %s`", id, root, root)}
 	}
-	if p.AuthType != "oauth2" || p.OAuth2 == nil {
+	if p.OAuth2 == nil {
 		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", id), Exit: ExitUsage}
 	}
 	return p, nil

@@ -125,9 +125,9 @@ func runDoctor(cmd *cobra.Command, d deps, live bool) error {
 		doctorCheck{ID: "vault", Status: checkOK, Summary: fmt.Sprintf("the vault is initialised (schema %d)", vault.SchemaVersion)},
 		doctorCheck{ID: "master-key", Status: checkOK, Summary: fmt.Sprintf("the master key unlocks the vault (recorded source: %s)", snap.KeySource)},
 	)
-	rep.Checks = append(rep.Checks, session.clientChecks(clientIDs)...)
+	rep.Checks = append(rep.Checks, session.clientChecks(clientIDs, snap.Accounts)...)
 	rep.Checks = append(rep.Checks, accounts.checks...)
-	rep.Checks = append(rep.Checks, session.cloudSetupChecks(accounts.all, clientIDs)...)
+	rep.Checks = append(rep.Checks, session.cloudSetupChecks(snap, clientIDs)...)
 	if live {
 		probes, err := session.liveChecks(cmd, d, accounts)
 		if err != nil {
@@ -248,9 +248,14 @@ func clientRoots(cat *catalog.Catalog) []string {
 	return roots
 }
 
-func (a *accountSession) clientChecks(clientIDs map[string]string) []doctorCheck {
+// clientChecks reports the OAuth client of each root that has setup hints. A vault whose accounts all
+// belong to other roots, such as token accounts, needs none of them, so only a fresh vault gets the nudge.
+func (a *accountSession) clientChecks(clientIDs map[string]string, accts []vault.Account) []doctorCheck {
 	var checks []doctorCheck
 	for _, id := range clientRoots(a.catalog) {
+		if len(accts) > 0 && !a.hasAccountUnder(accts, id) {
+			continue
+		}
 		check := doctorCheck{ID: "oauth-client:" + id, Status: checkOK, Summary: "an OAuth client is stored for " + id + " apps"}
 		if _, stored := clientIDs[id]; !stored {
 			check = doctorCheck{
@@ -270,6 +275,13 @@ type checkedAccounts struct {
 	healthy []vault.Account
 }
 
+func (a *accountSession) hasAccountUnder(accts []vault.Account, root string) bool {
+	return slices.ContainsFunc(accts, func(acct vault.Account) bool {
+		p, ok := a.catalog.Provider(acct.Provider)
+		return ok && p.IdentityRoot == root
+	})
+}
+
 func (a *accountSession) accountChecks(snap vault.Snapshot, now time.Time) checkedAccounts {
 	out := checkedAccounts{all: snap.Accounts}
 	for _, acct := range snap.Accounts {
@@ -280,20 +292,17 @@ func (a *accountSession) accountChecks(snap vault.Snapshot, now time.Time) check
 			continue
 		}
 		out.healthy = append(out.healthy, acct)
-		if age, aged := a.tokenAgeCheck(acct, now); aged {
+		if age, aged := a.tokenAgeCheck(acct, cred, now); aged {
 			out.checks = append(out.checks, age)
 		}
 	}
 	return out
 }
 
-func reconnectFix(acct vault.Account) string {
-	return fmt.Sprintf("addition connect %s --as %s", acct.Provider, acct.Alias)
-}
-
 // accountCheck is the offline verdict of `accounts check` on one account, with the fix for what is wrong.
 func (a *accountSession) accountCheck(acct vault.Account, cred vault.Credential, found bool) doctorCheck {
-	check := doctorCheck{ID: "account:" + acct.Provider + ":" + acct.Alias, Status: checkFail, Fix: reconnectFix(acct)}
+	kind := credentialKind(cred, found)
+	check := doctorCheck{ID: "account:" + acct.Provider + ":" + acct.Alias, Status: checkFail, Fix: reconnectCommand(acct, kind)}
 	status := a.statusOf(acct)
 	if status == statusLegacy {
 		check.Code, check.Summary = codeLegacy, legacyAccountError(a.catalog, acct).Message
@@ -304,23 +313,26 @@ func (a *accountSession) accountCheck(acct vault.Account, cred vault.Credential,
 		check.Code, check.Summary = codeNeedsReauth, "the provider refused this account's tokens; it must be reconnected"
 		return check
 	}
-	switch _, missing := readiness(a.catalog, acct); {
+	switch _, missing := readiness(a.catalog, acct, kind); {
 	case !found:
 		check.Code, check.Summary = codeNoCredential, "no tokens are stored for this account"
-	case cred.RefreshToken == "":
+	case cred.RefreshToken == "" && kind != vault.KindAPIKey:
 		check.Code, check.Summary = codeNoRefreshToken, "no refresh token is stored, so the account stops working when its access token expires"
 	case len(missing) > 0:
 		check.Code, check.Summary = codeScopesMissing, fmt.Sprintf("the account lacks scopes the app needs: %v", missing)
 	default:
 		check.Status, check.Code, check.Summary, check.Fix = checkOK, checkOK, "tokens and scopes are in place", ""
+		if kind == vault.KindAPIKey {
+			check.Summary = "the token is in place"
+		}
 	}
 	return check
 }
 
 // tokenAgeCheck warns when a connection is old enough that the provider may have expired its refresh token.
-func (a *accountSession) tokenAgeCheck(acct vault.Account, now time.Time) (doctorCheck, bool) {
+func (a *accountSession) tokenAgeCheck(acct vault.Account, cred vault.Credential, now time.Time) (doctorCheck, bool) {
 	p, found := a.catalog.Provider(acct.Provider)
-	if !found || p.Doctor.TokenAgeWarnDays == 0 {
+	if !found || p.Doctor.TokenAgeWarnDays == 0 || cred.Kind == vault.KindAPIKey {
 		return doctorCheck{}, false
 	}
 	age := now.Sub(acct.UpdatedAt)
@@ -357,9 +369,13 @@ func activationURL(service, clientID string) string {
 }
 
 // cloudSetupChecks lists, once per connected app, the cloud API its account needs enabled.
-func (a *accountSession) cloudSetupChecks(accts []vault.Account, clientIDs map[string]string) []doctorCheck {
+// Token accounts have no Cloud project, so they get none.
+func (a *accountSession) cloudSetupChecks(snap vault.Snapshot, clientIDs map[string]string) []doctorCheck {
 	var apps []string
-	for _, acct := range accts {
+	for _, acct := range snap.Accounts {
+		if snap.Credentials[acct.ID].Kind == vault.KindAPIKey {
+			continue
+		}
 		if p, ok := a.catalog.Provider(acct.Provider); ok && a.catalog.Connectable(p.ID) && p.API.Service != "" && !slices.Contains(apps, p.ID) {
 			apps = append(apps, p.ID)
 		}

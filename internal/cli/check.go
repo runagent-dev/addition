@@ -53,6 +53,7 @@ type accountCheck struct {
 	Provider        string     `json:"provider"`
 	Alias           string     `json:"alias"`
 	Connected       bool       `json:"connected"`
+	Method          string     `json:"method"`
 	Status          string     `json:"status"`
 	AccessToken     string     `json:"access_token"`
 	ExpiresAt       *time.Time `json:"expires_at"`
@@ -94,9 +95,9 @@ func runAccountsCheck(cmd *cobra.Command, d deps, args []string, live bool) erro
 		if err != nil {
 			return err
 		}
-		ready, missing := readiness(a.catalog, acct)
+		ready, missing := readiness(a.catalog, acct, credentialKind(cred, found))
 		row := accountCheck{
-			Provider: acct.Provider, Alias: acct.Alias, Connected: found, Status: a.statusOf(acct),
+			Provider: acct.Provider, Alias: acct.Alias, Connected: found, Method: credentialKind(cred, found), Status: a.statusOf(acct),
 			AccessToken: accessTokenState(cred, found, d.now()), ExpiresAt: expiryOf(cred),
 			HasRefreshToken: cred.RefreshToken != "", Scopes: acct.Scopes, ScopesReady: ready, MissingScopes: missing,
 		}
@@ -131,6 +132,11 @@ func (a *accountSession) liveCheck(ctx context.Context, d deps, acct vault.Accou
 	provider, found := a.catalog.Provider(acct.Provider)
 	if found && !a.catalog.Connectable(provider.ID) {
 		return "legacy-account"
+	}
+	if found {
+		if cred, has, err := a.credential(ctx, acct); err == nil && has && cred.Kind == vault.KindAPIKey {
+			return a.liveCheckToken(ctx, d, provider, acct)
+		}
 	}
 	if !found || provider.OAuth2 == nil || provider.OAuth2.Identity == nil {
 		return "no-identity-endpoint"
@@ -185,6 +191,47 @@ func liveIdentityReason(err error) string {
 		return "identity-rejected"
 	case errors.As(err, &unreachable):
 		return "network"
+	}
+	return "internal"
+}
+
+// liveCheckToken asks the app's identity endpoint, or its probe path, whether an API token still works.
+// A token is never refreshed, and a rejection is reported without changing the account.
+func (a *accountSession) liveCheckToken(ctx context.Context, d deps, provider *catalog.Provider, acct vault.Account) string {
+	if provider.APIKey == nil {
+		return "no-identity-endpoint"
+	}
+	tokens := &proxy.TokenManager{Store: a.store, Client: d.httpClient, Provider: provider, Account: acct, Now: d.now}
+	token, err := tokens.Access(ctx)
+	if err != nil {
+		return liveTokenReason(err)
+	}
+	resp, err := sendVerification(ctx, d, provider, acct.Alias, token)
+	if err != nil {
+		return liveVerificationReason(err)
+	}
+	_ = resp.Body.Close()
+	return liveStatusReason(resp.Status)
+}
+
+func liveStatusReason(status int) string {
+	switch {
+	case status >= 200 && status <= 299:
+		return liveOK
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "token-rejected"
+	}
+	return "identity-rejected"
+}
+
+func liveVerificationReason(err error) string {
+	if typed, ok := errors.AsType[*Error](err); ok {
+		switch typed.Code {
+		case "invalid-token":
+			return "token-rejected"
+		case "network":
+			return "network"
+		}
 	}
 	return "internal"
 }

@@ -27,6 +27,13 @@ func (c fieldChecker) nonEmptyString(key string) {
 	}
 }
 
+// anyString accepts any string, the empty one included.
+func (c fieldChecker) anyString(key string) {
+	if _, ok := c.fields[key].(string); !ok {
+		c.fail(key, "must be a string")
+	}
+}
+
 func (c fieldChecker) optionalString(key string) {
 	if v, present := c.fields[key]; present && v != nil {
 		c.nonEmptyString(key)
@@ -76,16 +83,22 @@ func validateProvider(fields map[string]any, opts Options) error {
 	root := fieldChecker{fields: fields, err: &err}
 
 	root.nonEmptyString("name")
-	root.oneOf("auth_type", "oauth2", "api_key", "basic")
-	if fields["auth_type"] == "oauth2" {
+	root.oneOf("auth_type", MethodOAuth2, MethodAPIKey, "basic")
+	if fields["oauth2"] != nil || fields["auth_type"] == MethodOAuth2 {
 		if o, ok := root.mapping("oauth2"); ok {
 			validateOAuth2(o)
+		}
+	}
+	apiFields, _ := fields["api"].(map[string]any)
+	if fields["api_key"] != nil || fields["auth_type"] == MethodAPIKey {
+		if k, ok := root.mapping("api_key"); ok {
+			validateAPIKey(k, apiFields)
 		}
 	}
 	if api, ok := root.mapping("api"); ok {
 		api.nonEmptyString("base_url")
 		api.nonEmptyString("auth_header")
-		api.nonEmptyString("auth_prefix")
+		api.anyString("auth_prefix")
 		validateAllowedHosts(api, opts)
 		validatePathPrefixes(api)
 		validateProbe(api)
@@ -224,5 +237,70 @@ func validateDoctor(root fieldChecker) {
 		if n, isInt := days.(int); !isInt || n < 1 {
 			doc.fail("token_age_warn_days", "must be a positive whole number of days, got %#v", days)
 		}
+	}
+}
+
+var envVarPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// validateAPIKey checks the api_key block. api is the merged api mapping, which the identity path and the probe must fit.
+func validateAPIKey(k fieldChecker, api map[string]any) {
+	k.onlyKeys("create_url", "instructions", "token_prefix", "env_var", "auth_prefix", "identity")
+	validateCreateURL(k)
+	if v, present := k.fields["instructions"]; present && v != nil {
+		k.stringList("instructions")
+	}
+	k.optionalString("token_prefix")
+	if s, ok := k.fields["token_prefix"].(string); ok && strings.ContainsFunc(s, isSpaceOrControl) {
+		k.fail("token_prefix", "must not hold whitespace or control characters")
+	}
+	k.optionalString("env_var")
+	if s, ok := k.fields["env_var"].(string); ok && !envVarPattern.MatchString(s) {
+		k.fail("env_var", "must be an upper-case environment variable name such as EXAMPLE_TOKEN, got %q", s)
+	}
+	if v, present := k.fields["auth_prefix"]; present && v != nil {
+		k.anyString("auth_prefix")
+		if s, ok := v.(string); ok && strings.ContainsFunc(s, func(r rune) bool { return r < ' ' || r == 0x7f }) {
+			k.fail("auth_prefix", "must not hold control characters")
+		}
+	}
+	switch {
+	case k.fields["identity"] != nil:
+		if id, ok := k.mapping("identity"); ok {
+			validateAPIKeyIdentity(id, api)
+		}
+	case api["probe_path"] == nil:
+		k.fail("identity", "is missing and api.probe_path is not set: a token is verified with one of them")
+	}
+}
+
+// validateCreateURL checks that api_key.create_url is an https page to send the user to, with no credentials in it.
+func validateCreateURL(k fieldChecker) {
+	k.nonEmptyString("create_url")
+	raw, ok := k.fields["create_url"].(string)
+	if !ok || raw == "" {
+		return
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || strings.ContainsFunc(raw, isSpaceOrControl) {
+		k.fail("create_url", "must be an https URL without credentials, got %q", raw)
+	}
+}
+
+func validateAPIKeyIdentity(id fieldChecker, api map[string]any) {
+	id.onlyKeys("path", "field", "subject_field")
+	id.nonEmptyString("path")
+	id.nonEmptyString("field")
+	id.nonEmptyString("subject_field")
+	path, ok := id.fields["path"].(string)
+	if !ok || path == "" {
+		return
+	}
+	if !PlainPath(path) || strings.ContainsAny(path, "?#%") {
+		id.fail("path", "must be a plain absolute path on the API's host, without query, escapes or dot segments, got %q", path)
+		return
+	}
+	prefixes, _ := api["allowed_path_prefixes"].([]any)
+	if len(prefixes) > 0 && !slices.ContainsFunc(prefixes, func(p any) bool { s, _ := p.(string); return strings.HasPrefix(path, s) }) {
+		id.fail("path", "does not start with one of api.allowed_path_prefixes, so the token could not be sent there")
 	}
 }

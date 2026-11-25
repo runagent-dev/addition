@@ -557,3 +557,38 @@ func TestLoopbackStopsListeningWhenClosed(t *testing.T) {
 		t.Error("the listener still answers after Close")
 	}
 }
+
+func TestFetchIdentityWithAnEmptyAuthPrefixSendsTheBareToken(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, `{"email":"me@work.example","sub":"1001"}`)
+	}))
+	defer srv.Close()
+	p := googleLike(srv.URL)
+	p.API.AuthPrefix = ""
+	p.OAuth2.Identity = &catalog.Identity{URL: srv.URL, Field: "email", SubjectField: "sub"}
+
+	if _, err := oauth.FetchIdentity(context.Background(), srv.Client(), p, accessToken); err != nil {
+		t.Fatal(err)
+	}
+
+	if auth != accessToken {
+		t.Errorf("Authorization = %q, want the bare token with no leading space", auth)
+	}
+}
+
+func TestParseIdentityNamesThePathButNeverTheContent(t *testing.T) {
+	body := []byte(`{"id":7,"login":"octo","secret":"s3cret"}`)
+
+	got, err := oauth.ParseIdentity(200, body, "id", "login")
+	if err != nil || got != (oauth.Identity{Subject: "7", Display: "octo"}) {
+		t.Fatalf("ParseIdentity = %+v, %v", got, err)
+	}
+
+	_, err = oauth.ParseIdentity(200, body, "missing", "login")
+	var perr *oauth.ProviderError
+	if !errors.As(err, &perr) || perr.Op != oauth.OpIdentity || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("err = %v, want an identity ProviderError that names only the path", err)
+	}
+}

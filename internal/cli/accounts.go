@@ -129,6 +129,7 @@ type accountListing struct {
 	Provider        string     `json:"provider"`
 	Alias           string     `json:"alias"`
 	Identity        string     `json:"identity"`
+	Method          string     `json:"method"`
 	Scopes          []string   `json:"scopes"`
 	ScopesReady     bool       `json:"scopes_ready"`
 	MissingScopes   []string   `json:"missing_scopes"`
@@ -140,6 +141,14 @@ type accountListing struct {
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
+// credentialKind is how the credential was obtained, or "" for an account that has none.
+func credentialKind(cred vault.Credential, found bool) string {
+	if !found {
+		return ""
+	}
+	return cred.Kind
+}
+
 func expiryOf(cred vault.Credential) *time.Time {
 	if cred.ExpiresAt.IsZero() {
 		return nil
@@ -148,7 +157,7 @@ func expiryOf(cred vault.Credential) *time.Time {
 }
 
 func (a *accountSession) listing(ctx context.Context, acct vault.Account) (accountListing, error) {
-	cred, _, err := a.credential(ctx, acct)
+	cred, found, err := a.credential(ctx, acct)
 	if err != nil {
 		return accountListing{}, err
 	}
@@ -156,9 +165,10 @@ func (a *accountSession) listing(ctx context.Context, acct vault.Account) (accou
 	if err != nil && !errors.Is(err, vault.ErrNotFound) {
 		return accountListing{}, vaultError(err)
 	}
-	ready, missing := readiness(a.catalog, acct)
+	ready, missing := readiness(a.catalog, acct, credentialKind(cred, found))
 	return accountListing{
-		Provider: acct.Provider, Alias: acct.Alias, Identity: acct.Identity, Scopes: acct.Scopes, Status: a.statusOf(acct),
+		Provider: acct.Provider, Alias: acct.Alias, Identity: acct.Identity, Method: credentialKind(cred, found),
+		Scopes: acct.Scopes, Status: a.statusOf(acct),
 		ScopesReady: ready, MissingScopes: missing,
 		ExpiresAt: expiryOf(cred), HasRefreshToken: cred.RefreshToken != "", Default: def == acct.Alias,
 		CreatedAt: acct.CreatedAt, UpdatedAt: acct.UpdatedAt,

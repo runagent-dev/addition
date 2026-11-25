@@ -3,7 +3,8 @@
 
 id: ""                              # Unique ID (lowercase, hyphenated)
 name: ""                            # Human-readable display name
-auth_type: "oauth2"                 # "oauth2" | "api_key" | "basic"
+auth_type: "oauth2"                 # The method `addition connect` uses by default: "oauth2" | "api_key" | "basic".
+                                    # A provider may have an oauth2 block, an api_key block, or both.
 
 # Uncomment to inherit from a base provider (e.g. "google"). Scalars override,
 # arrays replace, nested maps merge; the top of the chain owns accounts and OAuth.
@@ -37,12 +38,25 @@ oauth2:
     field: ""
     subject_field: ""
 
+# Uncomment to let the provider be connected with a token the user creates (a personal access token).
+# api_key:
+#   create_url: ""                  # https page where the user creates the token
+#   instructions: []                # Short steps, shown when the token is asked for
+#   token_prefix: ""                # Optional: the pasted token must start with it, e.g. "pk_"
+#   env_var: ""                     # Optional: environment variable to suggest, e.g. EXAMPLE_TOKEN
+#   auth_prefix: ""                 # Optional: "" sends the bare token; absent uses api.auth_prefix
+#   identity:                       # Optional if api.probe_path is set: GET path that says whose token it is
+#     path: "/me"
+#     field: "login"                #   dot-path of a display name
+#     subject_field: "id"           #   dot-path of the stable account id an alias is bound to
+
 api:
   base_url: ""
   # allowed_hosts: ["api.example.com"]  # Optional: hosts the token may be sent to; default is base_url's host
   # allowed_path_prefixes: ["/v1/"]    # Optional: a request path must start with one; set it when apps share a host
   auth_header: "Authorization"
-  auth_prefix: "Bearer"
+  auth_prefix: "Bearer"             # May be "" for providers that expect the bare token
+  # probe_path: "/me"               # Optional: a cheap authenticated GET that `addition doctor --live` sends
   rate_limit:
     requests_per_second: 10
     retry_after_header: "Retry-After"

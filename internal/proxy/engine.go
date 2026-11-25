@@ -49,11 +49,14 @@ type Renewer interface {
 // Engine sends requests with the account's access token. Client supplies the transport and, as
 // its Timeout, how long to wait for response headers; redirects are never followed.
 type Engine struct {
-	Client  *http.Client
-	API     catalog.API
-	Renewer Renewer
-	Now     func() time.Time
-	Sleep   func(ctx context.Context, d time.Duration) error
+	Client *http.Client
+	API    catalog.API
+	// AuthMethod is how the credential was obtained (catalog.MethodOAuth2 or MethodAPIKey; empty is OAuth),
+	// which decides the word in front of the token in the auth header.
+	AuthMethod string
+	Renewer    Renewer
+	Now        func() time.Time
+	Sleep      func(ctx context.Context, d time.Duration) error
 	// Jitter returns a random duration in [0, max]; nil uses math/rand.
 	Jitter func(max time.Duration) time.Duration
 	// AllowCleartext lets tests send to http URLs; production sends over https only.
@@ -210,7 +213,7 @@ func (e *Engine) build(ctx context.Context, req Request, accessToken string) (*h
 	if len(req.Body) > 0 && httpReq.Header.Get("Content-Type") == "" {
 		httpReq.Header.Set("Content-Type", "application/json")
 	}
-	header, prefix := e.API.AuthHeader, e.API.AuthPrefix
+	header, prefix := e.API.AuthHeader, e.API.AuthPrefixFor(e.AuthMethod)
 	if header == "" {
 		header, prefix = "Authorization", "Bearer"
 	}

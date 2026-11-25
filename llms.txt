@@ -14,11 +14,11 @@ After installing, run `addition guide`. The full manual is built into the binary
 ## Guide
 
 - [overview](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/overview.md): What addition is, how to think about it, and the first run: install, init, client add, connect, call.
-- [connect](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/connect.md): Connect an app's account on a headless machine: hand the consent link to the human and finish with the pasted URL.
+- [connect](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/connect.md): Connect an app's account: OAuth on a headless machine (hand the consent link to the human), or an API token the human creates.
 - [call](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/call.md): The contract of `addition call`: arguments, output, exit codes and what it refuses.
 - [accounts](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/accounts.md): List, inspect, check, default and remove connected accounts, and read their status and scope fields.
 - [errors](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/errors.md): Every stable error code addition emits, with its exit code and the fix.
-- [troubleshooting](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/troubleshooting.md): Google Cloud setup, expiring tokens, and the usual install, vault and key problems.
+- [troubleshooting](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/troubleshooting.md): Google Cloud setup, expiring and rejected tokens, and the usual install, vault and key problems.
 
 ## App recipes
 

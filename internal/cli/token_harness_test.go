@@ -28,6 +28,7 @@ type tokenProviderOpts struct {
 	bare       bool
 	noPrefix   bool
 	noIdentity bool
+	noProbe    bool
 }
 
 func tokenProviderYAML(host string, o tokenProviderOpts) string {
@@ -45,7 +46,10 @@ func tokenProviderYAML(host string, o tokenProviderOpts) string {
 		b.WriteString("  identity:\n    path: \"/v1/me\"\n    field: \"login\"\n    subject_field: \"id\"\n")
 	}
 	fmt.Fprintf(&b, "api:\n  base_url: \"https://%s\"\n  allowed_hosts:\n    - %q\n", host, host)
-	b.WriteString("  auth_header: \"Authorization\"\n  auth_prefix: \"Bearer\"\n  probe_path: \"/v1/me\"\n")
+	b.WriteString("  auth_header: \"Authorization\"\n  auth_prefix: \"Bearer\"\n")
+	if !o.noProbe {
+		b.WriteString("  probe_path: \"/v1/me\"\n")
+	}
 	return b.String()
 }
 
@@ -146,6 +150,9 @@ func (th *tokenHarness) mustConnectToken(alias, token string) {
 		th.t.Fatalf("connect: exit %d\nstdout: %s\nstderr: %s", r.code, r.stdout, r.stderr)
 	}
 	th.transport.reset()
+	th.api.mu.Lock()
+	th.api.reqs = nil
+	th.api.mu.Unlock()
 }
 
 func (th *tokenHarness) call(args ...string) result {

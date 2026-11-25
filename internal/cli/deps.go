@@ -5,9 +5,12 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/runagent-dev/addition/internal/catalog"
 	"github.com/runagent-dev/addition/internal/vault"
@@ -25,6 +28,8 @@ type deps struct {
 	// stdin replaces the process's standard input when set; sleep replaces waiting between retries.
 	stdin io.Reader
 	sleep func(ctx context.Context, d time.Duration) error
+	// prompter reads a secret from a person at a terminal; nil means there is none, and nothing is ever asked.
+	prompter secretPrompter
 	// loopbackProviders is for tests: providers may list host:port API hosts and be reached over http.
 	loopbackProviders bool
 }
@@ -37,7 +42,33 @@ func productionDeps() deps {
 		httpClient:      &http.Client{Timeout: 30 * time.Second},
 		openBrowser:     openSystemBrowser,
 		loopbackTimeout: 5 * time.Minute,
+		prompter:        terminalPrompter{fd: int(os.Stdin.Fd())},
 	}
+}
+
+// secretPrompter asks a person for a secret without echoing it.
+type secretPrompter interface {
+	// Interactive reports whether a person is at the terminal, so asking can work.
+	Interactive() bool
+	ReadSecret() (string, error)
+}
+
+// terminalPrompter reads from the controlling terminal on fd.
+type terminalPrompter struct{ fd int }
+
+func (p terminalPrompter) Interactive() bool { return term.IsTerminal(p.fd) }
+
+func (p terminalPrompter) ReadSecret() (string, error) {
+	secret, err := term.ReadPassword(p.fd)
+	return string(secret), err
+}
+
+// lookupEnv reads the process environment through the injected one.
+func (d deps) lookupEnv(name string) (string, bool) {
+	if d.env.LookupEnv == nil {
+		return os.LookupEnv(name)
+	}
+	return d.env.LookupEnv(name)
 }
 
 func (d deps) loadCatalog() (*catalog.Catalog, error) {

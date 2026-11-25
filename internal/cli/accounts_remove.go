@@ -138,6 +138,9 @@ func (a *accountSession) grantSiblings(ctx context.Context, acct vault.Account) 
 	if !ok || provider.OAuth2 == nil || !provider.OAuth2.RevokesGrant() {
 		return nil, nil
 	}
+	if cred, found, err := a.credential(ctx, acct); err == nil && found && cred.Kind == vault.KindAPIKey {
+		return nil, nil
+	}
 	all, err := a.store.ListAccounts(ctx, "")
 	if err != nil {
 		return nil, vaultError(err)
@@ -177,13 +180,20 @@ func (a *accountSession) revokeAffectsOthers(acct vault.Account, siblings []vaul
 func (a *accountSession) revoke(ctx context.Context, d deps, acct vault.Account) revokeOutcome {
 	out := revokeOutcome{Attempted: true}
 	provider, ok := a.catalog.Provider(acct.Provider)
-	if !ok || provider.OAuth2 == nil {
+	if !ok {
 		out.Error = "the provider is no longer in the catalog"
 		return out
 	}
 	cred, found, err := a.credential(ctx, acct)
 	if err != nil || !found {
 		out.Error = "the account has no stored token to revoke"
+		return out
+	}
+	if cred.Kind == vault.KindAPIKey {
+		return revokeOutcome{Error: "addition cannot revoke an API token: revoke it where you created it; nothing was sent"}
+	}
+	if provider.OAuth2 == nil {
+		out.Error = "the provider no longer supports OAuth"
 		return out
 	}
 	token := cred.RefreshToken

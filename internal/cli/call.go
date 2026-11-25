@@ -181,7 +181,10 @@ func runCall(cmd *cobra.Command, d deps, appName, rawMethod, rawPath string, f c
 	if err != nil {
 		return callFailure(acct, provider.IdentityRoot, err)
 	}
-	engine := &proxy.Engine{Client: d.httpClient, API: provider.API, AllowCleartext: d.loopbackProviders, Renewer: tokens, Now: d.now, Sleep: d.sleep}
+	engine := &proxy.Engine{
+		Client: d.httpClient, API: provider.API, AuthMethod: tokens.AuthMethod(), AllowCleartext: d.loopbackProviders,
+		Renewer: tokens, Now: d.now, Sleep: d.sleep,
+	}
 	resp, err := engine.Do(ctx, proxy.Request{Method: req.method, URL: target, Header: req.header, Body: req.body}, token)
 	if err != nil {
 		if attempted, sent := errors.AsType[*proxy.Attempted](err); sent {
@@ -233,9 +236,12 @@ func callFailure(acct vault.Account, clientProvider string, err error) error {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return interrupted()
+	case errors.Is(err, proxy.ErrTokenRejected):
+		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
+			"the provider rejected the token of %s:%s; create a new one and run `%s`", acct.Provider, acct.Alias, reconnectCommand(acct, vault.KindAPIKey))}
 	case errors.Is(err, proxy.ErrNeedsReauth), errors.Is(err, proxy.ErrNoRefreshToken):
 		return &Error{Code: "needs-reauth", Exit: ExitNeedsConnect, Message: fmt.Sprintf(
-			"%s:%s must be reconnected; run `addition connect %s --as %s`", acct.Provider, acct.Alias, acct.Provider, acct.Alias)}
+			"%s:%s must be reconnected; run `%s`", acct.Provider, acct.Alias, reconnectCommand(acct, vault.KindOAuth2))}
 	case errors.Is(err, proxy.ErrAccountChanged):
 		return &Error{Code: "account-changed", Exit: ExitUsage, Message: fmt.Sprintf(
 			"%s:%s was removed and connected again while the call started; repeat the command", acct.Provider, acct.Alias)}

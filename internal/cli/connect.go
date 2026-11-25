@@ -17,21 +17,37 @@ import (
 const pendingAuthTTL = 10 * time.Minute
 
 type connectFlags struct {
-	alias     string
-	noBrowser bool
-	complete  string
+	alias      string
+	noBrowser  bool
+	complete   string
+	method     string
+	tokenStdin bool
+	tokenEnv   string
 }
+
+func (f connectFlags) tokenFlags() bool { return f.tokenStdin || f.tokenEnv != "" }
 
 func newConnectCmd(d deps) *cobra.Command {
 	var f connectFlags
 	cmd := &cobra.Command{
-		Use:   "connect <app> --as <alias> [--no-browser]",
-		Short: "Connect one app's account through its OAuth consent screen",
+		Use:   "connect <app> --as <alias> [--no-browser | --token-stdin | --token-env NAME]",
+		Short: "Connect one app's account through OAuth or with a token",
 		Long: "Connect an account of one app, such as gmail, google-drive or google-chat (see `addition providers`).\n" +
 			"Each app is its own connection: it asks only for its own scopes and can be removed on its own.\n" +
 			"The same alias may be used in several apps. The app is a provider id or toolkit command\n" +
 			"(drive or google-drive).\n\n" +
-			"By default addition opens the consent screen in your browser and waits up to 5 minutes for\n" +
+			"An app is connected with OAuth, with a token you create yourself (an API key or personal access\n" +
+			"token), or either; `addition providers` lists each app's auth_methods and auth_type, the method\n" +
+			"used when you name none. --method oauth2 or --method api_key picks one; --token-stdin and\n" +
+			"--token-env imply api_key, and --no-browser implies oauth2.\n\n" +
+			"With a token, addition reads it from standard input (--token-stdin, one line), from the environment\n" +
+			"variable you name (--token-env NAME), or, at a terminal, from a prompt that does not echo. The token\n" +
+			"is never accepted as a flag value, where `ps` would show it. addition checks it with one request\n" +
+			"to the app's identity endpoint before storing anything; a token the app refuses is not stored (exit 3,\n" +
+			"invalid-token). A token never expires or refreshes: when it is rejected, run connect again.\n" +
+			"  echo \"$TOKEN\" | addition connect github --as me --token-stdin\n" +
+			"  addition connect github --as me --token-env GITHUB_TOKEN\n\n" +
+			"For OAuth, addition opens the consent screen in your browser and waits up to 5 minutes for\n" +
 			"the redirect to a listener on 127.0.0.1.\n\n" +
 			"Headless or over SSH, use two steps:\n" +
 			"  addition connect gmail --as work --no-browser\n" +
@@ -45,7 +61,7 @@ func newConnectCmd(d deps) *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if f.complete != "" {
-				if len(args) > 0 || f.alias != "" || f.noBrowser {
+				if len(args) > 0 || f.alias != "" || f.noBrowser || f.method != "" || f.tokenFlags() {
 					return usageError("--complete takes only the redirect URL")
 				}
 				return completeTwoStep(cmd, d, f.complete)
@@ -62,6 +78,9 @@ func newConnectCmd(d deps) *cobra.Command {
 	cmd.Flags().StringVar(&f.alias, "as", "", "alias for the account, e.g. work")
 	cmd.Flags().BoolVar(&f.noBrowser, "no-browser", false, "print the authorize URL and finish later with --complete")
 	cmd.Flags().StringVar(&f.complete, "complete", "", "finish a --no-browser connect with the URL the browser landed on")
+	cmd.Flags().StringVar(&f.method, "method", "", "connect with oauth2 or api_key instead of the app's default")
+	cmd.Flags().BoolVar(&f.tokenStdin, "token-stdin", false, "read an API token from one line of standard input")
+	cmd.Flags().StringVar(&f.tokenEnv, "token-env", "", "read an API token from the environment variable `NAME`")
 	return cmd
 }
 
@@ -81,12 +100,23 @@ func startConnect(cmd *cobra.Command, d deps, providerID string, f connectFlags)
 	if err != nil {
 		return err
 	}
-	provider, err := connectableApp(c, providerID, d.loopbackProviders)
+	app, err := appProvider(c, providerID)
 	if err != nil {
 		return err
 	}
-	if err := vault.ValidateAccountName(provider.ID, f.alias); err != nil {
+	method, err := chooseMethod(app, f)
+	if err != nil {
+		return err
+	}
+	if err := vault.ValidateAccountName(app.ID, f.alias); err != nil {
 		return vaultError(err)
+	}
+	if method == catalog.MethodAPIKey {
+		return connectWithToken(cmd, d, app, f)
+	}
+	provider, err := oauthApp(app, d.loopbackProviders)
+	if err != nil {
+		return err
 	}
 	s, err := d.openVault(ctx)
 	if err != nil {
@@ -111,13 +141,50 @@ func connectableApp(c *catalog.Catalog, name string, allowCleartext bool) (*cata
 	if err != nil {
 		return nil, err
 	}
-	if p.AuthType != "oauth2" || p.OAuth2 == nil {
-		return nil, &Error{Code: "not-oauth", Message: fmt.Sprintf("%s does not use OAuth", p.ID), Exit: ExitUsage}
+	return oauthApp(p, allowCleartext)
+}
+
+func oauthApp(p *catalog.Provider, allowCleartext bool) (*catalog.Provider, error) {
+	if !p.Supports(catalog.MethodOAuth2) {
+		return nil, methodNotSupported(p, catalog.MethodOAuth2)
 	}
 	if p.OAuth2.Identity != nil && !identityURLAllowed(p, allowCleartext) {
 		return nil, identityNotAllowed(p)
 	}
 	return p, nil
+}
+
+// chooseMethod picks how to connect p: what the flags name, else what they imply, else the app's default.
+func chooseMethod(p *catalog.Provider, f connectFlags) (string, error) {
+	switch {
+	case f.method != "" && f.method != catalog.MethodOAuth2 && f.method != catalog.MethodAPIKey:
+		return "", usageError("--method must be oauth2 or api_key")
+	case f.tokenStdin && f.tokenEnv != "":
+		return "", usageError("use only one of --token-stdin and --token-env")
+	case f.tokenFlags() && f.method == catalog.MethodOAuth2, f.tokenFlags() && f.noBrowser:
+		return "", usageError("--token-stdin and --token-env give an API token; they do not combine with OAuth (--method oauth2, --no-browser)")
+	case f.noBrowser && f.method == catalog.MethodAPIKey:
+		return "", usageError("--no-browser belongs to OAuth; it does not combine with --method api_key")
+	}
+	method := f.method
+	switch {
+	case method != "":
+	case f.tokenFlags():
+		method = catalog.MethodAPIKey
+	case f.noBrowser:
+		method = catalog.MethodOAuth2
+	default:
+		method = p.AuthType
+	}
+	if !p.Supports(method) {
+		return "", methodNotSupported(p, method)
+	}
+	return method, nil
+}
+
+func methodNotSupported(p *catalog.Provider, method string) *Error {
+	return &Error{Code: "method-not-supported", Exit: ExitUsage, Message: fmt.Sprintf(
+		"%s cannot be connected with %s; it supports: %s (see `addition providers`)", p.ID, method, strings.Join(p.AuthMethods(), ", "))}
 }
 
 func identityNotAllowed(p *catalog.Provider) *Error {
@@ -330,6 +397,7 @@ type connectResult struct {
 	Identity string   `json:"identity"`
 	Scopes   []string `json:"scopes"`
 	Created  bool     `json:"created"`
+	Method   string   `json:"method"`
 }
 
 // grant is what an authorization code bought: the tokens and who they belong to.
@@ -357,7 +425,7 @@ func commitConnect(ctx context.Context, d deps, s *vault.Store, t connectTarget,
 	if granted == nil {
 		granted = auth.Scopes
 	}
-	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: g.identity.Display, Scopes: granted}
+	result := connectResult{Provider: t.provider.ID, Alias: t.alias, Identity: g.identity.Display, Scopes: granted, Method: catalog.MethodOAuth2}
 	err := s.WithImmediateTx(ctx, func(tx *vault.Tx) error {
 		saved, err := saveAccount(ctx, tx, t, auth, result, g.identity.Subject)
 		if err != nil {
@@ -365,7 +433,7 @@ func commitConnect(ctx context.Context, d deps, s *vault.Store, t connectTarget,
 		}
 		acct := saved.account
 		result.Created = saved.created
-		cred := vault.Credential{AccessToken: g.tokens.AccessToken, RefreshToken: g.tokens.RefreshToken, TokenType: g.tokens.TokenType}
+		cred := vault.Credential{Kind: vault.KindOAuth2, AccessToken: g.tokens.AccessToken, RefreshToken: g.tokens.RefreshToken, TokenType: g.tokens.TokenType}
 		if cred.RefreshToken == "" && saved.sameSubject {
 			if old, err := tx.GetCredential(ctx, acct.ID); err == nil {
 				cred.RefreshToken = old.RefreshToken

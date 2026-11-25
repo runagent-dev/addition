@@ -93,7 +93,7 @@ From the market research (Nov 2026):
 | `meta` | `schema_version` (self-bootstrapping migrations, as before) |
 | `oauth_clients` | per identity root (`google`): client_id, **encrypted** client_secret (user brings their own); every app under the root uses it |
 | `accounts` | one row per (app provider, `alias`): app (`gmail`, `google-drive`…), identity (`me@work.com`), the stable subject id the alias was bound to in that app, the scopes granted to that app, status. The same alias in two apps is two independent accounts. A row whose provider is an identity root with apps (`google`) predates this model and is reported as `legacy-account` (reconnect each app) |
-| `credentials` | encrypted access/refresh token, expiry — one row per account |
+| `credentials` | encrypted access/refresh token, expiry, `kind` (`oauth2`, or `api_key` for a token the user created; M6a) — one row per account |
 | `pending_auth` | a `--no-browser` authorization awaiting `--complete`: state, sealed PKCE verifier, alias, scopes, the alias's scopes at the start, redirect URI, claim marker, expiry |
 | `audit_log` | connect / refresh / revoke / call events by account id and provider id; never token values, aliases, paths or queries |
 
@@ -174,6 +174,23 @@ The `user_id` multi-tenancy column from the SDK becomes the account alias.
   `accounts check --live` does), else `identity-not-allowed` (exit `2`) before any authorization starts or code is redeemed.
 - **Stale re-consent:** a completion is refused (`stale-authorization`) if the alias
   gained scopes after the authorization started that it did not ask for.
+- **Token connections (M6a):** a provider with an `api_key` block can be connected with a token the user creates
+  (`create_url` says where). `auth_type` names the default method of `addition connect`; `--token-stdin`,
+  `--token-env NAME` (both imply `api_key`) and `--method oauth2|api_key` choose, and `--no-browser` implies `oauth2`.
+  The token is read from one line of stdin, from the named environment variable, or, at a terminal and only then,
+  from a prompt that does not echo; it is never a flag value, never printed, and never asked for when stdin is not
+  a terminal (`token-required`, exit `2`). It must carry `token_prefix` if the provider sets one
+  (`token-prefix-mismatch`). It is then proved with one `GET` of `api_key.identity.path` (else `api.probe_path`),
+  sent through the `addition call` engine, so the host and path allow-lists, the echo guard and the
+  no-redirect rule apply; a response that repeats the token is `credential-echo`. `401`/`403` is `invalid-token`
+  (exit `3`, naming `create_url`) and stores nothing; other failures are `identity-rejected` (4/5) or `network`.
+  On success the account (identity and subject from `api_key.identity`, no scopes) and a credential of kind
+  `api_key` are stored in one transaction with a `connect` audit row. Reconnecting an alias replaces the credential
+  (a new revision) if the token belongs to the same subject, else `identity-mismatch`. The auth header uses
+  `api_key.auth_prefix` when the block sets it (an explicit empty string sends the bare token), else `api.auth_prefix`.
+  An `api_key` credential is never refreshed: a `401` on a call marks the account `needs-reauth` (exit `3`, naming
+  `addition connect <app> --as <alias> --token-stdin`). Such an account has no scopes (`scopes_ready: true`),
+  needs no OAuth client, and `accounts remove --revoke` sends nothing for it.
 - **Back channel:** token, userinfo and revoke requests go straight to the HTTP
   transport, so no redirect is followed, and need a 2xx; any 3xx is a refusal.
   `addition` discards the standard library's logger, so `net/http` never writes to stderr. Error messages are addition's own: the operation, the HTTP status and at
@@ -323,7 +340,7 @@ sibling `needs-reauth` (their next call is exit `3`); the result carries `revoke
 ```
 addition <provider> <tool> [-a <alias>] [--param value …] [-o file] [--all]
 addition call <app> [-a <alias>] <METHOD> <path> [--query k=v] [--data @file.json] [-o file]
-addition connect <app> --as <alias> [--no-browser]
+addition connect <app> --as <alias> [--no-browser | --token-stdin | --token-env NAME] [--method oauth2|api_key]
 addition accounts [list|show|remove <app>:<alias> [--revoke [--and-siblings]]|default|check [--live]]
 addition tools [--provider p] [--json]            addition skill install [--harness …]
 addition guide [<topic>|all] [--json]
@@ -372,6 +389,7 @@ can use the same day.
 | M5a | Spec import | `internal/specimport` turns a vendor's own API description into `shared/operations/<provider>.yaml` (every operation: method, path, scopes, params, body fields, derived `effect`); `tools/specgen` regenerates them; Google Discovery adapter first, covering gmail, drive, calendar, docs, chat. Later adapters take OpenAPI (GitHub, Slack, Discord, Microsoft Graph). Operations load lazily so startup stays fast | browse only; `addition search` / `describe` read it next |
 | M5 | Curated tools | tool engine (validate, path-param consumption, pagination `--all`), toolkits: gmail, drive, calendar | ✅ friendly commands |
 | M6 | Files | Gmail attachment download, send-with-attachment (MIME build), Drive upload (resumable), download, Docs/Sheets export | ✅ the Gmail→Drive flow |
+| M6a | Token (API key) connections | a provider may be connected with a token the user creates instead of OAuth: `api_key` block in the provider YAML (`create_url`, `instructions`, `token_prefix`, `env_var`, `auth_prefix`, `identity`) next to or instead of `oauth2`, `auth_type` as the default method; vault migration 4 adds `credentials.kind`; `connect <app> --as <alias> --token-stdin` / `--token-env NAME` (never a flag value; a terminal prompt without echo; `--method` picks one when both exist) verifies the token with one GET through the `addition call` engine and stores nothing when it is refused (`invalid-token`, exit 3); the proxy sends it with the api_key prefix (empty means the bare token), never refreshes it, and turns a `401` into `needs-reauth`; `accounts`, `check --live`, `doctor` and `providers` (`auth_methods`) learn the kind; GitHub gains a personal-access-token connection, its default | ✅ GitHub with a token |
 | M7a | Release pipeline + installer | `addition version` build metadata, GoReleaser binaries (linux/mac/windows, amd64/arm64) with version-less archive names and `checksums.txt`, GitHub artifact attestation, `release.yml` on `v*` tags, a snapshot build in CI, `install.sh`, README install section. Built ahead of M5–M6 so every later milestone can be tried from a release | ✅ installable binaries |
 | M7b | Self-update | `addition update` (explicit only, checksum-verified, atomic replace, same release assets as the installer) | ✅ |
 | M7c | Package-manager shims | npm `@addition/cli`, PyPI `addition`, Homebrew `addition`; each ships or fetches the released binary and verifies its checksum | ✅ |
@@ -389,8 +407,8 @@ can use the same day.
 - Golden tests: no token string ever appears in stdout, stderr or `--debug`
   output for any command.
 
-**Phase 1 non-goals:** MCP, policies, non-Google providers, sync, wrappers,
-API-key providers. Importing a vendor's own API description (Discovery, later OpenAPI) is in scope from M5a;
+**Phase 1 non-goals:** MCP, policies, non-Google providers (GitHub's token connection, M6a, is the one exception), sync,
+wrappers. API-key connections are in scope from M6a. Importing a vendor's own API description (Discovery, later OpenAPI) is in scope from M5a;
 copying another aggregator's connector registry is not (its licence forbids it).
 
 ### Phase 2 — "Safe and broader" → `v0.2.0`
@@ -400,7 +418,7 @@ copying another aggregator's connector registry is not (its licence forbids it).
   `deny <tool>`. Every write tool in the YAML is tagged `effect: write|destructive`.
 - **Providers:** GitHub, Slack (comma scopes, `ok:false` adapter — already in
   YAML), Discord (bot token), Notion.
-- **API-key / bot-token auth type** next to OAuth2.
+- More **API-key / bot-token providers** (the mechanism ships in M6a), and OAuth quirks such as JSON token requests.
 - `addition mcp` (stdio): the same catalog projected as MCP tools (the M14 schema
   mapper, ported), for harnesses that prefer MCP.
 - Audit viewer: `addition log`.

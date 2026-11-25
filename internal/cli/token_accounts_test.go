@@ -21,10 +21,12 @@ func TestATokenAccountIsReadyWithoutScopesOrARefreshToken(t *testing.T) {
 
 	for name, row := range map[string]tokenAccountRow{"list": rows[0], "show": show, "check": check[0].tokenAccountRow} {
 		if row.Method != "api_key" || !row.ScopesReady || row.MissingScopes == nil || len(row.MissingScopes) != 0 ||
-			row.HasRefreshToken || row.ExpiresAt != nil || row.Status != "active" || row.Identity != tokenIdentity ||
-			row.Scopes == nil || len(row.Scopes) != 0 {
+			row.HasRefreshToken || row.ExpiresAt != nil || row.Status != "active" || row.Scopes == nil || len(row.Scopes) != 0 {
 			t.Errorf("accounts %s = %+v", name, row)
 		}
+	}
+	if rows[0].Identity != tokenIdentity || show.Identity != tokenIdentity {
+		t.Errorf("identity = %q, %q, want %q", rows[0].Identity, show.Identity, tokenIdentity)
 	}
 	if !check[0].Connected || check[0].AccessToken != "no-expiry" {
 		t.Errorf("check = %+v, want connected with a token that never expires", check[0])
@@ -223,6 +225,20 @@ func TestDoctorLiveProbesATokenAccountLikeAnyOther(t *testing.T) {
 	reqs := th.api.requests()
 	if len(reqs) != 1 || reqs[0].Path != "/v1/me" || reqs[0].Header.Get("Authorization") != "Bearer "+pastedToken {
 		t.Errorf("requests = %+v, want the probe with the token", reqs)
+	}
+}
+
+func TestDoctorLiveProbesATokenAccountAtItsIdentityPathWhenTheAppHasNoProbePath(t *testing.T) {
+	th := newTokenHarness(t, tokenProviderOpts{noProbe: true})
+	th.mustConnectToken("work", pastedToken)
+
+	rep := wantHealthy(t, th.run("doctor", "--live"))
+
+	if c := rep.check(t, "live:"+tokenApp+":work"); c.Status != "ok" {
+		t.Errorf("live check = %+v, want the identity endpoint to serve as the probe", c)
+	}
+	if reqs := th.api.requests(); len(reqs) != 1 || reqs[0].Path != "/v1/me" {
+		t.Errorf("requests = %+v", reqs)
 	}
 }
 

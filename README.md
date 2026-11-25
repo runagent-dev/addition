@@ -62,6 +62,7 @@ addition doctor                                         # what is wrong, and the
 addition client add google --file client_secret.json    # your own OAuth client; shared by every Google app
 addition connect gmail --as work                        # one connection per app
 addition connect google-calendar --as work
+addition connect github --as me --token-env GITHUB_TOKEN   # a token you created, no OAuth client needed
 addition accounts list
 addition accounts check --live                          # does each token still work?
 addition doctor --live                                  # also probe each app's API once
@@ -81,6 +82,11 @@ No desktop keyring (a Linux server without a Secret Service)? Plain `addition in
 OAuth client, each account) and `next`, the single command to run now. It exits 3 when you need to act.
 Run it first after installing, and whenever something fails. doctor opens the vault like any other command
 (it may apply a pending schema upgrade) and makes no network request unless you pass `--live`.
+
+Apps that take a token (GitHub: a personal access token) connect without OAuth: addition reads the token from
+`--token-stdin` (one line), from the environment variable named by `--token-env NAME`, or from a prompt that does not echo at
+a terminal. It is never a flag value, and it is checked with one request to the app before anything is stored
+(`invalid-token`, exit 3, if the app refuses it). `addition providers` lists each app's `auth_methods`.
 
 Headless or over SSH: `addition connect gmail --as work --no-browser`, then finish with
 `addition connect --complete '<url the browser landed on>'`. Run `addition <command> --help` for details.

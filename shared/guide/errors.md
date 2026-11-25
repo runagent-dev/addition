@@ -16,7 +16,10 @@ Branch on `code` (stable), not `message`. Exit: 1 internal, 2 usage, 3 needs (re
 | `bad-redirect`, `state-mismatch`, `redirect-mismatch` | 2 | Paste the whole callback URL of the newest link |
 | `unknown-state`, `authorization-expired`, `authorization-in-progress`, `stale-authorization` | 2 | Link used, expired or superseded: run `connect --no-browser` again |
 | `authorization-timeout`, `loopback` | 2, 1 | Use `connect --no-browser` |
-| `identity-mismatch` | 2 | The alias belongs to another account: use another alias |
+| `identity-mismatch` | 2 | The alias belongs to another account (or the token does): use another alias |
+| `method-not-supported` | 2 | The app lacks that method: `addition providers` lists its `auth_methods`; pick one with `--method` |
+| `token-required` | 2 | A token app needs `--token-stdin` or `--token-env NAME` when nobody is at a terminal |
+| `empty-token`, `bad-token`, `token-env-unset`, `token-prefix-mismatch` | 2 | The token is empty, not one printable line, from an unset variable, or lacks the app's prefix; nothing was sent |
 | `identity-not-allowed` | 2 | Identity URL off the allowed hosts; nothing sent |
 | `revoke-affects-other-apps` | 2 | Add `--and-siblings`, or drop `--revoke` |
 | `account-required` | 2 | Pass `-a <alias>` or run `accounts default <app>:<alias>` |
@@ -24,7 +27,8 @@ Branch on `code` (stable), not `message`. Exit: 1 internal, 2 usage, 3 needs (re
 | `bad-method`, `bad-path`, `bad-query`, `bad-header`, `forbidden-header`, `bad-data`, `body-too-large`, `bad-provider`, `bad-request` | 2 | Fix the call per `addition guide call` |
 | `host-not-allowed`, `path-not-allowed` | 2 | Only the app's own https hosts and paths |
 | `bad-output`, `file-exists`, `target-is-symlink`, `binary-response` | 2 | Fix the `-o` target; `--force` replaces; binary needs `-o` |
-| `not-connected`, `needs-reauth`, `legacy-account`, `scopes-not-granted` | 3 | `addition connect <app> --as <alias>`, ticking every permission |
+| `not-connected`, `needs-reauth`, `legacy-account`, `scopes-not-granted` | 3 | `addition connect <app> --as <alias>`, ticking every permission; for a token account the same with `--token-stdin` and a new token |
+| `invalid-token` | 3 | The app refused the token and nothing was stored: create a new one where the message says, then `connect` again |
 | `needs-action` | 3 | `addition doctor` found something for you to do; run its `next` command |
 | `access-denied`, `authorization-error` | 4 | Cancelled or refused; ask, then retry `connect` |
 | `token-exchange-rejected`, `identity-rejected`, `revoke-rejected`, `refresh-rejected` | 4 or 5 | Provider refused; check the OAuth client, reconnect |

@@ -131,6 +131,7 @@ Every milestone has a tight scope in `docs/cli-plan.md`. If you find something o
 11. **Audit log:** connect / refresh / revoke / call events write a row; never token values, paths or queries.
 12. **Token destinations:** an access token is sent only over https to a host in its own app's `api.allowed_hosts` (default: the host of `api.base_url`) and, when the app lists `api.allowed_path_prefixes`, only to a path that starts with one of them, on every host; so apps sharing a host (Drive and Calendar on `www.googleapis.com`) never receive each other's tokens. A path a server could normalise into another route (dot segments, double or encoded slashes, backslashes, whitespace) is refused, checked on the exact bytes sent where the token is attached. A target outside the list is refused before anything is sent, and redirects are never followed.
 13. **Output contract:** stdout is JSON for tool commands; errors are the JSON envelope on stderr with exit codes `0` ok · `1` internal · `2` usage · `3` needs (re)connect · `4` upstream 4xx · `5` upstream 5xx/network · `6` policy denied.
+14. **API tokens are credentials like any other:** an `api_key` credential (a token the user created) lives in the vault exactly like OAuth tokens: same AES-256-GCM sealing and AAD, same no-leak rules (never in argv, stdout, stderr, logs, audit rows or the echo guard's reach), same allowed hosts and paths. It differs only in `credentials.kind`: it is never refreshed, and a `401` marks the account `needs-reauth`. A token is verified with one request through the `addition call` engine before anything is stored.
 
 ---
 
@@ -158,7 +159,7 @@ go build -o addition ./cmd/addition
 
 ## 9. Non-goals (until their phase in `docs/cli-plan.md`)
 
-- **Phase 1 excludes:** MCP, policies, non-Google providers, API-key auth, sync, language wrappers.
+- **Phase 1 excludes:** MCP, policies, non-Google providers beyond GitHub's token connection (M6a), sync, language wrappers. API-key (token) auth is included from M6a.
 - **Operation lists come from the vendor's own API description** (`tools/specgen`), never from another aggregator's registry (e.g. withone.ai's OKCL-1.0 data: share-alike and no competing registries).
 - **Never:** a hosted service, telemetry, a shared OAuth client we operate (revisit only by explicit decision).
 
