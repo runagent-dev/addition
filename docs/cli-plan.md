@@ -433,7 +433,7 @@ copying another aggregator's connector registry is not (its licence forbids it).
 - More **API-key / bot-token providers** (the mechanism ships in M6a), and OAuth quirks such as JSON token requests.
 - `addition mcp` (stdio): the same catalog projected as MCP tools (the M14 schema
   mapper, ported), for harnesses that prefer MCP.
-- Audit viewer: `addition log`.
+- Audit viewer: `addition log`, now the full call log of `docs/ui-plan.md` §6.
 
 ### Phase 3 — "Every API" → `v0.3.0`
 
@@ -444,6 +444,11 @@ copying another aggregator's connector registry is not (its licence forbids it).
   add more. No hosted registry.
 - **Wrappers:** the `pip install addition` / `npm i @addition/cli` shims from M7c gain
   language bindings that expose `run(provider, tool, params) -> dict` over the JSON contract.
+
+### UI track (between Phase 2 and Phase 4)
+
+A local web UI over the same vault, an npm entry point (`npx @addition/cli`) and a full, human-only call log. The
+design, the milestones (M7c, U0–U6) and the rules it changes are in `docs/ui-plan.md`.
 
 ### Phase 4 — "All my machines" → `v0.4.0`
 
@@ -506,3 +511,7 @@ plus `effect:` tags on tools (used from Phase 2, cheap to add now).
     `releases/latest/download/<asset>` is a stable URL. Windows users take the `.zip` for now.
 13. **No automatic update checks (M7b):** `addition update` runs only when asked. The binary never contacts the network on
     its own account, in line with "no phoning home".
+14. **UI and call log (2026-11-25):** `docs/ui-plan.md`. Every call is recorded in full (sealed, append-only,
+    hash-chained, never a token) before it is sent, and a call whose record cannot be written is not sent. The log is
+    readable only by a human at a terminal, in the CLI and the UI. This replaces the "no paths or queries in the
+    audit" rule for the call log (invariant 11 changes with milestone U1).
