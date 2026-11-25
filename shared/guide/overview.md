@@ -36,4 +36,6 @@ Step 2 is the headless form. Where a Secret Service or keychain exists, plain `a
 
 No Google Cloud project yet? See `addition guide troubleshooting`.
 
+Not sure which API operation you need? `addition search <what you want to do>`, then `addition describe <op>` (`addition guide discover`).
+
 Next: `addition guide call`, then the app's recipe (`addition guide gmail`). Without `-a`, `call` uses the app's only account or its default.

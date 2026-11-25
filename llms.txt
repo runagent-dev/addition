@@ -5,7 +5,7 @@
 
 Install: `curl -fsSL https://raw.githubusercontent.com/runagent-dev/addition/main/install.sh | sh`
 
-After installing, run `addition guide`. The full manual is built into the binary, matches its version and works offline; the files below are the same pages.
+After installing, run `addition guide`. To find what you can do, run `addition search <what you want to do>` then `addition describe <op>`. The full manual is built into the binary, matches its version and works offline; the files below are the same pages.
 
 ## Docs
 
@@ -14,6 +14,7 @@ After installing, run `addition guide`. The full manual is built into the binary
 ## Guide
 
 - [overview](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/overview.md): What addition is, how to think about it, and the first run: install, init, client add, connect, call.
+- [discover](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/discover.md): Find the API operation you need without knowing the API: search, describe, then call; how to read effect and scopes.
 - [connect](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/connect.md): Connect an app's account on a headless machine: hand the consent link to the human and finish with the pasted URL.
 - [call](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/call.md): The contract of `addition call`: arguments, output, exit codes and what it refuses.
 - [accounts](https://raw.githubusercontent.com/runagent-dev/addition/main/shared/guide/accounts.md): List, inspect, check, default and remove connected accounts, and read their status and scope fields.

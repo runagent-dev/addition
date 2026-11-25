@@ -2,7 +2,9 @@ package catalog
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"regexp"
@@ -139,20 +141,24 @@ func loadOperationSet(fsys fs.FS, providerID string, providers map[string]*Provi
 	return set, nil
 }
 
+// decodeOperationSet reads one generated file in a single strict pass: unknown fields and duplicate keys fail.
 func decodeOperationSet(fsys fs.FS, file string) (*OperationSet, error) {
-	doc, err := decodeDocument(fsys, file)
+	data, err := fs.ReadFile(fsys, file)
 	if err != nil {
 		return nil, err
 	}
-	canonical, err := yaml.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", file, err)
-	}
-	dec := yaml.NewDecoder(bytes.NewReader(canonical))
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	var set OperationSet
 	if err := dec.Decode(&set); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("%s: empty file", file)
+		}
 		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s: must hold one document", file)
 	}
 	return &set, nil
 }

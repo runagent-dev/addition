@@ -11,6 +11,7 @@ Branch on `code` (stable), not `message`. Exit: 1 internal, 2 usage, 3 needs (re
 | Code | Exit | Fix |
 |---|---|---|
 | `usage`, `app-required`, `unknown-topic` | 2 | Wrong arguments: `addition <command> --help`; `addition guide` lists topics |
+| `unknown-operation` | 2 | `addition describe` was given an id that does not exist; the message names the closest ones, `addition search <words>` finds the right one |
 | `unknown-provider`, `not-an-app`, `not-identity-root`, `not-oauth` | 2 | Use an app from `addition guide apps`; for `client add` use `google` |
 | `no-oauth-client`, `bad-client-file`, `web-client` | 2 | `addition client add google --file client_secret.json` with a "Desktop app" client |
 | `bad-redirect`, `state-mismatch`, `redirect-mismatch` | 2 | Paste the whole callback URL of the newest link |
